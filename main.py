@@ -4,13 +4,14 @@ from utils.kalman import Kalman, filter
 
 from utils.misc import ModelParams, TransitionParams, ObservationParams, PriorParams
 import matplotlib.pyplot as plt 
-from typing import Callable
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 import jax.numpy as jnp
 from jax import jit
 from jax.random import PRNGKey as generate_key
 from utils.linear_gaussian_hmm import sample_joint_sequence
+from utils.elbo import compute as elbo_compute
+
 ## verbose functions 
 
 def visualize_kalman_results(true_states, observations, filtered_state_means, filtered_state_covariances):
@@ -88,3 +89,19 @@ def get_model():
                                 observation=observation_params, 
                                 prior=prior_params)
 
+model = get_model()
+key = generate_key(0)
+states, observations = sample_joint_sequence(key=key, sequence_length=20, model_params=model)
+
+
+_, _, oracle_likelihood = Kalman(model).filter(observations)
+_, _, jax_likelihood = filter(observations,model)
+
+print('Oracle:',oracle_likelihood)
+print('JAX oracle:',jax_likelihood)
+
+v_model = model
+
+elbo = elbo_compute(model, v_model, observations)
+
+print('Elbo:', elbo)
