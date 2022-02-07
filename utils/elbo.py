@@ -54,7 +54,7 @@ def _update_backward(filtering, v_transition):
     return A_backward, a_backward, backward_cov
 
 def _get_quad_form_in_z_obs_term(observation, emission):
-    return QuadForm(Omega=-0.5*emission.inv_R, 
+    return QuadForm(Omega=-0.5*emission.prec, 
                     A = emission.matrix, 
                     b = emission.matrix - observation)    
 
@@ -93,11 +93,11 @@ def compute(model:Model, v_model:Model, observations):
 
     prior = model.prior
     transition = Transition(matrix=model.transition.matrix, offset=model.transition.offset, cov=model.transition.cov, prec=inv(model.transition.cov), det_cov=det(model.transition.cov))
-    emission = Emission(matrix=model.observation.matrix, offset=model.observation.offset, cov=model.observation.cov, prec = inv(model.observation.cov), det_cov=inv(model.observation.cov))
+    emission = Emission(matrix=model.emission.matrix, offset=model.emission.offset, cov=model.emission.cov, prec = inv(model.emission.cov), det_cov=inv(model.emission.cov))
     
     v_prior = v_model.prior
     v_transition = Transition(matrix=v_model.transition.matrix, offset= v_model.transition.offset, cov=v_model.transition.cov, prec=inv(v_model.transition.cov), det_cov=det(v_model.transition.cov))
-    v_emission = Emission(matrix=v_model.observation.matrix, offset=v_model.observation.offset, cov=v_model.observation.cov, inv_R = inv(v_model.observation.cov), det_cov=inv(v_model.observation.cov))
+    v_emission = Emission(matrix=v_model.emission.matrix, offset=v_model.emission.offset, cov=v_model.emission.cov, prec = inv(v_model.emission.cov), det_cov=inv(v_model.emission.cov))
     
     dims = Dims(z=transition.matrix.shape[0],x=emission.matrix.shape[0])
     filtering = kalman.init(observations[0], v_prior, v_emission)[2:]

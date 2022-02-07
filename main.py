@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from jax import jit
 from jax.random import PRNGKey as generate_key
 from utils.linear_gaussian_hmm import sample_joint_sequence
-# from utils.elbo import compute as elbo_compute
+from utils.elbo import compute as elbo_compute
 
 
 from jax.numpy import ndarray
@@ -91,20 +91,20 @@ def get_model():
                 prior=prior)
 
 
-test_kalman()
-# model = get_model()
-# key = generate_key(0)
-# states, observations = sample_joint_sequence(key=key, sequence_length=20, model_params=model)
+# test_kalman()
+model = get_model()
+key = generate_key(0)
+states, observations = sample_joint_sequence(key=key, sequence_length=20, model_params=model)
 
 
-# _, _, oracle_likelihood = Kalman(model).filter(observations)
-# _, _, jax_likelihood = filter(observations,model)
+_, _, oracle_likelihood = Kalman(model).filter(observations)
+_, _, jax_likelihood = filter(observations,model)
 
-# print('Oracle:',oracle_likelihood)
-# print('JAX oracle:',jax_likelihood)
+print('Oracle:',oracle_likelihood)
+print('JAX oracle:',jax_likelihood)
 
-# v_model = model
+v_model = model
 
-# elbo = elbo_compute(model, v_model, observations)
+elbo = elbo_compute(model, v_model, observations)
 
 # print('Elbo:', elbo)
