@@ -1,6 +1,6 @@
 from random import sample
 import numpy as np
-from utils.kalman import filter
+from utils.kalman import Kalman, filter
 
 from utils.misc import ModelParams, TransitionParams, ObservationParams, PriorParams
 import matplotlib.pyplot as plt 
@@ -8,6 +8,7 @@ from typing import Callable
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 import jax.numpy as jnp
+from jax import jit
 from jax.random import PRNGKey as generate_key
 from utils.linear_gaussian_hmm import sample_joint_sequence
 ## verbose functions 
@@ -47,9 +48,8 @@ def visualize_kalman_results(true_states, observations, filtered_state_means, fi
 
         plt.gca().add_patch(ellipse)
 
-        plt.waitforbuttonpress()
 
-    plt.close()
+    plt.savefig('kalman')
 
 def test_kalman():
 
@@ -57,7 +57,10 @@ def test_kalman():
     key = generate_key(0)
     states, observations = sample_joint_sequence(key=key, sequence_length=20, model_params=model_params)
 
-    return states, observations
+    filtered_state_means, filtered_state_covariances, loglikelihood = filter(observations, model_params)
+    print(loglikelihood)
+    filtered_state_means, filtered_state_covariances, loglikelihood = Kalman(model_params).filter(observations)
+    print(loglikelihood)
     #visualize_kalman_results(true_states, observations, filtered_state_means, filtered_state_covariances)
 
 def get_model():
@@ -66,13 +69,13 @@ def get_model():
     state_dim = 2
     obs_dim = 2
 
-    a = jnp.ones(state_dim)
+    a = 2*jnp.ones(state_dim)
     A = jnp.eye(state_dim)
-    Q = jnp.array([[0.1,0],
-                   [0,0.1]])
+    Q = jnp.array([[0.01,0],
+                   [0,0.05]])
 
     B = jnp.eye(obs_dim)
-    b = jnp.ones(obs_dim)
+    b = 0*jnp.ones(obs_dim)
     R = jnp.array([[0.01,0],
                    [0,0.01]])
 
@@ -85,11 +88,3 @@ def get_model():
                                 observation=observation_params, 
                                 prior=prior_params)
 
-
-
-true_states, observations = test_kalman()
-test = 0 
-for true_state, observation in zip(true_states, observations):
-    plt.scatter(true_state[0], true_state[1], c='r')
-    plt.scatter(observation[0], observation[1], c='b') 
-    plt.waitforbuttonpress()
