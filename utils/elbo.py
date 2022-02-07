@@ -15,40 +15,40 @@ def _constant_terms_from_log_gaussian(dim, det_cov):
         return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
     
 def _eval_quad_form(quad_form, x):
-    common_term = dot(quad_form.A, x) + quad_form.b
-    return dot(transpose(common_term),dot(quad_form.Omega, common_term))
+    common_term = quad_form.A @ x + quad_form.b
+    return common_term.T @ quad_form.Omega @ common_term
 
 def _expect_quad_form_under_backward(quad_form:QuadForm, backward):
     # expectation of (Au+b)^T Omega (Au+b) under the backward 
 
-    constants = trace(dot(quad_form.Omega, dot(quad_form.A, dot(backward.cov, transpose(quad_form.A)))))
+    constants = trace(quad_form.Omega @ quad_form.A @ backward.cov @ quad_form.A.T)
     quad_form_in_z = QuadForm(Omega=quad_form.Omega, 
-                            A=dot(quad_form.A, backward.A), 
-                            b=dot(quad_form.A, backward.a) + quad_form.b)
+                            A=quad_form.A @ backward.A, 
+                            b=quad_form.A @ backward.a + quad_form.b)
     return constants, quad_form_in_z
 
 def _expect_transition_quad_form_under_backward(backward, transition):
     # expectation of the quadratic form that appears in the log of the state transition density
 
-    constants =  - 0.5 * trace(dot(transition.inv_Q, dot(transition.A, dot(backward.cov, transpose(transition.A)))))
+    constants =  - 0.5 * trace(transition.inv_Q @ transition.A @ backward.cov @ transition.A.T)
     quad_form_in_z = QuadForm(Omega=-0.5*transition.inv_Q, 
-                            A=dot(transition.A, backward.A) - jnp.eye(transition.A.shape[0]))
+                            A=transition.A @ backward.A - jnp.eye(transition.A.shape[0]))
     return constants, quad_form_in_z
 
 def _expect_quad_form_under_filtering(quad_form:QuadForm, filtering):
-    return trace(dot(quad_form.Omega, dot(quad_form.A, dot(filtering.cov, transpose(quad_form.A))))) + _eval_quad_form(quad_form, filtering.mean)
+    return trace(quad_form.Omega @ quad_form.A @ filtering.cov @ quad_form.A) + _eval_quad_form(quad_form, filtering.mean)
 
 def _update_backward(filtering, v_transition):
     
     filtering_prec = inv(filtering.cov)
 
-    backward_prec = dot(transpose(v_transition.A), dot(v_transition.inv_Q, v_transition.A)) + filtering_prec
+    backward_prec = v_transition.A.T @ v_transition.inv_Q @ v_transition.A + filtering_prec
 
     backward_cov = inv(backward_prec)
 
-    common_term = dot(transpose(v_transition.A, v_transition.inv_Q)) 
-    A_backward = dot(backward_cov, common_term)
-    a_backward = dot(backward_cov, dot(filtering_prec, filtering.mean) - dot(common_term, v_transition.a))
+    common_term = v_transition.A.T @ v_transition.inv_Q 
+    A_backward = backward_cov @ common_term
+    a_backward = backward_cov @ filtering_prec @ filtering.mean - common_term @  v_transition.a
 
 
     return A_backward, a_backward, backward_cov

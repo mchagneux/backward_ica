@@ -89,19 +89,21 @@ def get_model():
                                 observation=observation_params, 
                                 prior=prior_params)
 
-model = get_model()
-key = generate_key(0)
-states, observations = sample_joint_sequence(key=key, sequence_length=20, model_params=model)
+
+test_kalman()
+# model = get_model()
+# key = generate_key(0)
+# states, observations = sample_joint_sequence(key=key, sequence_length=20, model_params=model)
 
 
-_, _, oracle_likelihood = Kalman(model).filter(observations)
-_, _, jax_likelihood = filter(observations,model)
+# _, _, oracle_likelihood = Kalman(model).filter(observations)
+# _, _, jax_likelihood = filter(observations,model)
 
-print('Oracle:',oracle_likelihood)
-print('JAX oracle:',jax_likelihood)
+# print('Oracle:',oracle_likelihood)
+# print('JAX oracle:',jax_likelihood)
 
-v_model = model
+# v_model = model
 
-elbo = elbo_compute(model, v_model, observations)
+# elbo = elbo_compute(model, v_model, observations)
 
-print('Elbo:', elbo)
+# print('Elbo:', elbo)

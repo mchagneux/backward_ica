@@ -1,6 +1,6 @@
 from collections import namedtuple
 from jax.numpy import dot, transpose
-from jax.numpy.linalg import inv
+from jax.numpy.linalg import inv, multi_dot
 from jax import jit
 import jax.numpy as jnp
 from utils.misc import ModelParams, TransitionParams, ObservationParams, PriorParams
@@ -9,17 +9,17 @@ from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
 from utils.distributions import Gaussian
 
 def predict(current_state_mean, current_state_covariance, transition_params:TransitionParams):
-    predicted_state_mean = dot(transition_params.matrix, current_state_mean) + transition_params.offset
-    predicted_state_covariance = dot(transition_params.matrix, dot(current_state_covariance, transpose(transition_params.matrix))) + transition_params.cov
+    predicted_state_mean = transition_params.matrix.dot(current_state_mean) + transition_params.offset
+    predicted_state_covariance = transition_params.matrix.dot(current_state_covariance.dot(transpose(transition_params.matrix))) + transition_params.cov
     return predicted_state_mean, predicted_state_covariance
     
 def update(predicted_state_mean, predicted_state_covariance, observation, observation_params: ObservationParams):
-    predicted_observation_mean = dot(observation_params.matrix, predicted_state_mean) + observation_params.offset
-    predicted_observation_covariance = dot(observation_params.matrix, dot(predicted_state_covariance, transpose(observation_params.matrix))) + observation_params.cov
-    kalman_gain = dot(predicted_state_covariance, dot(transpose(observation_params.matrix), inv(predicted_observation_covariance)))
+    predicted_observation_mean = observation_params.matrix @ predicted_state_mean + observation_params.offset
+    predicted_observation_covariance = observation_params.matrix @ predicted_state_covariance @ observation_params.matrix.T + observation_params.cov
+    kalman_gain = predicted_state_covariance  @ observation_params.matrix.T @ inv(predicted_observation_covariance)
 
-    corrected_state_mean = predicted_state_mean + dot(kalman_gain, (observation - predicted_observation_mean))
-    corrected_state_covariance = predicted_state_covariance - dot(kalman_gain, dot( transpose(observation_params.matrix), predicted_state_covariance))
+    corrected_state_mean = predicted_state_mean + kalman_gain @ (observation - predicted_observation_mean)
+    corrected_state_covariance = predicted_state_covariance - kalman_gain @ observation_params.matrix @ predicted_state_covariance
 
     return corrected_state_mean, corrected_state_covariance
 
