@@ -1,4 +1,4 @@
-from utils.misc import ModelParams, PriorParams, TransitionParams, ObservationParams
+from utils.misc import * 
 from jax.random import multivariate_normal
 import jax.numpy as jnp
 from jax import jit, random
@@ -6,7 +6,7 @@ from jax.numpy import dot
 
 
 
-def sample_state_sequence(key, sequence_length, prior_params:PriorParams, transition_params:TransitionParams):
+def sample_state_sequence(key, sequence_length, prior_params:Prior, transition_params:Transition):
     dim_z = transition_params.matrix.shape[0]
     state_sequence = jnp.empty(shape=(sequence_length, dim_z))
     key, subkey = random.split(key)
@@ -21,8 +21,8 @@ def sample_state_sequence(key, sequence_length, prior_params:PriorParams, transi
     
     return key, state_sequence
 
-def sample_joint_sequence(key, sequence_length, model_params:ModelParams):
-    observation_params:ObservationParams = model_params.observation
+def sample_joint_sequence(key, sequence_length, model_params:Model):
+    observation_params:Emission = model_params.emission
     dim_x = observation_params.matrix.shape[0]
     observation_sequence = jnp.empty(shape=(sequence_length,dim_x))
     key, state_sequence = sample_state_sequence(key, sequence_length, model_params.prior, model_params.transition)

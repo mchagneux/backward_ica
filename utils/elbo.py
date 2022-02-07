@@ -1,14 +1,14 @@
 from collections import namedtuple
 from typing import NamedTuple
 import utils.kalman as kalman
-from utils.misc import ModelParams, QuadForm, Dims
+from utils.misc import *
 import jax.numpy as jnp
-from jax.numpy import dot, transpose, trace
+from jax.numpy import trace
 from jax.numpy.linalg import det, inv
 
-BackwardParams = namedtuple('backward',['A','a','cov'])
-Emission = namedtuple('emission',['B','b','R','inv_R','det_R'])
-Transition = namedtuple('transition',['A','a','Q','inv_Q','det_Q'])
+Backward = namedtuple('Backward',['A','a','cov'])
+Transition = namedtuple('Transition',['matrix','offset','cov','prec','det_cov'])
+Emission = namedtuple('Emission',['matrix','offset','cov','prec','det_cov'])
 
 
 def _constant_terms_from_log_gaussian(dim, det_cov):
@@ -30,9 +30,9 @@ def _expect_quad_form_under_backward(quad_form:QuadForm, backward):
 def _expect_transition_quad_form_under_backward(backward, transition):
     # expectation of the quadratic form that appears in the log of the state transition density
 
-    constants =  - 0.5 * trace(transition.inv_Q @ transition.A @ backward.cov @ transition.A.T)
-    quad_form_in_z = QuadForm(Omega=-0.5*transition.inv_Q, 
-                            A=transition.A @ backward.A - jnp.eye(transition.A.shape[0]))
+    constants =  - 0.5 * trace(transition.prec @ transition.matrix @ backward.cov @ transition.matrix.T)
+    quad_form_in_z = QuadForm(Omega=-0.5*transition.prec, 
+                            A=transition.matrix @ backward.A - jnp.eye(transition.matrix.shape[0]))
     return constants, quad_form_in_z
 
 def _expect_quad_form_under_filtering(quad_form:QuadForm, filtering):
@@ -42,11 +42,11 @@ def _update_backward(filtering, v_transition):
     
     filtering_prec = inv(filtering.cov)
 
-    backward_prec = v_transition.A.T @ v_transition.inv_Q @ v_transition.A + filtering_prec
+    backward_prec = v_transition.A.T @ v_transition.prec @ v_transition.A + filtering_prec
 
     backward_cov = inv(backward_prec)
 
-    common_term = v_transition.A.T @ v_transition.inv_Q 
+    common_term = v_transition.A.T @ v_transition.prec 
     A_backward = backward_cov @ common_term
     a_backward = backward_cov @ filtering_prec @ filtering.mean - common_term @  v_transition.a
 
@@ -55,8 +55,8 @@ def _update_backward(filtering, v_transition):
 
 def _get_quad_form_in_z_obs_term(observation, emission):
     return QuadForm(Omega=-0.5*emission.inv_R, 
-                    A = emission.B, 
-                    b = emission.b - observation)    
+                    A = emission.matrix, 
+                    b = emission.matrix - observation)    
 
 def _expectations_under_backward(quad_forms, dims, backward, transition, emission, observation):
 
@@ -72,11 +72,11 @@ def _expectations_under_backward(quad_forms, dims, backward, transition, emissio
 
 
     # dealing with observation term seen as a quadratic form in z
-    new_constants += _constant_terms_from_log_gaussian(dims.x, det(emission.R))                                      
+    new_constants += _constant_terms_from_log_gaussian(dims.x, emission.det_cov)                                      
     new_quad_forms.append(_get_quad_form_in_z_obs_term(observation, emission))
 
     # dealing with true transition term whose integration in z_previous under the backward is a quadratic form in z
-    new_constants += _constant_terms_from_log_gaussian(dims.z, det(transition.Q))
+    new_constants += _constant_terms_from_log_gaussian(dims.z, transition.det_cov)
     constant, integrated_quad_form = _expect_transition_quad_form_under_backward(backward, transition)
     new_constants += constant 
     new_quad_forms.append(integrated_quad_form)
@@ -89,27 +89,27 @@ def _expectations_under_backward(quad_forms, dims, backward, transition, emissio
     return new_constants, new_quad_forms
 
 
-def compute(model:ModelParams, v_model:ModelParams, observations):
+def compute(model:Model, v_model:Model, observations):
 
     prior = model.prior
-    transition = Transition(A=model.transition.matrix, a= model.transition.offset, Q=model.transition.cov, inv_Q=inv(model.transition.cov), det_Q=det(model.transition.cov))
-    emission = Emission(B=model.observation.matrix, b=model.observation.offset, R=model.observation.cov, inv_R = inv(model.observation.cov), det_R=inv(model.observation.cov))
+    transition = Transition(matrix=model.transition.matrix, offset=model.transition.offset, cov=model.transition.cov, prec=inv(model.transition.cov), det_cov=det(model.transition.cov))
+    emission = Emission(matrix=model.observation.matrix, offset=model.observation.offset, cov=model.observation.cov, prec = inv(model.observation.cov), det_cov=inv(model.observation.cov))
     
     v_prior = v_model.prior
-    v_transition = Transition(A=v_model.transition.matrix, a= v_model.transition.offset, Q=v_model.transition.cov, inv_Q=inv(v_model.transition.cov), det_Q=det(v_model.transition.cov))
-    v_emission = Emission(B=v_model.observation.matrix, b=v_model.observation.offset, R=v_model.observation.cov, inv_R = inv(v_model.observation.cov), det_R=inv(v_model.observation.cov))
+    v_transition = Transition(matrix=v_model.transition.matrix, offset= v_model.transition.offset, cov=v_model.transition.cov, prec=inv(v_model.transition.cov), det_cov=det(v_model.transition.cov))
+    v_emission = Emission(matrix=v_model.observation.matrix, offset=v_model.observation.offset, cov=v_model.observation.cov, inv_R = inv(v_model.observation.cov), det_cov=inv(v_model.observation.cov))
     
-    dims = Dims(z=transition.A.shape[0],x=emission.B.shape[0])
+    dims = Dims(z=transition.matrix.shape[0],x=emission.matrix.shape[0])
     filtering = kalman.init(observations[0], v_prior, v_emission)[2:]
 
     constants = 0
     quad_forms = []
 
     constants += _constant_terms_from_log_gaussian(dims.z, det(prior.cov)) + \
-                 _constant_terms_from_log_gaussian(dims.x, emission.det_R)
+                 _constant_terms_from_log_gaussian(dims.x, emission.det_cov)
     
 
-    quad_forms.append(_get_quad_form_in_z_obs_term(observations[0],emission))
+    quad_forms.append(_get_quad_form_in_z_obs_term(observations[0], emission))
     quad_forms.append(QuadForm(Omega=-0.5*inv(prior.cov), b=-prior.mean))
 
     for observation in observations[1:]:

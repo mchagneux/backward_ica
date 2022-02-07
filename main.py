@@ -2,7 +2,7 @@ from random import sample
 import numpy as np
 from utils.kalman import Kalman, filter
 
-from utils.misc import ModelParams, TransitionParams, ObservationParams, PriorParams
+from utils.misc import * 
 import matplotlib.pyplot as plt 
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
@@ -10,8 +10,10 @@ import jax.numpy as jnp
 from jax import jit
 from jax.random import PRNGKey as generate_key
 from utils.linear_gaussian_hmm import sample_joint_sequence
-from utils.elbo import compute as elbo_compute
+# from utils.elbo import compute as elbo_compute
 
+
+from jax.numpy import ndarray
 ## verbose functions 
 
 def visualize_kalman_results(true_states, observations, filtered_state_means, filtered_state_covariances):
@@ -51,18 +53,17 @@ def visualize_kalman_results(true_states, observations, filtered_state_means, fi
 
 
     plt.savefig('kalman')
-
 def test_kalman():
 
     model_params = get_model()
     key = generate_key(0)
-    states, observations = sample_joint_sequence(key=key, sequence_length=20, model_params=model_params)
+    true_states, observations = sample_joint_sequence(key=key, sequence_length=20, model_params=model_params)
 
     filtered_state_means, filtered_state_covariances, loglikelihood = filter(observations, model_params)
     print(loglikelihood)
     filtered_state_means, filtered_state_covariances, loglikelihood = Kalman(model_params).filter(observations)
     print(loglikelihood)
-    #visualize_kalman_results(true_states, observations, filtered_state_means, filtered_state_covariances)
+    visualize_kalman_results(true_states, observations, filtered_state_means, filtered_state_covariances)
 
 def get_model():
 
@@ -81,13 +82,13 @@ def get_model():
                    [0,0.01]])
 
 
-    transition_params = TransitionParams(matrix=A, offset=a, cov=Q)
-    observation_params = ObservationParams(matrix=B, offset=b, cov=R)
-    prior_params = PriorParams(mean=a, cov=Q)
+    transition = Transition(matrix=A, offset=a, cov=Q)
+    emission = Emission(matrix=B, offset=b, cov=R)
+    prior = Prior(mean=a, cov=Q)
 
-    return ModelParams(transition=transition_params, 
-                                observation=observation_params, 
-                                prior=prior_params)
+    return Model(transition=transition, 
+                emission=emission, 
+                prior=prior)
 
 
 test_kalman()
