@@ -67,9 +67,6 @@ def _get_quad_form_in_z_obs_term(observation, emission):
                     A = emission.matrix, 
                     b = emission.offset - observation)    
 
-def _merge_quad_forms(quad_forms):
-
-    pass
 
 def _expectations_under_backward(quad_forms, dims, backward, transition, emission, observation):
 
@@ -97,8 +94,6 @@ def _expectations_under_backward(quad_forms, dims, backward, transition, emissio
     # dealing with backward term (integration of the quadratic form is just the dimension of z)
     new_constants += -_constant_terms_from_log_gaussian(dims.z, det(backward.cov))
     new_constants += 0.5*dims.z
-
-    new_quad_forms = _merge_quad_forms(quad_forms)
 
     
     return new_constants, new_quad_forms
