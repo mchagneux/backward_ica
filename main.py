@@ -1,19 +1,25 @@
-from random import sample
 import numpy as np
-from utils.kalman import Kalman, filter
-
+from utils.kalman import filter as kalman_filter
+from utils.kalman import Kalman as NumpyKalman
 from utils.misc import * 
 import matplotlib.pyplot as plt 
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
-import jax.numpy as jnp
-from jax import jit
-from jax.random import PRNGKey as generate_key
 from utils.linear_gaussian_hmm import sample_joint_sequence
-from utils.elbo import compute as elbo_compute
-from jax.config import config; config.update("jax_enable_x64", True)
+from utils.elbo import linear_gaussian_elbo
 
-from jax.numpy import ndarray
+import jax
+import jax.numpy as jnp
+import jax.random
+from jax.random import PRNGKey as generate_key
+from jax.random import multivariate_normal, normal
+from jax.config import config; config.update("jax_enable_x64", True)
+import optax
+from optax import GradientTransformation
+from tqdm import tqdm
+from time import time
+
+
 ## verbose functions 
 
 def visualize_kalman_results(true_states, observations, filtered_state_means, filtered_state_covariances):
@@ -61,7 +67,7 @@ def test_kalman():
 
     filtered_state_means, filtered_state_covariances, loglikelihood = filter(observations, model_params)
     print(loglikelihood)
-    filtered_state_means, filtered_state_covariances, loglikelihood = Kalman(model_params).filter(observations)
+    filtered_state_means, filtered_state_covariances, loglikelihood = NumpyKalman(model_params).filter(observations)
     print(loglikelihood)
     visualize_kalman_results(true_states, observations, filtered_state_means, filtered_state_covariances)
 
@@ -72,14 +78,14 @@ def get_model():
     obs_dim = 2
 
     a = 2*jnp.ones(state_dim)
-    A = jnp.eye(state_dim)
-    Q = jnp.array([[0.01,0],
-                   [0,0.05]])
+    A = 0.5 * jnp.eye(state_dim)
+    Q = jnp.array([[0.1,0],
+                   [0,0.5]])
 
     B = jnp.eye(obs_dim)
     b = 0*jnp.ones(obs_dim)
-    R = jnp.array([[0.01,0],
-                   [0,0.01]])
+    R = jnp.array([[0.2,0],
+                   [0,0.3]])
 
 
     transition = Transition(matrix=A, offset=a, cov=Q)
@@ -90,19 +96,60 @@ def get_model():
                 emission=emission, 
                 prior=prior)
 
+def get_random_model(key):
+
+    state_dim, obs_dim = 2, 2
+    key, *subkeys = jax.random.split(key, num=9)
+
+    prior_mean = 0.1 * normal(subkeys[0],shape=(state_dim,)) ** 2
+    prior_cov = 0.1 * jnp.diag(normal(subkeys[1], shape=(state_dim,))) ** 2
+
+    transition_matrix = jnp.diag(normal(subkeys[2],shape=(state_dim,))) ** 2
+    transition_offset = normal(subkeys[3],shape=(state_dim,))
+    transition_cov = 0.1 * jnp.diag(normal(subkeys[4],shape=(state_dim,))) ** 2
+
+    emission_matrix = normal(subkeys[5],shape=(obs_dim,obs_dim)) ** 2
+    emission_offset = jnp.zeros((obs_dim,))
+    emission_cov = 0.1 * jnp.diag(normal(subkeys[7],shape=(obs_dim,))) ** 2
+
+    prior = Prior(mean=prior_mean, cov=prior_cov)
+
+    transition = Transition(matrix=transition_matrix, offset=transition_offset, cov=transition_cov)
+    emission = Emission(matrix=emission_matrix, offset=emission_offset, cov=emission_cov)
+    return Model(prior, transition, emission)
 
 # test_kalman()
 model = get_model()
 key = generate_key(0)
-states, observations = sample_joint_sequence(key=key, sequence_length=20, model_params=model)
+states, observations = sample_joint_sequence(key=key, sequence_length=10, model_params=model)
 
+true_elbo = kalman_filter(observations ,model)[2]
+print('Evidence:',true_elbo)
+# init_v_model = get_random_model(key)
+# print('Init ELBO:', linear_gaussian_elbo(model, init_v_model, observations))
+# loss = linear_gaussian_elbo
+# optimizer = optax.adam(learning_rate= - 1e-3)
 
-_, _, oracle_likelihood = Kalman(model).filter(observations)
-_, _, jax_likelihood = filter(observations,model)
+# n_epochs = 3000
 
-print('Oracle:',oracle_likelihood)
-print('JAX oracle:',jax_likelihood)
+# def fit(params: optax.Params, optimizer: optax.GradientTransformation) -> optax.Params:
+#     opt_state = optimizer.init(params)
 
-v_model = model
+#     # @jax.jit
+#     def step(params, opt_state, observations):
+#         loss_value, grads = jax.value_and_grad(loss, argnums=1)(model, params, observations)
+#         updates, opt_state = optimizer.update(grads, opt_state)
+#         params = optax.apply_updates(params, updates)
+#         return params, opt_state, loss_value
 
-elbo = elbo_compute(model, v_model, observations)
+#     for _ in tqdm(range(n_epochs)):
+#         params, opt_state, loss_value = step(params, opt_state, observations)
+
+#     print('ELBO:', loss_value)
+
+#     return params
+  
+# fitted_v_model = fit(init_v_model, optimizer)
+
+# print(model)
+# print(fitted_v_model)

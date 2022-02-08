@@ -1,8 +1,7 @@
-from collections import namedtuple
 from jax.numpy.linalg import inv
 import jax.numpy as jnp
 import numpy as np
-from jax.numpy import dot 
+from jax import jit
 from utils.misc import * 
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
 from utils.distributions import Gaussian

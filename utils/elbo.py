@@ -1,10 +1,11 @@
 from collections import namedtuple
 from typing import NamedTuple
-import utils.kalman as kalman
+import utils.kalman as kalman 
 from utils.misc import *
 import jax.numpy as jnp
 from jax.numpy import trace
 from jax.numpy.linalg import det, inv
+from jax import jit
 
 Backward = namedtuple('Backward',['A','a','cov'])
 Filtering = namedtuple('Filtering',['mean','cov'])
@@ -12,9 +13,11 @@ Filtering = namedtuple('Filtering',['mean','cov'])
 Transition = namedtuple('Transition',['matrix','offset','cov','prec','det_cov'])
 Emission = namedtuple('Emission',['matrix','offset','cov','prec','det_cov'])
 
+
 def _constant_terms_from_log_gaussian(dim, det_cov):
         return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
     
+
 def _eval_quad_form(quad_form, x):
     common_term = quad_form.A @ x + quad_form.b
     return common_term.T @ quad_form.Omega @ common_term
@@ -28,6 +31,7 @@ def _expect_quad_form_under_backward(quad_form:QuadForm, backward):
                             b=quad_form.A @ backward.a + quad_form.b)
     return constants, quad_form_in_z
 
+
 def _expect_transition_quad_form_under_backward(backward, transition):
     # expectation of the quadratic form that appears in the log of the state transition density
 
@@ -37,8 +41,10 @@ def _expect_transition_quad_form_under_backward(backward, transition):
                             b=transition.matrix @ backward.a + transition.offset)
     return constants, quad_form_in_z
 
+
 def _expect_quad_form_under_filtering(quad_form:QuadForm, filtering):
     return trace(quad_form.Omega @ quad_form.A @ filtering.cov @ quad_form.A) + _eval_quad_form(quad_form, filtering.mean)
+
 
 def _update_backward(filtering, v_transition):
     
@@ -55,10 +61,15 @@ def _update_backward(filtering, v_transition):
 
     return Backward(A_backward, a_backward, backward_cov)
 
+
 def _get_quad_form_in_z_obs_term(observation, emission):
     return QuadForm(Omega=-0.5*emission.prec, 
                     A = emission.matrix, 
                     b = emission.offset - observation)    
+
+def _merge_quad_forms(quad_forms):
+
+    pass
 
 def _expectations_under_backward(quad_forms, dims, backward, transition, emission, observation):
 
@@ -87,12 +98,15 @@ def _expectations_under_backward(quad_forms, dims, backward, transition, emissio
     new_constants += -_constant_terms_from_log_gaussian(dims.z, det(backward.cov))
     new_constants += 0.5*dims.z
 
+    new_quad_forms = _merge_quad_forms(quad_forms)
+
     
     return new_constants, new_quad_forms
 
 def _init_filtering(observation, v_prior, v_emission):
     filtering_mean, filtering_cov = kalman.init(observation, v_prior, v_emission)[2:]
     return Filtering(filtering_mean, filtering_cov)
+
 
 def _update_filtering(observation, filtering, v_transition, v_emission):
     filtering_mean, filtering_cov = kalman.filter_step(filtering.mean, 
@@ -103,8 +117,7 @@ def _update_filtering(observation, filtering, v_transition, v_emission):
 
     return Filtering(filtering_mean, filtering_cov)
             
-
-def compute(model:Model, v_model:Model, observations):
+def linear_gaussian_elbo(model:Model, v_model:Model, observations):
 
     prior = model.prior
     transition = Transition(matrix=model.transition.matrix, 
@@ -145,6 +158,7 @@ def compute(model:Model, v_model:Model, observations):
     quad_forms.append(_get_quad_form_in_z_obs_term(observations[0], emission))
     quad_forms.append(QuadForm(Omega=-0.5*inv(prior.cov), A=jnp.eye(dims.z), b=-prior.mean))
 
+
     for observation in observations[1:]:
 
         backward = _update_backward(filtering, v_transition)
@@ -163,16 +177,15 @@ def compute(model:Model, v_model:Model, observations):
         filtering = _update_filtering(observation, filtering, v_transition, v_emission)
 
 
-
     constants += -_constant_terms_from_log_gaussian(dims.z, det(filtering.cov))
 
     for quad_form in quad_forms:
         constants += _expect_quad_form_under_filtering(quad_form, filtering) 
     constants += 0.5*dims.z
-    
+
     return constants 
 
-            
+
 
 
 
