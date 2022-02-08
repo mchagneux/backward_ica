@@ -7,9 +7,10 @@ from jax.numpy import trace
 from jax.numpy.linalg import det, inv
 
 Backward = namedtuple('Backward',['A','a','cov'])
+Filtering = namedtuple('Filtering',['mean','cov'])
+
 Transition = namedtuple('Transition',['matrix','offset','cov','prec','det_cov'])
 Emission = namedtuple('Emission',['matrix','offset','cov','prec','det_cov'])
-
 
 def _constant_terms_from_log_gaussian(dim, det_cov):
         return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
@@ -32,7 +33,8 @@ def _expect_transition_quad_form_under_backward(backward, transition):
 
     constants =  - 0.5 * trace(transition.prec @ transition.matrix @ backward.cov @ transition.matrix.T)
     quad_form_in_z = QuadForm(Omega=-0.5*transition.prec, 
-                            A=transition.matrix @ backward.A - jnp.eye(transition.matrix.shape[0]))
+                            A=transition.matrix @ backward.A - jnp.eye(transition.matrix.shape[0]),
+                            b=transition.matrix @ backward.a + transition.offset)
     return constants, quad_form_in_z
 
 def _expect_quad_form_under_filtering(quad_form:QuadForm, filtering):
@@ -42,21 +44,21 @@ def _update_backward(filtering, v_transition):
     
     filtering_prec = inv(filtering.cov)
 
-    backward_prec = v_transition.A.T @ v_transition.prec @ v_transition.A + filtering_prec
+    backward_prec = v_transition.matrix.T @ v_transition.prec @ v_transition.matrix + filtering_prec
 
     backward_cov = inv(backward_prec)
 
-    common_term = v_transition.A.T @ v_transition.prec 
+    common_term = v_transition.matrix.T @ v_transition.prec 
     A_backward = backward_cov @ common_term
-    a_backward = backward_cov @ filtering_prec @ filtering.mean - common_term @  v_transition.a
+    a_backward = backward_cov @ (filtering_prec @ filtering.mean - common_term @  v_transition.offset)
 
 
-    return A_backward, a_backward, backward_cov
+    return Backward(A_backward, a_backward, backward_cov)
 
 def _get_quad_form_in_z_obs_term(observation, emission):
     return QuadForm(Omega=-0.5*emission.prec, 
                     A = emission.matrix, 
-                    b = emission.matrix - observation)    
+                    b = emission.offset - observation)    
 
 def _expectations_under_backward(quad_forms, dims, backward, transition, emission, observation):
 
@@ -88,19 +90,50 @@ def _expectations_under_backward(quad_forms, dims, backward, transition, emissio
     
     return new_constants, new_quad_forms
 
+def _init_filtering(observation, v_prior, v_emission):
+    filtering_mean, filtering_cov = kalman.init(observation, v_prior, v_emission)[2:]
+    return Filtering(filtering_mean, filtering_cov)
+
+def _update_filtering(observation, filtering, v_transition, v_emission):
+    filtering_mean, filtering_cov = kalman.filter_step(filtering.mean, 
+                                        filtering.cov, 
+                                        observation,
+                                        v_transition,
+                                        v_emission)[2:]
+
+    return Filtering(filtering_mean, filtering_cov)
+            
 
 def compute(model:Model, v_model:Model, observations):
 
     prior = model.prior
-    transition = Transition(matrix=model.transition.matrix, offset=model.transition.offset, cov=model.transition.cov, prec=inv(model.transition.cov), det_cov=det(model.transition.cov))
-    emission = Emission(matrix=model.emission.matrix, offset=model.emission.offset, cov=model.emission.cov, prec = inv(model.emission.cov), det_cov=inv(model.emission.cov))
+    transition = Transition(matrix=model.transition.matrix, 
+                            offset=model.transition.offset, 
+                            cov=model.transition.cov, 
+                            prec=inv(model.transition.cov), 
+                            det_cov=det(model.transition.cov))
+
+    emission = Emission(matrix=model.emission.matrix, 
+                        offset=model.emission.offset, 
+                        cov=model.emission.cov, 
+                        prec = inv(model.emission.cov), 
+                        det_cov=det(model.emission.cov))
     
     v_prior = v_model.prior
-    v_transition = Transition(matrix=v_model.transition.matrix, offset= v_model.transition.offset, cov=v_model.transition.cov, prec=inv(v_model.transition.cov), det_cov=det(v_model.transition.cov))
-    v_emission = Emission(matrix=v_model.emission.matrix, offset=v_model.emission.offset, cov=v_model.emission.cov, prec = inv(v_model.emission.cov), det_cov=inv(v_model.emission.cov))
+    v_transition = Transition(matrix=v_model.transition.matrix, 
+                            offset=v_model.transition.offset, 
+                            cov=v_model.transition.cov, 
+                            prec=inv(v_model.transition.cov), 
+                            det_cov=det(v_model.transition.cov))
+    v_emission = Emission(matrix=v_model.emission.matrix, 
+                        offset=v_model.emission.offset, 
+                        cov=v_model.emission.cov, 
+                        prec = inv(v_model.emission.cov), 
+                        det_cov=det(v_model.emission.cov))
     
-    dims = Dims(z=transition.matrix.shape[0],x=emission.matrix.shape[0])
-    filtering = kalman.init(observations[0], v_prior, v_emission)[2:]
+    dims = Dims(z=transition.matrix.shape[0], x=emission.matrix.shape[0])
+
+    filtering = _init_filtering(observations[0], v_prior, v_emission)
 
     constants = 0
     quad_forms = []
@@ -110,7 +143,7 @@ def compute(model:Model, v_model:Model, observations):
     
 
     quad_forms.append(_get_quad_form_in_z_obs_term(observations[0], emission))
-    quad_forms.append(QuadForm(Omega=-0.5*inv(prior.cov), b=-prior.mean))
+    quad_forms.append(QuadForm(Omega=-0.5*inv(prior.cov), A=jnp.eye(dims.z), b=-prior.mean))
 
     for observation in observations[1:]:
 
@@ -123,20 +156,19 @@ def compute(model:Model, v_model:Model, observations):
                                                                         emission, 
                                                                         observation)
 
+
         constants += new_constants
         quad_forms = new_quad_forms
 
-        filtering = kalman.filter_step(filtering.mean, 
-                                        filtering.cov, 
-                                        observation,
-                                        v_transition,
-                                        v_emission)[2:]
+        filtering = _update_filtering(observation, filtering, v_transition, v_emission)
+
+
 
     constants += -_constant_terms_from_log_gaussian(dims.z, det(filtering.cov))
 
     for quad_form in quad_forms:
-        constants += _expect_quad_form_under_filtering(quad_form, filtering)
-    
+        constants += _expect_quad_form_under_filtering(quad_form, filtering) 
+    constants += 0.5*dims.z
     
     return constants 
 

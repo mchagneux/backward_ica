@@ -11,7 +11,7 @@ from jax import jit
 from jax.random import PRNGKey as generate_key
 from utils.linear_gaussian_hmm import sample_joint_sequence
 from utils.elbo import compute as elbo_compute
-
+from jax.config import config; config.update("jax_enable_x64", True)
 
 from jax.numpy import ndarray
 ## verbose functions 
@@ -106,5 +106,3 @@ print('JAX oracle:',jax_likelihood)
 v_model = model
 
 elbo = elbo_compute(model, v_model, observations)
-
-# print('Elbo:', elbo)
