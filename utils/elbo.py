@@ -94,7 +94,11 @@ def _expectations_under_backward(quad_forms, dims, backward, transition, emissio
     # dealing with backward term (integration of the quadratic form is just the dimension of z)
     new_constants += -_constant_terms_from_log_gaussian(dims.z, det(backward.cov))
     new_constants += 0.5*dims.z
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> efc9893459f45b8a0f5dfcaae10ff128f739bef9
     
     return new_constants, new_quad_forms
 

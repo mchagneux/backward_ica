@@ -8,15 +8,6 @@ import matplotlib.transforms as transforms
 from utils.linear_gaussian_hmm import sample_joint_sequence
 from utils.elbo import linear_gaussian_elbo
 
-import jax
-import jax.numpy as jnp
-import jax.random
-from jax.random import PRNGKey as generate_key
-from jax.random import multivariate_normal, normal
-from jax.config import config; config.update("jax_enable_x64", True)
-import optax
-from optax import GradientTransformation
-from tqdm import tqdm
 from time import time
 
 
@@ -59,10 +50,10 @@ def visualize_kalman_results(true_states, observations, filtered_state_means, fi
 
 
     plt.savefig('kalman')
+
 def test_kalman():
 
     model_params = get_model()
-    key = generate_key(0)
     true_states, observations = sample_joint_sequence(key=key, sequence_length=20, model_params=model_params)
 
     filtered_state_means, filtered_state_covariances, loglikelihood = filter(observations, model_params)
@@ -125,31 +116,31 @@ states, observations = sample_joint_sequence(key=key, sequence_length=10, model_
 
 true_elbo = kalman_filter(observations ,model)[2]
 print('Evidence:',true_elbo)
-# init_v_model = get_random_model(key)
-# print('Init ELBO:', linear_gaussian_elbo(model, init_v_model, observations))
-# loss = linear_gaussian_elbo
-# optimizer = optax.adam(learning_rate= - 1e-3)
+init_v_model = get_random_model(key)
+print('Init ELBO:', linear_gaussian_elbo(model, init_v_model, observations))
 
-# n_epochs = 3000
+loss = linear_gaussian_elbo
+optimizer = optax.adam(learning_rate= - 1e-3)
 
-# def fit(params: optax.Params, optimizer: optax.GradientTransformation) -> optax.Params:
-#     opt_state = optimizer.init(params)
+n_epochs = 3000
 
-#     # @jax.jit
-#     def step(params, opt_state, observations):
-#         loss_value, grads = jax.value_and_grad(loss, argnums=1)(model, params, observations)
-#         updates, opt_state = optimizer.update(grads, opt_state)
-#         params = optax.apply_updates(params, updates)
-#         return params, opt_state, loss_value
+def fit(params: optax.Params, optimizer: optax.GradientTransformation) -> optax.Params:
+    opt_state = optimizer.init(params)
 
-#     for _ in tqdm(range(n_epochs)):
-#         params, opt_state, loss_value = step(params, opt_state, observations)
+    @jax.jit
+    def step(params, opt_state, observations):
+        loss_value, grads = jax.value_and_grad(loss, argnums=1)(model, params, observations)
+        updates, opt_state = optimizer.update(grads, opt_state)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state, loss_value
 
-#     print('ELBO:', loss_value)
+    for _ in range(n_epochs):
+        params, opt_state, loss_value = step(params, opt_state, observations)
+        print('ELBO:', loss_value)
 
-#     return params
+    return params
   
-# fitted_v_model = fit(init_v_model, optimizer)
+fitted_v_model = fit(init_v_model, optimizer)
 
-# print(model)
-# print(fitted_v_model)
+print(model)
+print(fitted_v_model)

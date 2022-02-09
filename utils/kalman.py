@@ -1,10 +1,8 @@
-from jax.numpy.linalg import inv
-import jax.numpy as jnp
-import numpy as np
-from jax import jit
+from torch.linalg import inv as inv 
 from utils.misc import * 
-from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
 from utils.distributions import Gaussian
+from torch.distributions.multivariate_normal import MultivariateNormal
+import torch 
 
 def predict(current_state_mean, current_state_covariance, transition):
     predicted_state_mean = transition.matrix @ current_state_mean + transition.offset
@@ -26,38 +24,33 @@ def filter_step(current_state_mean, current_state_covariance, observation, trans
     filtered_mean, filtered_cov = update(predicted_mean, predicted_cov, observation, emission)
     return predicted_mean, predicted_cov, filtered_mean, filtered_cov
 
-def init(observation, prior_params:Prior, observation_params:Emission):
-    init_filtering_mean, init_filtering_cov = update(prior_params.mean, prior_params.cov, observation, observation_params)
-    return prior_params.mean, prior_params.cov, init_filtering_mean, init_filtering_cov
+def init(observation, prior:Prior, emission:Emission):
+    init_filtering_mean, init_filtering_cov = update(prior.mean, prior.cov, observation, emission)
+    return prior.mean, prior.cov, init_filtering_mean, init_filtering_cov
 
-def log_likelihood_term(predicted_state_mean, predicted_state_covariance, observation, observation_params:Emission):
-    return gaussian_logpdf(x=observation, 
-                        mean=observation_params.matrix @ predicted_state_mean + observation_params.offset, 
-                        cov=observation_params.matrix @ predicted_state_covariance @ observation_params.matrix.T + observation_params.cov)
+def log_likelihood_term(predicted_state_mean, predicted_state_covariance, observation, emission:Emission):
+    return MultivariateNormal(loc=emission.matrix @ predicted_state_mean + emission.offset, 
+                            covariance_matrix=emission.matrix @ predicted_state_covariance @ emission.matrix.T + emission.cov).log_prob(observation)
 
 def filter(observations, model:Model):
     num_samples = len(observations)
     loglikelihood = 0
     dim_z = model.transition.matrix.shape[0]
 
-    filtered_state_means = jnp.zeros((num_samples, dim_z))
-    filtered_state_covariances = jnp.zeros((num_samples, dim_z, dim_z))
+    filtered_state_means = torch.zeros((num_samples, dim_z))
+    filtered_state_covariances = torch.zeros((num_samples, dim_z, dim_z))
 
-    predicted_state_mean, predicted_state_covariance, init_filtering_mean, init_filtering_covariance = init(observations[0], model.prior, model.emission)
-    filtered_state_means = filtered_state_means.at[0].set(init_filtering_mean)
-    filtered_state_covariances = filtered_state_covariances.at[0].set(init_filtering_covariance)
+    predicted_state_mean, predicted_state_covariance, filtered_state_means[0], filtered_state_covariances[0] = init(observations[0], model.prior, model.emission)
     loglikelihood += log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[0], model.emission)
 
     for sample_nb in range(1, num_samples):
-        predicted_state_mean, predicted_state_covariance, new_filtered_state_mean, new_filtered_state_covariance = filter_step(
+        predicted_state_mean, predicted_state_covariance,  filtered_state_means[sample_nb],  filtered_state_covariances[sample_nb] = filter_step(
                                                                         filtered_state_means[sample_nb-1],
                                                                         filtered_state_covariances[sample_nb-1],
                                                                         observations[sample_nb],
                                                                         model.transition,
                                                                         model.emission)
 
-        filtered_state_means = filtered_state_means.at[sample_nb].set(new_filtered_state_mean)
-        filtered_state_covariances = filtered_state_covariances.at[sample_nb].set(new_filtered_state_covariance)
 
         loglikelihood += log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[sample_nb], model.emission)
 
