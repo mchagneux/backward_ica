@@ -90,32 +90,33 @@ def get_model():
                 emission=emission, 
                 prior=prior)
 
-init_prior_cov = torch.diag(torch.rand(2))
-init_transition_cov = torch.diag(torch.rand(2))
-init_emission_cov = torch.diag(torch.rand(2))
+init_prior_cov = 5 * torch.rand(2)
+init_transition_cov =  5 * torch.rand(2)
+init_emission_cov = 5 * torch.rand(2)
 
-class Diag(nn.Module):
-    def forward(self, X):
-        return torch.diag(X) # Return a symmetric matrix
+# class Diag(nn.Module):
+#     def forward(self, X):
+#         return torch.diag(X) # Return a symmetric matrix
 
-    def right_inverse(self, A):
-        return torch.diag(A)
+#     def right_inverse(self, A):
+#         return torch.diag(A)
 
 def get_random_model():
 
     state_dim, obs_dim = 2, 2
 
     prior_mean  = nn.parameter.Parameter(torch.rand(state_dim))
-    prior_cov = nn.parameter.Parameter(torch.rand((state_dim,state_dim)))
+    prior_cov = nn.parameter.Parameter(init_prior_cov)
+    
 
     transition_matrix = nn.parameter.Parameter(torch.diag(torch.rand(state_dim)))
     transition_offset = nn.parameter.Parameter(torch.rand(state_dim))
-    transition_cov = nn.parameter.Parameter(torch.rand((state_dim,state_dim)))
+    transition_cov = nn.parameter.Parameter(init_transition_cov)
 
 
     emission_matrix = nn.parameter.Parameter(torch.diag(torch.rand(obs_dim)))
     emission_offset = nn.parameter.Parameter(torch.zeros(obs_dim))
-    emission_cov = nn.parameter.Parameter(torch.rand((obs_dim,obs_dim)))
+    emission_cov = nn.parameter.Parameter(init_emission_cov)
 
 
     model = nn.ParameterDict({'prior_mean':prior_mean,
@@ -127,13 +128,13 @@ def get_random_model():
                         'emission_offset':emission_offset,
                         'emission_cov':emission_cov})
 
-    register_parametrization(model,'prior_cov',Definite())
-    register_parametrization(model,'transition_cov',Definite())
-    register_parametrization(model,'emission_cov',Definite())
+    # register_parametrization(model,'prior_cov',Diag(),unsafe=True)
+    # register_parametrization(model,'transition_cov',Diag(), unsafe=True)
+    # register_parametrization(model,'emission_cov',Diag(), unsafe=True)
 
-    model.prior_cov = Definite()(init_prior_cov)
-    model.transition_cov =  Definite()(init_prior_cov)
-    model.emission_cov =  Definite()(init_prior_cov)
+    # model.prior_cov = init_prior_cov
+    # model.transition_cov =  init_prior_cov
+    # model.emission_cov =  init_prior_cov
 
     return model
 
@@ -141,32 +142,32 @@ def get_random_model():
 model = get_random_model()
 
 for param in model.parameters():param.requires_grad = False
-states, observations = LinearGaussianHMM(model).sample_joint_sequence(10)
+hmm = LinearGaussianHMM(model)
+# states, observations = hmm.sample_joint_sequence(30)
 
+observation_sequences = [hmm.sample_joint_sequence(10)[1] for _ in range(30)]
 
-true_evidence = Kalman(model).filter(observations)[2]
-print('True evidence:',true_evidence)
-print('Difference TorchKalman and NumpyKalman:',torch.abs(true_evidence - NumpyKalman(model).filter(observations.numpy())[2]))
-print('Difference log(p(x)) and ELBO when q=p:',torch.abs(true_evidence - LinearGaussianELBO(model, model)(observations)))
+# true_evidence = Kalman(model).filter(observations)[2]
+# print('True evidence:',true_evidence)
+# print('Difference TorchKalman and NumpyKalman:',torch.abs(true_evidence - NumpyKalman(model).filter(observations.numpy())[2]))
+# print('Difference log(p(x)) and ELBO when q=p:',torch.abs(true_evidence - LinearGaussianELBO(model, model)(observations)))
 
 v_model = get_random_model()
 elbo = LinearGaussianELBO(model, v_model)
+kalman = Kalman(model)
 
 
+optimizer = torch.optim.SGD(params=v_model.parameters(), lr=1e-2)
 
-optimizer = torch.optim.Adam(params=v_model.parameters(), lr=1e-2)
+for epoch in range(50):
+    for observations in observation_sequences:
+        optimizer.zero_grad()
+        loss = -elbo(observations)
+        loss.backward()
+        optimizer.step()
+    with torch.no_grad():
+        print('Distance on one sequence:',torch.abs(kalman.filter(observation_sequences[0])[2] - LinearGaussianELBO(model, v_model)(observation_sequences[0])))
 
-for _ in range(1000):
-    optimizer.zero_grad()
-    loss = -elbo(observations)
-    loss.backward()
-    optimizer.step()
-    print('ELBO:', loss)
-
-
-
-
-
-
-
-
+for model_param, v_model_param in zip(model.named_parameters(),v_model.named_parameters()):
+    print(model_param)
+    print(v_model_param)

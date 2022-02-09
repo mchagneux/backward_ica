@@ -11,12 +11,12 @@ class LinearGaussianHMM:
     def sample_state_sequence(self, sequence_length):
         dim_z = self.model.transition_matrix.shape[0]
         state_sequence = torch.empty(size=(sequence_length, dim_z))
-        state_sequence[0] = MultivariateNormal(loc=self.model.prior_mean, covariance_matrix=self.model.prior_cov).sample()
+        state_sequence[0] = MultivariateNormal(loc=self.model.prior_mean, covariance_matrix=torch.diag(self.model.prior_cov ** 2)).sample()
         
 
         for sample_nb in range(1, sequence_length):
             state_sequence[sample_nb] = MultivariateNormal(loc=self.model.transition_matrix @ state_sequence[sample_nb-1] + self.model.transition_offset, 
-                                                            covariance_matrix=self.model.transition_cov).sample()
+                                                            covariance_matrix=torch.diag(self.model.transition_cov ** 2)).sample()
         
         return state_sequence
 
@@ -26,7 +26,7 @@ class LinearGaussianHMM:
         state_sequence = self.sample_state_sequence(sequence_length)
         for sample_nb in range(sequence_length):
             observation_sequence[sample_nb] = MultivariateNormal(loc=self.model.emission_matrix @ state_sequence[sample_nb] + self.model.emission_offset, 
-                                                                covariance_matrix=self.model.emission_cov).sample()
+                                                                covariance_matrix=torch.diag(self.model.emission_cov ** 2)).sample()
 
         return state_sequence, observation_sequence
 

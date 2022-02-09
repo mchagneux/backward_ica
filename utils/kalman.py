@@ -14,12 +14,12 @@ class Kalman(nn.Module):
 
     def predict(self, current_state_mean, current_state_covariance):
         predicted_state_mean = self.model.transition_matrix @ current_state_mean + self.model.transition_offset
-        predicted_state_covariance = self.model.transition_matrix @ current_state_covariance @ self.model.transition_matrix.T + self.model.transition_cov
+        predicted_state_covariance = self.model.transition_matrix @ current_state_covariance @ self.model.transition_matrix.T + torch.diag(self.model.transition_cov ** 2)
         return predicted_state_mean, predicted_state_covariance
 
     def update(self, predicted_state_mean, predicted_state_covariance, observation):
         predicted_observation_mean = self.model.emission_matrix @ predicted_state_mean + self.model.emission_offset
-        predicted_observation_covariance = self.model.emission_matrix @ predicted_state_covariance @ self.model.emission_matrix.T + self.model.emission_cov
+        predicted_observation_covariance = self.model.emission_matrix @ predicted_state_covariance @ self.model.emission_matrix.T + torch.diag(self.model.emission_cov ** 2)
         kalman_gain = predicted_state_covariance @ self.model.emission_matrix.T @ torch.inverse(predicted_observation_covariance)
 
         corrected_state_mean = predicted_state_mean + kalman_gain @ (observation - predicted_observation_mean)
@@ -33,12 +33,12 @@ class Kalman(nn.Module):
         return predicted_mean, predicted_cov, filtered_mean, filtered_cov
 
     def init(self, observation):
-        init_filtering_mean, init_filtering_cov = self.update(self.model.prior_mean, self.model.prior_cov, observation)
-        return self.model.prior_mean, self.model.prior_cov, init_filtering_mean, init_filtering_cov
+        init_filtering_mean, init_filtering_cov = self.update(self.model.prior_mean, torch.diag(self.model.prior_cov ** 2), observation)
+        return self.model.prior_mean, torch.diag(self.model.prior_cov ** 2), init_filtering_mean, init_filtering_cov
 
     def _log_likelihood_term(self, predicted_state_mean, predicted_state_covariance, observation):
         return MultivariateNormal(loc=self.model.emission_matrix @ predicted_state_mean + self.model.emission_offset, 
-                                covariance_matrix=self.model.emission_matrix @ predicted_state_covariance @ self.model.emission_matrix.T + self.model.emission_cov).log_prob(observation)
+                                covariance_matrix=self.model.emission_matrix @ predicted_state_covariance @ self.model.emission_matrix.T + torch.diag(self.model.emission_cov ** 2)).log_prob(observation)
 
     def filter(self, observations):
         num_samples = len(observations)
@@ -68,12 +68,12 @@ class NumpyKalman:
 
         self.transition_matrix = model.transition_matrix.numpy()
         self.transition_offset = model.transition_offset.numpy()
-        self.transition_covariance = model.transition_cov.numpy()
+        self.transition_covariance = np.diag(model.transition_cov.numpy() ** 2)
         self.observation_matrix = model.emission_matrix.numpy()
         self.observation_offset = model.emission_offset.numpy()
-        self.observation_covariance = model.emission_cov.numpy()
+        self.observation_covariance = np.diag(model.emission_cov.numpy() ** 2)
         self.dim_state = model.transition_matrix.shape[0]
-        self.prior_mean, self.prior_cov = model.prior_mean.numpy(), model.prior_cov.numpy()
+        self.prior_mean, self.prior_cov = model.prior_mean.numpy(), np.diag(model.prior_cov.numpy() ** 2)
 
     def predict(self, current_state_mean, current_state_covariance):
         predicted_state_mean = self.transition_matrix @ current_state_mean + self.transition_offset
