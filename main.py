@@ -50,6 +50,7 @@ def visualize_kalman_results(true_states, observations, filtered_state_means, fi
 
 
     plt.savefig('kalman')
+
 def test_kalman():
 
     model_params = get_model()
