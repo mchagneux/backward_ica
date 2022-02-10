@@ -21,6 +21,7 @@ def update(predicted_state_mean, predicted_state_covariance, observation, emissi
 
     return corrected_state_mean, corrected_state_covariance
 
+@jax.jit
 def filter_step(current_state_mean, current_state_covariance, observation, transition:Transition, emission:Emission):
     predicted_mean, predicted_cov = predict(current_state_mean, current_state_covariance, transition)
     filtered_mean, filtered_cov = update(predicted_mean, predicted_cov, observation, emission)
