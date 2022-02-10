@@ -123,11 +123,17 @@ model = get_model()
 key = generate_key(0)
 states, observations = sample_joint_sequence(key=key, sequence_length=10, model_params=model)
 
-true_elbo = kalman_filter(observations ,model)[2]
-print('Evidence:',true_elbo)
+fast_kf = jax.jit(kalman_filter)
+print('Evidence:',fast_kf(observations ,model)[2])
+print('Evidence, numpy:',NumpyKalman(model).filter(observations)[2])
+
+
+# print('Evidence:',fast_kf(observations ,model)[2])
+# print('Evidence, numpy:',NumpyKalman(model).filter(observations)[2])
+
 # init_v_model = get_random_model(key)
-# print('Init ELBO:', linear_gaussian_elbo(model, init_v_model, observations))
-# loss = linear_gaussian_elbo
+print('Init ELBO:', linear_gaussian_elbo(model, model, observations))
+
 # optimizer = optax.adam(learning_rate= - 1e-3)
 
 # n_epochs = 3000

@@ -1,7 +1,7 @@
 from jax.numpy.linalg import inv
 import jax.numpy as jnp
 import numpy as np
-from jax import jit
+import jax
 from utils.misc import * 
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
 from utils.distributions import Gaussian
@@ -35,6 +35,7 @@ def log_likelihood_term(predicted_state_mean, predicted_state_covariance, observ
                         mean=observation_params.matrix @ predicted_state_mean + observation_params.offset, 
                         cov=observation_params.matrix @ predicted_state_covariance @ observation_params.matrix.T + observation_params.cov)
 
+@jax.jit
 def filter(observations, model:Model):
     num_samples = len(observations)
     loglikelihood = 0
@@ -48,18 +49,26 @@ def filter(observations, model:Model):
     filtered_state_covariances = filtered_state_covariances.at[0].set(init_filtering_covariance)
     loglikelihood += log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[0], model.emission)
 
-    for sample_nb in range(1, num_samples):
+    def _step(i, val):
+        transition, emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood = val
         predicted_state_mean, predicted_state_covariance, new_filtered_state_mean, new_filtered_state_covariance = filter_step(
-                                                                        filtered_state_means[sample_nb-1],
-                                                                        filtered_state_covariances[sample_nb-1],
-                                                                        observations[sample_nb],
-                                                                        model.transition,
-                                                                        model.emission)
+                                                                        filtered_state_means[i-1],
+                                                                        filtered_state_covariances[i-1],
+                                                                        observations[i],
+                                                                        transition,
+                                                                        emission)
 
-        filtered_state_means = filtered_state_means.at[sample_nb].set(new_filtered_state_mean)
-        filtered_state_covariances = filtered_state_covariances.at[sample_nb].set(new_filtered_state_covariance)
+        filtered_state_means = filtered_state_means.at[i].set(new_filtered_state_mean)
+        filtered_state_covariances = filtered_state_covariances.at[i].set(new_filtered_state_covariance)
 
-        loglikelihood += log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[sample_nb], model.emission)
+        loglikelihood += log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[i], emission)
+
+        return (transition, emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood)
+
+    init_val = (model.transition, model.emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood)
+
+    _, _, _, filtered_state_means, filtered_state_covariances, loglikelihood = jax.lax.fori_loop(lower=1, upper=num_samples, body_fun = _step, init_val=init_val)
+
 
 
     return filtered_state_means, filtered_state_covariances, loglikelihood

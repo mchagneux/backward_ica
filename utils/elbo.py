@@ -2,6 +2,7 @@ from collections import namedtuple
 from typing import NamedTuple
 import utils.kalman as kalman 
 from utils.misc import *
+import jax
 import jax.numpy as jnp
 from jax.numpy import trace
 from jax.numpy.linalg import det, inv
@@ -67,10 +68,6 @@ def _get_quad_form_in_z_obs_term(observation, emission):
                     A = emission.matrix, 
                     b = emission.offset - observation)    
 
-def _merge_quad_forms(quad_forms):
-
-    pass
-
 def _expectations_under_backward(quad_forms, dims, backward, transition, emission, observation):
 
     new_constants = 0
@@ -97,8 +94,6 @@ def _expectations_under_backward(quad_forms, dims, backward, transition, emissio
     # dealing with backward term (integration of the quadratic form is just the dimension of z)
     new_constants += -_constant_terms_from_log_gaussian(dims.z, det(backward.cov))
     new_constants += 0.5*dims.z
-
-    new_quad_forms = _merge_quad_forms(quad_forms)
 
     
     return new_constants, new_quad_forms
@@ -158,25 +153,29 @@ def linear_gaussian_elbo(model:Model, v_model:Model, observations):
     quad_forms.append(_get_quad_form_in_z_obs_term(observations[0], emission))
     quad_forms.append(QuadForm(Omega=-0.5*inv(prior.cov), A=jnp.eye(dims.z), b=-prior.mean))
 
-
-    for observation in observations[1:]:
-
+    def _step(i, val):
+        dims, transition, emission, observations, v_transition, v_emission, filtering, constants, quad_forms = val 
         backward = _update_backward(filtering, v_transition)
 
         new_constants, new_quad_forms = _expectations_under_backward(quad_forms, 
-                                                                        dims,
-                                                                        backward,
-                                                                        transition,
-                                                                        emission, 
-                                                                        observation)
+                                                                    dims,
+                                                                    backward,
+                                                                    transition,
+                                                                    emission, 
+                                                                    observations[i])
 
 
         constants += new_constants
         quad_forms = new_quad_forms
 
-        filtering = _update_filtering(observation, filtering, v_transition, v_emission)
+        filtering = _update_filtering(observations[i], filtering, v_transition, v_emission)
 
+        return (dims, transition, emission, observations, v_transition, v_emission, filtering, constants, quad_forms)
 
+    init_val = (dims, transition, emission, observations, v_transition, v_emission, filtering, constants, quad_forms)
+    
+    _, _, _, _, _, _, filtering, constants, quad_forms = jax.lax.fori_loop(lower=1, upper=len(observations), body_fun=_step, init_val=init_val)
+    
     constants += -_constant_terms_from_log_gaussian(dims.z, det(filtering.cov))
 
     for quad_form in quad_forms:
