@@ -30,7 +30,5 @@ class LinearGaussianHMM:
 
         return state_sequence, observation_sequence
 
-        
-
-            
+                    
 

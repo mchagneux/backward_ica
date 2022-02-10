@@ -7,11 +7,6 @@ import torch.nn as nn
 from numpy import dtype, float64, pi as np_pi
 pi = torch.as_tensor(np_pi, dtype=torch.float64)
 
-Backward = namedtuple('Backward',['A','a','cov'])
-Filtering = namedtuple('Filtering',['mean','cov'])
-
-# Transition = namedtuple('Transition',['matrix','offset','cov','prec','det_cov'])
-# Emission = namedtuple('Emission',['matrix','offset','cov','prec','det_cov'])
 
 def _constant_terms_from_log_gaussian(dim, det_cov):
             return -0.5*(torch.as_tensor(dim, dtype=torch.float64) * torch.log(2*pi) + torch.log(det_cov))

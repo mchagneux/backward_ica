@@ -90,9 +90,12 @@ def get_model():
                 emission=emission, 
                 prior=prior)
 
-init_prior_cov = 5 * torch.rand(2)
-init_transition_cov =  5 * torch.rand(2)
-init_emission_cov = 5 * torch.rand(2)
+
+state_dim, obs_dim = 1, 1
+
+init_prior_cov = torch.rand(state_dim)
+init_transition_cov =  torch.rand(state_dim)
+init_emission_cov = torch.rand(obs_dim)
 
 # class Diag(nn.Module):
 #     def forward(self, X):
@@ -103,7 +106,6 @@ init_emission_cov = 5 * torch.rand(2)
 
 def get_random_model():
 
-    state_dim, obs_dim = 2, 2
 
     prior_mean  = nn.parameter.Parameter(torch.rand(state_dim))
     prior_cov = nn.parameter.Parameter(init_prior_cov)
@@ -143,9 +145,9 @@ model = get_random_model()
 
 for param in model.parameters():param.requires_grad = False
 hmm = LinearGaussianHMM(model)
-# states, observations = hmm.sample_joint_sequence(30)
+states, observations = hmm.sample_joint_sequence(30)
 
-observation_sequences = [hmm.sample_joint_sequence(10)[1] for _ in range(30)]
+observation_sequences = [hmm.sample_joint_sequence(10)[1] for _ in range(5)]
 
 # true_evidence = Kalman(model).filter(observations)[2]
 # print('True evidence:',true_evidence)
@@ -159,14 +161,15 @@ kalman = Kalman(model)
 
 optimizer = torch.optim.SGD(params=v_model.parameters(), lr=1e-2)
 
-for epoch in range(50):
+true_evidence_for_seq_0 = kalman.filter(observation_sequences[0])[2]
+for epoch in range(30):
     for observations in observation_sequences:
         optimizer.zero_grad()
         loss = -elbo(observations)
         loss.backward()
         optimizer.step()
     with torch.no_grad():
-        print('Distance on one sequence:',torch.abs(kalman.filter(observation_sequences[0])[2] - LinearGaussianELBO(model, v_model)(observation_sequences[0])))
+        print('Distance on one sequence:',torch.abs(true_evidence_for_seq_0 - LinearGaussianELBO(model, v_model)(observation_sequences[0])))
 
 for model_param, v_model_param in zip(model.named_parameters(),v_model.named_parameters()):
     print(model_param)
