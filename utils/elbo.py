@@ -4,14 +4,16 @@ from utils.kalman import Kalman
 from utils.misc import *
 import torch 
 import torch.nn as nn 
-from numpy import dtype, float64, pi as np_pi
-pi = torch.as_tensor(np_pi, dtype=torch.float64)
+torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_dtype(torch.float64)
+
+pi = torch.as_tensor(torch.pi)
 
 from collections import namedtuple
 QuadForm = namedtuple('QuadForm',['Omega','A','b'])
 
 def _constant_terms_from_log_gaussian(dim, det_cov):
-            return -0.5*(torch.as_tensor(dim, dtype=torch.float64) * torch.log(2*pi) + torch.log(det_cov))
+            return -0.5*(dim* torch.log(2*pi) + torch.log(det_cov))
 
 def _eval_quad_form(quad_form, x):
         common_term = quad_form.A @ x + quad_form.b
@@ -34,8 +36,8 @@ class LinearGaussianELBO(torch.nn.Module):
         self.filtering_mean = None 
         self.filtering_cov = None
 
-        self.dim_z = self.model.transition.matrix.shape[0]
-        self.dim_x = self.model.emission.matrix.shape[0]
+        self.dim_z = torch.as_tensor(self.model.transition.matrix.shape[0])
+        self.dim_x = torch.as_tensor(self.model.emission.matrix.shape[0])
 
     def _expect_quad_form_under_backward(self, quad_form:QuadForm):
         # expectation of (Au+b)^T Omega (Au+b) under the backward 
