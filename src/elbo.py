@@ -1,5 +1,5 @@
 from collections import namedtuple
-from utils.kalman import Kalman 
+from src.kalman import Kalman 
 import torch 
 import torch.nn as nn 
 torch.set_default_tensor_type(torch.DoubleTensor)

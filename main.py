@@ -1,8 +1,7 @@
-from utils.kalman import Kalman 
-from utils.kalman import NumpyKalman
+from src.kalman import Kalman, NumpyKalman
 import matplotlib.transforms as transforms
-from utils.hmm import AdditiveGaussianHMM, LinearGaussianHMM
-from utils.elbo import LinearGaussianELBO
+from src.hmm import AdditiveGaussianHMM, LinearGaussianHMM
+from src.elbo import LinearGaussianELBO
 import torch
 from tqdm import tqdm
 torch.set_default_dtype(torch.float64) 
