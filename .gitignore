@@ -1,4 +1,4 @@
-#  *.pyc
-#  **/__pycache_/
- *.png
- test.py
+*.pyc
+**/__pycache_/
+*.png
+test.py
