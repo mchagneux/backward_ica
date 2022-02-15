@@ -4,12 +4,10 @@ from utils.kalman import Kalman
 from utils.misc import *
 import torch 
 import torch.nn as nn 
-from numpy import dtype, float64, pi as np_pi
-pi = torch.as_tensor(np_pi, dtype=torch.float64)
 
 
 def _constant_terms_from_log_gaussian(dim, det_cov):
-            return -0.5*(torch.as_tensor(dim, dtype=torch.float64) * torch.log(2*pi) + torch.log(det_cov))
+            return -0.5*(dim * torch.log(2*torch.as_tensor(torch.pi)) + torch.log(det_cov))
 
 def _eval_quad_form(quad_form, x):
         common_term = quad_form.A @ x + quad_form.b
@@ -17,7 +15,7 @@ def _eval_quad_form(quad_form, x):
 
 class LinearGaussianELBO(torch.nn.Module):
 
-    def __init__(self, model:nn.ParameterDict, v_model):
+    def __init__(self, model:nn.ModuleDict, v_model:nn.ModuleDict):
         super().__init__()
 
         self.model = model
@@ -25,15 +23,27 @@ class LinearGaussianELBO(torch.nn.Module):
         
         self.kalman = Kalman(self.v_model)
 
+        self.dim_z = torch.as_tensor(self.model.transition_matrix.shape[0])
+        self.dim_x = torch.as_tensor(self.model.emission_matrix.shape[0])
 
-        self.backward_cov = None 
-        self.backward_A = None 
-        self.backward_a = None 
-        self.filtering_mean = None 
-        self.filtering_cov = None
 
-        self.dim_z = self.model.transition_matrix.shape[0]
-        self.dim_x = self.model.emission_matrix.shape[0]
+        self.backward_cov = torch.empty_like(self.model.transition_cov)
+        self.backward_A =  torch.empty_like(self.model.transition_matrix)
+        self.backward_a =  torch.empty_like(self.model.transition_offset)
+        self.filtering_mean = torch.empty_like(self.model.transition_offset) 
+        self.filtering_cov = torch.empty_like(self.model.transition_cov) 
+
+
+        self.model_transition_prec = torch.empty_like(self.model.transition_cov)
+        self.model_transition_det_cov = torch.empty(1)
+        self.model_emission_prec = torch.empty_like(self.model.emission_cov)
+        self.model_emission_det_cov = torch.empty(1)
+
+
+        self.v_model_transition_prec = torch.empty_like(self.model.transition_cov)
+        self.v_model_transition_det_cov = torch.empty(1)
+        self.v_model_emission_prec = torch.empty_like(self.model.emission_cov)
+        self.v_model_emission_det_cov = torch.empty(1)
 
     def _expect_quad_form_under_backward(self, quad_form:QuadForm):
         # expectation of (Au+b)^T Omega (Au+b) under the backward 
