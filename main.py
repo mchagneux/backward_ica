@@ -50,9 +50,9 @@ def get_random_model():
     register_parametrization(model.transition,'cov', Diag())
     register_parametrization(model.emission,'cov', Diag())
 
-    model.prior.cov = torch.tensor([[0.01,0],[0,0.01]])
-    model.emission.cov =  torch.tensor([[0.01,0],[0,0.01]])
-    model.transition.cov =  torch.tensor([[0.01,0],[0,0.01]])
+    model.prior.cov = torch.tensor([[0.001,0],[0,0.001]])
+    model.emission.cov =  torch.tensor([[0.001,0],[0,0.001]])
+    model.transition.cov =  torch.tensor([[0.001,0],[0,0.001]])
 
     return model
 
@@ -63,6 +63,9 @@ for param in model.parameters():param.requires_grad = False
 hmm = LinearGaussianHMM(model)
 
 v_model = get_random_model()
+# v_model.prior.parametrizations.cov.original.requires_grad = False
+# v_model.transition.parametrizations.cov.original.requires_grad = False 
+# v_model.emission.parametrizations.cov.original.requires_grad = False 
 
 elbo = LinearGaussianELBO(model, v_model)
 
@@ -92,8 +95,8 @@ with torch.no_grad():
     print('Prior mean difference:', torch.abs(model.prior.mean - v_model.prior.mean).numpy())
     print('Prior cov difference:', torch.abs(model.prior.cov - v_model.prior.cov).numpy())
 
-    print('Transition mean difference:', torch.abs(model.transition_matrix - v_model.transition.matrix).numpy())
-    print('Transition offset difference:', torch.abs(model.transition_offset - v_model.transition.offset).numpy())
+    print('Transition mean difference:', torch.abs(model.transition.matrix - v_model.transition.matrix).numpy())
+    print('Transition offset difference:', torch.abs(model.transition.offset - v_model.transition.offset).numpy())
     print('Transition cov difference:', torch.abs(model.transition.cov - v_model.transition.cov).numpy())
 
     print('Emission matrix difference:', torch.abs(model.emission.matrix - v_model.emission.matrix).numpy())
