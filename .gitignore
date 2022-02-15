@@ -1,4 +1,4 @@
  *.pyc
- **/__pykalman__/
+ **/__pycache_/
  *.png
  test.py
