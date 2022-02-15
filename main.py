@@ -2,57 +2,61 @@ from utils.kalman import Kalman
 from utils.kalman import NumpyKalman
 from utils.misc import * 
 import matplotlib.transforms as transforms
-from utils.hmm import LinearGaussianHMM
+from utils.linear_gaussian_hmm import LinearGaussianHMM
 from utils.elbo import LinearGaussianELBO
 import torch
 import torch.nn as nn 
 from torch.nn.utils.parametrize import register_parametrization
 from tqdm import tqdm
 torch.set_default_dtype(torch.float64) 
-torch.set_default_tensor_type(torch.DoubleTensor)
 torch.set_printoptions(precision=20)
+## verbose functions 
 
 
 
 
 state_dim, obs_dim = 2, 2
 
-class Diag(nn.Module):
-    def forward(self, X):
-        return torch.diag(X) ** 2 # Return a diagonal matrix with positive eigenvalues
 
-    def right_inverse(self, A):
-        return torch.sqrt(torch.diag(A))
+# class Diag(nn.Module):
+#     def forward(self, X):
+#         return torch.diag(X) # Return a symmetric matrix
+
+#     def right_inverse(self, A):
+#         return torch.diag(A)
 
 def get_random_model():
 
 
     prior_mean  = nn.parameter.Parameter(torch.rand(state_dim))
-    prior_cov = nn.parameter.Parameter(torch.rand(state_dim))
-    prior = nn.ParameterDict({'mean':prior_mean,'cov':prior_cov})
+    prior_cov = nn.parameter.Parameter(torch.tensor([0.1, 0.1], dtype=torch.float64))
     
 
     transition_matrix = nn.parameter.Parameter(torch.diag(torch.rand(state_dim)))
     transition_offset = nn.parameter.Parameter(torch.rand(state_dim))
-    transition_cov = nn.parameter.Parameter(torch.rand(state_dim))
-    transition = nn.ParameterDict({'matrix':transition_matrix,'offset':transition_offset, 'cov':transition_cov})
+    transition_cov = nn.parameter.Parameter(torch.tensor([0.1, 0.1], dtype=torch.float64))
+
 
     emission_matrix = nn.parameter.Parameter(torch.diag(torch.rand(obs_dim)))
     emission_offset = nn.parameter.Parameter(torch.zeros(obs_dim))
-    emission_cov = nn.parameter.Parameter(torch.rand(obs_dim))
-    emission = nn.ParameterDict({'matrix':emission_matrix,'offset':emission_offset, 'cov':emission_cov})
+    emission_cov = nn.parameter.Parameter(torch.tensor([0.1, 0.1], dtype=torch.float64))
 
-    model = nn.ModuleDict({'prior':prior, 
-                        'transition':transition, 
-                        'emission':emission})
+    model = nn.ParameterDict({'prior_mean':prior_mean,
+                        'prior_cov':prior_cov,
+                        'transition_matrix':transition_matrix,
+                        'transition_offset':transition_offset,
+                        'transition_cov':transition_cov,
+                        'emission_matrix':emission_matrix,
+                        'emission_offset':emission_offset,
+                        'emission_cov':emission_cov})
 
-    register_parametrization(model.prior,'cov', Diag())
-    register_parametrization(model.transition,'cov', Diag())
-    register_parametrization(model.emission,'cov', Diag())
+    # register_parametrization(model,'prior_cov',Diag(),unsafe=True)
+    # register_parametrization(model,'transition_cov',Diag(), unsafe=True)
+    # register_parametrization(model,'emission_cov',Diag(), unsafe=True)
 
-    model.prior.cov = torch.tensor([[0.01,0],[0,0.01]])
-    model.emission.cov =  torch.tensor([[0.01,0],[0,0.01]])
-    model.transition.cov =  torch.tensor([[0.01,0],[0,0.01]])
+    # model.prior_cov = init_prior_cov
+    # model.transition_cov =  init_prior_cov
+    # model.emission_cov =  init_prior_cov
 
     return model
 
@@ -61,7 +65,7 @@ model = get_random_model()
 
 for param in model.parameters():param.requires_grad = False
 hmm = LinearGaussianHMM(model)
-states, observations = hmm.sample_joint_sequence(100)
+states, observations = hmm.sample_joint_sequence(50)
 
 
 true_evidence = Kalman(model).filter(observations)[2]

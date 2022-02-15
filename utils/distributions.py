@@ -46,3 +46,4 @@ class MultivariateUniform(Distribution):
 
 #     gaussian.mean = np.ones((2,))
 #     print(gaussian.scipy_dist.mean)
+
