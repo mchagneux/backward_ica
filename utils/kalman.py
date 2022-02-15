@@ -1,5 +1,4 @@
-from utils.misc import * 
-from utils.distributions import Gaussian
+from scipy.stats import multivariate_normal
 import numpy as np 
 from torch.distributions.multivariate_normal import MultivariateNormal
 import torch 
@@ -62,10 +61,8 @@ class Kalman(nn.Module):
 
         return filtered_state_means, filtered_state_covariances, loglikelihood
 
-
-
-
 class NumpyKalman: 
+
     def __init__(self,
             model):
 
@@ -103,7 +100,7 @@ class NumpyKalman:
         return self.prior_mean, self.prior_cov, init_filtering_mean, init_filtering_cov
 
     def loglikelihood_term(self, predicted_state_mean, predicted_state_covariance, observation):
-        return Gaussian(
+        return multivariate_normal(
             mean=self.observation_weight @ predicted_state_mean + self.observation_bias, 
             cov=self.observation_weight @ predicted_state_covariance @ self.observation_weight.T + self.observation_covariance).logpdf(observation)
 

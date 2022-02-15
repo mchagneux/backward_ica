@@ -1,7 +1,5 @@
 from collections import namedtuple
-from typing import NamedTuple
 from utils.kalman import Kalman 
-from utils.misc import *
 import torch 
 import torch.nn as nn 
 torch.set_default_tensor_type(torch.DoubleTensor)
@@ -9,7 +7,6 @@ torch.set_default_dtype(torch.float64)
 
 pi = torch.as_tensor(torch.pi)
 
-from collections import namedtuple
 QuadForm = namedtuple('QuadForm',['Omega','A','b'])
 
 def _constant_terms_from_log_gaussian(dim, det_cov):
