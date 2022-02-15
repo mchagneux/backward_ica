@@ -1,2 +1,4 @@
  *.pyc
  **/__pykalman__/
+ *.png
+ test.py
