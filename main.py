@@ -65,31 +65,53 @@ model = get_random_model()
 
 for param in model.parameters():param.requires_grad = False
 hmm = LinearGaussianHMM(model)
-states, observations = hmm.sample_joint_sequence(50)
+# states, observations = hmm.sample_joint_sequence(30)
 
 
-true_evidence = Kalman(model).filter(observations)[2]
-print('True evidence:',true_evidence)
-print('Difference TorchKalman and NumpyKalman:',torch.abs(true_evidence - NumpyKalman(model).filter(observations.numpy())[2]))
-print('Difference log(p(x)) and ELBO when q=p:',torch.abs(true_evidence - LinearGaussianELBO(model, model)(observations)))
+# true_evidence = Kalman(model).filter(observations)[2]
+# print('True evidence:',true_evidence)
+# print('Difference TorchKalman and NumpyKalman:',torch.abs(true_evidence - NumpyKalman(model).filter(observations.numpy())[2]))
+# print('Difference log(p(x)) and ELBO when q=p:',torch.abs(true_evidence - LinearGaussianELBO(model, model)(observations)))
 
+v_model = get_random_model()
+# v_model.prior_cov.requires_grad = False 
+# v_model.transition_cov.requires_grad = False 
+# v_model.emission_cov.requires_grad = False
 
-elbo = LinearGaussianELBO(model, get_random_model())
+elbo = LinearGaussianELBO(model, v_model)
+# scipted_elbo = torch.jit.script(elbo)
 
-
+# print(elbo(observations))
+# print(scipted_elbo(observations))
 optimizer = torch.optim.Adam(params=elbo.parameters(), lr=1e-2)
 
+sequences = [hmm.sample_joint_sequence(8)[1] for _ in range(15)]
 eps = torch.inf
 
-while eps > 1:
-    optimizer.zero_grad()
-    loss = -elbo(observations)
-    loss.backward()
-    optimizer.step()
+true_evidence_all_sequences = sum(Kalman(model).filter(sequence)[2] for sequence in sequences)
+print('True evidence accross all sequences:', true_evidence_all_sequences)
+while eps > 0.1:
+    epoch_loss = 0.0
+    for sequence in sequences: 
+        optimizer.zero_grad()
+        loss = -elbo(sequence)
+        loss.backward()
+        optimizer.step()
+        epoch_loss += -loss
     with torch.no_grad():
-        eps = torch.abs(true_evidence + loss)
-        print('L(theta, phi) - log(p_theta(x)):', eps)
+        eps = torch.abs(true_evidence_all_sequences - epoch_loss)
+        print('Average of "L(theta, phi) - log(p_theta(x))":', eps)
     
 
-for model_param, v_model_param in zip(elbo.model, elbo.v_model):
-    print(torch.abs(model_param - v_model_param))
+with torch.no_grad():
+    v_model = elbo.v_model
+    print('Prior mean difference:', torch.abs(model.prior_mean - v_model.prior_mean).numpy())
+    print('Prior cov difference:', torch.abs(model.prior_cov**2 - v_model.prior_cov**2).numpy())
+
+    print('Transition mean difference:', torch.abs(model.transition_matrix - v_model.transition_matrix).numpy())
+    print('Transition offset difference:', torch.abs(model.transition_offset - v_model.transition_offset).numpy())
+    print('Transition cov difference:', torch.abs(model.transition_cov**2 - v_model.transition_cov**2).numpy())
+
+    print('Emission matrix difference:', torch.abs(model.emission_matrix - v_model.emission_matrix).numpy())
+    print('Emission offset difference:', torch.abs(model.emission_offset - v_model.emission_offset).numpy())
+    print('Emission cov difference:', torch.abs(model.emission_cov**2 - v_model.emission_cov**2).numpy())
