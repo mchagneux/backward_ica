@@ -1,45 +1,18 @@
-import nntplib
 import torch 
 import torch.nn as nn
-from torch.nn.utils.parametrize import register_parametrization
 
 
-class Diag(nn.Module):
-    def forward(self, X):
-        return torch.diag(X) ** 2 # Return a symmetric matrix
-
-    def right_inverse(self, A):
-        return torch.sqrt(torch.diag(A))
-
-class Det(nn.Module):
-
-    def forward(self, X):
-        return torch.det(X)
-
-class Inv(nn.Module):
-    def forward(self, X):
-        return torch.inverse(X)
-
-    def right_inverse(self, A):
-        return torch.inverse(A)
+state_dim = 2 
+param1 = nn.parameter.Parameter(torch.rand(state_dim))
 
 
-cov1 = nn.parameter.Parameter(torch.rand(2))
+matrix = nn.parameter.Parameter(torch.diag(torch.rand(state_dim)))
+offset = nn.parameter.Parameter(torch.rand(state_dim))
 
-cov_dict = nn.ParameterDict({'cov1':cov1})
+transition = nn.Linear(in_features=state_dim, out_features=state_dim, bias=True)
 
-parameter_dict = nn.ModuleDict({'covs':cov_dict})
+transition.weight = nn.parameter.Parameter(torch.diag(torch.rand(state_dim)))
+transition.bias  = nn.parameter.Parameter(torch.rand(state_dim))
+transition.cov = nn.parameter.Parameter(torch.rand((state_dim,state_dim)))
 
-register_parametrization(parameter_dict.covs, 'cov1', Diag())
-
-
-
-otherModule = nn.ModuleList([parameter_dict])
-parameter_dict.covs.cov1 = torch.tensor([[0.01,0.2],[0,0.01]])
-print('Initialized at:',parameter_dict.covs.cov1)
-parameter_dict.covs.cov1 -= torch.tensor([[0.005,0.2],[0,0.005]])
-print('After update:',parameter_dict.covs.cov1)
-for name, param in parameter_dict.named_parameters(): 
-    if name == 'covs.parametrizations.cov1.original': print(param)
-
-
+test = 0 

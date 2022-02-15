@@ -13,17 +13,17 @@ class Kalman(nn.Module):
         self.model = model 
 
     def predict(self, current_state_mean, current_state_covariance):
-        predicted_state_mean = self.model.transition.matrix @ current_state_mean + self.model.transition.offset
-        predicted_state_covariance = self.model.transition.matrix @ current_state_covariance @ self.model.transition.matrix.T + self.model.transition.cov
+        predicted_state_mean = self.model.transition.map(current_state_mean)
+        predicted_state_covariance = self.model.transition.map.weight @ current_state_covariance @ self.model.transition.map.weight.T + self.model.transition.cov
         return predicted_state_mean, predicted_state_covariance
 
     def update(self, predicted_state_mean, predicted_state_covariance, observation):
-        predicted_observation_mean = self.model.emission.matrix @ predicted_state_mean + self.model.emission.offset
-        predicted_observation_covariance = self.model.emission.matrix @ predicted_state_covariance @ self.model.emission.matrix.T + self.model.emission.cov
-        kalman_gain = predicted_state_covariance @ self.model.emission.matrix.T @ torch.inverse(predicted_observation_covariance)
+        predicted_observation_mean = self.model.emission.map(predicted_state_mean)
+        predicted_observation_covariance = self.model.emission.map.weight @ predicted_state_covariance @ self.model.emission.map.weight.T + self.model.emission.cov
+        kalman_gain = predicted_state_covariance @ self.model.emission.map.weight.T @ torch.inverse(predicted_observation_covariance)
 
         corrected_state_mean = predicted_state_mean + kalman_gain @ (observation - predicted_observation_mean)
-        corrected_state_covariance = predicted_state_covariance - kalman_gain @ self.model.emission.matrix @ predicted_state_covariance
+        corrected_state_covariance = predicted_state_covariance - kalman_gain @ self.model.emission.map.weight @ predicted_state_covariance
 
         return corrected_state_mean, corrected_state_covariance
 
@@ -37,13 +37,13 @@ class Kalman(nn.Module):
         return self.model.prior.mean, self.model.prior.cov, init_filtering_mean, init_filtering_cov
 
     def _log_likelihood_term(self, predicted_state_mean, predicted_state_covariance, observation):
-        return MultivariateNormal(loc=self.model.emission.matrix @ predicted_state_mean + self.model.emission.offset, 
-                                covariance_matrix=self.model.emission.matrix @ predicted_state_covariance @ self.model.emission.matrix.T + self.model.emission.cov).log_prob(observation)
+        return MultivariateNormal(loc=self.model.emission.map(predicted_state_mean), 
+                                covariance_matrix=self.model.emission.map.weight @ predicted_state_covariance @ self.model.emission.map.weight.T + self.model.emission.cov).log_prob(observation)
 
     def filter(self, observations):
         num_samples = len(observations)
         loglikelihood = 0
-        dim_z = self.model.transition.matrix.shape[0]
+        dim_z = self.model.transition.cov.shape[0]
 
         filtered_state_means = torch.zeros((num_samples, dim_z), dtype=torch.float64)
         filtered_state_covariances = torch.zeros((num_samples, dim_z, dim_z), dtype=torch.float64)
@@ -69,27 +69,27 @@ class NumpyKalman:
     def __init__(self,
             model):
 
-        self.transition_matrix = model.transition.matrix.numpy()
-        self.transition_offset = model.transition.offset.numpy()
+        self.transition_weight = model.transition.map.weight.numpy()
+        self.transition_bias = model.transition.map.bias.numpy()
         self.transition_covariance = model.transition.cov.numpy()
-        self.observation_matrix = model.emission.matrix.numpy()
-        self.observation_offset = model.emission.offset.numpy()
+        self.observation_weight = model.emission.map.weight.numpy()
+        self.observation_bias = model.emission.map.bias.numpy()
         self.observation_covariance = model.emission.cov.numpy()
-        self.dim_state = model.transition.matrix.shape[0]
+        self.dim_state = model.transition.cov.shape[0]
         self.prior_mean, self.prior_cov = model.prior.mean.numpy(), model.prior.cov.numpy()
 
     def predict(self, current_state_mean, current_state_covariance):
-        predicted_state_mean = self.transition_matrix @ current_state_mean + self.transition_offset
-        predicted_state_covariance = self.transition_matrix @ current_state_covariance @ self.transition_matrix.T + self.transition_covariance
+        predicted_state_mean = self.transition_weight @ current_state_mean + self.transition_bias
+        predicted_state_covariance = self.transition_weight @ current_state_covariance @ self.transition_weight.T + self.transition_covariance
         return predicted_state_mean, predicted_state_covariance
         
     def update(self, predicted_state_mean, predicted_state_covariance, observation):
-        predicted_observation_mean = self.observation_matrix @ predicted_state_mean + self.observation_offset
-        predicted_observation_covariance = self.observation_matrix @ predicted_state_covariance @ self.observation_matrix.T + self.observation_covariance
-        kalman_gain = predicted_state_covariance @ self.observation_matrix.T @ np.linalg.inv(predicted_observation_covariance)
+        predicted_observation_mean = self.observation_weight @ predicted_state_mean + self.observation_bias
+        predicted_observation_covariance = self.observation_weight @ predicted_state_covariance @ self.observation_weight.T + self.observation_covariance
+        kalman_gain = predicted_state_covariance @ self.observation_weight.T @ np.linalg.inv(predicted_observation_covariance)
 
         corrected_state_mean = predicted_state_mean + kalman_gain @ (observation - predicted_observation_mean)
-        corrected_state_covariance = predicted_state_covariance - kalman_gain @ self.observation_matrix @ predicted_state_covariance
+        corrected_state_covariance = predicted_state_covariance - kalman_gain @ self.observation_weight @ predicted_state_covariance
 
         return corrected_state_mean, corrected_state_covariance
 
@@ -104,8 +104,8 @@ class NumpyKalman:
 
     def loglikelihood_term(self, predicted_state_mean, predicted_state_covariance, observation):
         return Gaussian(
-            mean=self.observation_matrix @ predicted_state_mean + self.observation_offset, 
-            cov=self.observation_matrix @ predicted_state_covariance @ self.observation_matrix.T + self.observation_covariance).logpdf(observation)
+            mean=self.observation_weight @ predicted_state_mean + self.observation_bias, 
+            cov=self.observation_weight @ predicted_state_covariance @ self.observation_weight.T + self.observation_covariance).logpdf(observation)
 
     def filter(self, observations):
         num_samples = len(observations)

@@ -29,15 +29,14 @@ class LinearGaussianELBO(torch.nn.Module):
         
         self.kalman = Kalman(self.v_model)
 
-
         self.backward_cov = None 
         self.backward_A = None 
         self.backward_a = None 
         self.filtering_mean = None 
         self.filtering_cov = None
 
-        self.dim_z = torch.as_tensor(self.model.transition.matrix.shape[0])
-        self.dim_x = torch.as_tensor(self.model.emission.matrix.shape[0])
+        self.dim_z = torch.as_tensor(self.model.transition.cov.shape[0])
+        self.dim_x = torch.as_tensor(self.model.emission.cov.shape[0])
 
     def _expect_quad_form_under_backward(self, quad_form:QuadForm):
         # expectation of (Au+b)^T Omega (Au+b) under the backward 
@@ -51,10 +50,10 @@ class LinearGaussianELBO(torch.nn.Module):
     def _expect_transition_quad_form_under_backward(self):
         # expectation of the quadratic form that appears in the log of the state transition density
 
-        constants =  - 0.5 * torch.trace(self.model_transition_prec @ self.model.transition.matrix @ self.backward_cov @ self.model.transition.matrix.T)
+        constants =  - 0.5 * torch.trace(self.model_transition_prec @ self.model.transition.map.weight @ self.backward_cov @ self.model.transition.map.weight.T)
         quad_form_in_z = QuadForm(Omega=-0.5*self.model_transition_prec, 
-                                A=self.model.transition.matrix @ self.backward_A - torch.eye(self.model.transition.matrix.shape[0]),
-                                b=self.model.transition.matrix @ self.backward_a + self.model.transition.offset)
+                                A=self.model.transition.map.weight @ self.backward_A - torch.eye(self.model.transition.cov.shape[0]),
+                                b=self.model.transition.map.weight @ self.backward_a + self.model.transition.map.bias)
         return constants, quad_form_in_z
 
     def _expect_quad_form_under_filtering(self, quad_form:QuadForm):
@@ -64,18 +63,18 @@ class LinearGaussianELBO(torch.nn.Module):
         
         filtering_prec = torch.inverse(self.filtering_cov)
 
-        backward_prec = self.v_model.transition.matrix.T @ self.v_model_transition_prec @ self.v_model.transition.matrix + filtering_prec
+        backward_prec = self.v_model.transition.map.weight.T @ self.v_model_transition_prec @ self.v_model.transition.map.weight + filtering_prec
 
         self.backward_cov = torch.inverse(backward_prec)
 
-        common_term = self.v_model.transition.matrix.T @ self.v_model_transition_prec 
+        common_term = self.v_model.transition.map.weight.T @ self.v_model_transition_prec 
         self.backward_A = self.backward_cov @ common_term
-        self.backward_a = self.backward_cov @ (filtering_prec @ self.filtering_mean - common_term @  self.v_model.transition.offset)
+        self.backward_a = self.backward_cov @ (filtering_prec @ self.filtering_mean - common_term @  self.v_model.transition.map.bias)
 
     def _get_quad_form_in_z_obs_term(self, observation):
         return QuadForm(Omega=-0.5*self.model_emission_prec, 
-                        A = self.model.emission.matrix, 
-                        b = self.model.emission.offset - observation)    
+                        A = self.model.emission.map.weight, 
+                        b = self.model.emission.map.bias - observation)    
 
     def _expectations_under_backward(self, quad_forms, observation):
 
