@@ -1,3 +1,4 @@
+from random import sample
 from scipy.stats import multivariate_normal
 import numpy as np 
 from torch.distributions.multivariate_normal import MultivariateNormal
@@ -60,6 +61,29 @@ class Kalman(nn.Module):
 
 
         return filtered_state_means, filtered_state_covariances, loglikelihood
+    
+    def smooth(self, observations):
+
+        num_samples = len(observations)
+
+        filtering_means, filtering_covs, _  = self.filter(observations)
+
+        smoothed_means, smoothed_covs = torch.zeros_like(filtering_means), torch.zeros_like(filtering_covs)
+
+        smoothed_means[-1], smoothed_covs[-1] = filtering_means[-1], filtering_covs[-1]
+
+        for sample_nb in reversed(range(num_samples-1)):
+            A = self.model.transition.map.weight
+            a = self.model.transition.map.bias
+            P = A @ filtering_covs[sample_nb] @ A.T + self.model.transition.cov
+
+            C = filtering_covs[sample_nb] @ A.T @ torch.inverse(P)
+            smoothed_means[sample_nb] = filtering_means[sample_nb] + C @ (smoothed_means[sample_nb+1] + (A @ filtering_means[sample_nb] + a))
+            smoothed_covs[sample_nb] = filtering_covs[sample_nb] + C @ (smoothed_covs[sample_nb+1] - P) @ C.T
+
+        return smoothed_means, smoothed_covs
+
+
 
 class NumpyKalman: 
 

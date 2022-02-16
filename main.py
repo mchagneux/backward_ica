@@ -65,15 +65,17 @@ while eps > 0.1:
         print('Average of "L(theta, phi) - log(p_theta(x))":', eps)
     
 
-with torch.no_grad():
-    v_model = elbo.v_model
-    print('Prior mean difference:', torch.abs(hmm.model.prior.mean - v_model.prior.mean).numpy())
-    print('Prior cov difference:', torch.abs(hmm.model.prior.cov - v_model.prior.cov).numpy())
 
-    print('Transition mean difference:', torch.abs(hmm.model.transition.map.weight - v_model.transition.map.weight).numpy())
-    print('Transition offset difference:', torch.abs(hmm.model.transition.map.bias - v_model.transition.map.bias).numpy())
-    print('Transition cov difference:', torch.abs(hmm.model.transition.cov - v_model.transition.cov).numpy())
 
-    print('Emission matrix difference:', torch.abs(hmm.model.emission.maps.weight - v_model.emission.maps.weight).numpy())
-    print('Emission offset difference:', torch.abs(hmm.model.emission.map.bias - v_model.emission.map.bias).numpy())
-    print('Emission cov difference:', torch.abs(hmm.model.emission.cov - v_model.emission.cov).numpy())
+# with torch.no_grad():
+#     v_model = elbo.v_model
+#     print('Prior mean difference:', torch.abs(hmm.model.prior.mean - v_model.prior.mean).numpy())
+#     print('Prior cov difference:', torch.abs(hmm.model.prior.cov - v_model.prior.cov).numpy())
+
+#     print('Transition mean difference:', torch.abs(hmm.model.transition.map.weight - v_model.transition.map.weight).numpy())
+#     print('Transition offset difference:', torch.abs(hmm.model.transition.map.bias - v_model.transition.map.bias).numpy())
+#     print('Transition cov difference:', torch.abs(hmm.model.transition.cov - v_model.transition.cov).numpy())
+
+#     print('Emission matrix difference:', torch.abs(hmm.model.emission.maps.weight - v_model.emission.maps.weight).numpy())
+#     print('Emission offset difference:', torch.abs(hmm.model.emission.map.bias - v_model.emission.map.bias).numpy())
+#     print('Emission cov difference:', torch.abs(hmm.model.emission.cov - v_model.emission.cov).numpy())
