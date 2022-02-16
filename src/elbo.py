@@ -91,10 +91,12 @@ class LinearGaussianELBO(torch.nn.Module):
                 
     def init_V(self, observation):
 
-        self._init_filtering(observation)
 
         self.constants_V = torch.as_tensor(0., dtype=torch.float64)
         self.quad_forms_V = []
+
+
+        self._init_filtering(observation)
 
         self.constants_V += _constant_terms_from_log_gaussian(self.dim_z, torch.det(self.model.prior.cov)) + \
                     _constant_terms_from_log_gaussian(self.dim_x, self.model_emission_det_cov)
@@ -105,9 +107,9 @@ class LinearGaussianELBO(torch.nn.Module):
         
     def update_V(self, observations):
 
-        if self.term_to_remove_if_V_update is not None: self.constants_V -= self.term_to_remove_if_V_update
+        # if self.term_to_remove_if_V_update is not None: self.constants_V -= self.term_to_remove_if_V_update
 
-        for observation in observations: 
+        for observation in torch.atleast_2d(observations): 
             self._update_backward()
 
             # dealing with all non-constant terms from previous V: one step before these quad forms were in z_next so they now are quad forms in z that need to be 
@@ -135,8 +137,10 @@ class LinearGaussianELBO(torch.nn.Module):
 
             self._update_filtering(observation)
         
-        self.term_to_remove_if_V_update = -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.filtering_cov)).clone()
-        self.constants_V += self.term_to_remove_if_V_update
+        # self.term_to_remove_if_V_update = -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.filtering_cov)).clone()
+        # self.constants_V += self.term_to_remove_if_V_update
+
+        self.constants_V += -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.filtering_cov))
 
     def _expect_V_under_filtering(self):
         
