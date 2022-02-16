@@ -13,10 +13,13 @@ hmm = LinearGaussianHMM(state_dim=2, obs_dim=2)
 states, observations = hmm.sample_joint_sequence(10)
 # for param in hmm.model.named_parameters(): print(param)
 for param in hmm.model.parameters():param.requires_grad = False
+observations = observations[:3]
 likelihood = Kalman(hmm.model).filter(observations)[2]
 likelihood_numpy = NumpyKalman(hmm.model).filter(observations.numpy())[2]
-print(likelihood-likelihood_numpy)
-
+likelihood_via_elbo = LinearGaussianELBO(hmm.model, hmm.model)(observations)
+print(likelihood_numpy - likelihood)
+# print(likelihood)
+# print(likelihood_via_elbo)
 # # example_model  = LinearGaussianHMM.get_random_model(2,2)
 # # test = 0
 # # for param in model.parameters() :param.requires_grad = False

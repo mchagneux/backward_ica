@@ -23,6 +23,10 @@ class LinearGaussianELBO(torch.nn.Module):
 
         self.model = model
         self.v_model = v_model
+
+        self.dim_z = torch.as_tensor(self.model.transition.cov.shape[0])
+        self.dim_x = torch.as_tensor(self.model.emission.cov.shape[0])
+
         
         self.kalman = Kalman(self.v_model)
 
@@ -32,8 +36,12 @@ class LinearGaussianELBO(torch.nn.Module):
         self.filtering_mean = None 
         self.filtering_cov = None
 
-        self.dim_z = torch.as_tensor(self.model.transition.cov.shape[0])
-        self.dim_x = torch.as_tensor(self.model.emission.cov.shape[0])
+
+        self.constants_V = None
+        self.quad_forms_V = None
+        self.term_to_remove_if_V_update = None
+
+
 
     def _expect_quad_form_under_backward(self, quad_form:QuadForm):
         # expectation of (Au+b)^T Omega (Au+b) under the backward 
@@ -73,36 +81,6 @@ class LinearGaussianELBO(torch.nn.Module):
                         A = self.model.emission.map.weight, 
                         b = self.model.emission.map.bias - observation)    
 
-    def _expectations_under_backward(self, quad_forms, observation):
-
-        new_constants = 0
-        new_quad_forms = []
-
-        # dealing with all non-constant terms from previous V: one step before these quad forms were in z_next so they now are quad forms in z that need to be 
-        # integrated against the backward, resulting in new quad forms in z_next
-        for quad_form in quad_forms: 
-            constant, integrated_quad_form = self._expect_quad_form_under_backward(quad_form)
-            new_constants += constant
-            new_quad_forms.append(integrated_quad_form)
-
-
-        # dealing with observation term seen as a quadratic form in z
-        new_constants += _constant_terms_from_log_gaussian(self.dim_x, self.model_emission_det_cov)                                      
-        new_quad_forms.append(self._get_quad_form_in_z_obs_term(observation))
-
-        # dealing with true transition term whose integration in z_previous under the backward is a quadratic form in z
-        new_constants += _constant_terms_from_log_gaussian(self.dim_z, self.model_transition_det_cov)
-        constant, integrated_quad_form = self._expect_transition_quad_form_under_backward()
-        new_constants += constant 
-        new_quad_forms.append(integrated_quad_form)
-
-        # dealing with backward term (integration of the quadratic form is just the dimension of z)
-        new_constants += -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.backward_cov))
-        new_constants += 0.5*torch.as_tensor(self.dim_z, dtype=torch.float64)
-        
-        
-        return new_constants, new_quad_forms
-
     def _init_filtering(self, observation):
         self.filtering_mean, self.filtering_cov = self.kalman.init(observation)[2:]
 
@@ -111,6 +89,68 @@ class LinearGaussianELBO(torch.nn.Module):
                                             self.filtering_cov, 
                                             observation)[2:]
                 
+    def init_V(self, observation):
+
+        self._init_filtering(observation)
+
+        self.constants_V = torch.as_tensor(0., dtype=torch.float64)
+        self.quad_forms_V = []
+
+        self.constants_V += _constant_terms_from_log_gaussian(self.dim_z, torch.det(self.model.prior.cov)) + \
+                    _constant_terms_from_log_gaussian(self.dim_x, self.model_emission_det_cov)
+        
+
+        self.quad_forms_V.append(self._get_quad_form_in_z_obs_term(observation))
+        self.quad_forms_V.append(QuadForm(Omega=-0.5*torch.inverse(self.model.prior.cov), A=torch.eye(self.dim_z), b=-self.model.prior.mean))
+        
+    def update_V(self, observations):
+
+        if self.term_to_remove_if_V_update is not None: self.constants_V -= self.term_to_remove_if_V_update
+
+        for observation in observations: 
+            self._update_backward()
+
+            # dealing with all non-constant terms from previous V: one step before these quad forms were in z_next so they now are quad forms in z that need to be 
+            # integrated against the backward, resulting in new quad forms in z_next
+            for quad_form_nb, quad_form in enumerate(self.quad_forms_V): 
+                constant, integrated_quad_form = self._expect_quad_form_under_backward(quad_form)
+                self.constants_V += constant
+                self.quad_forms_V[quad_form_nb] = integrated_quad_form
+
+
+            # dealing with observation term seen as a quadratic form in z
+            self.constants_V += _constant_terms_from_log_gaussian(self.dim_x, self.model_emission_det_cov)                                      
+            self.quad_forms_V.append(self._get_quad_form_in_z_obs_term(observation))
+
+            # dealing with true transition term whose integration in z_previous under the backward is a quadratic form in z
+            self.constants_V += _constant_terms_from_log_gaussian(self.dim_z, self.model_transition_det_cov)
+            constant, integrated_quad_form = self._expect_transition_quad_form_under_backward()
+            self.constants_V += constant 
+            self.quad_forms_V.append(integrated_quad_form)
+
+            # dealing with backward term (integration of the quadratic form is just the dimension of z)
+            self.constants_V += -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.backward_cov))
+            self.constants_V += 0.5*torch.as_tensor(self.dim_z, dtype=torch.float64)
+
+
+            self._update_filtering(observation)
+        
+        self.term_to_remove_if_V_update = -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.filtering_cov)).clone()
+        self.constants_V += self.term_to_remove_if_V_update
+
+    def _expect_V_under_filtering(self):
+        
+        result = 0
+        for quad_form in self.quad_forms_V:
+            result += self._expect_quad_form_under_filtering(quad_form) 
+        result += 0.5*torch.as_tensor(self.dim_z, dtype=torch.float64)
+
+        return result
+
+    def update(self, observations):
+        self.update_V(observations)
+        return self._expect_V_under_filtering()
+
     def forward(self, observations):
 
         self.model_transition_prec = torch.inverse(self.model.transition.cov)
@@ -124,41 +164,10 @@ class LinearGaussianELBO(torch.nn.Module):
         self.v_model_emission_prec = torch.inverse(self.v_model.emission.cov)
         self.v_model_emission_det_cov = torch.det(self.v_model.emission.cov)
 
-        self._init_filtering(observations[0])
 
-        constants = torch.as_tensor(0., dtype=torch.float64)
-        quad_forms = []
+        self.init_V(observations[0])
 
-        constants += _constant_terms_from_log_gaussian(self.dim_z, torch.det(self.model.prior.cov)) + \
-                    _constant_terms_from_log_gaussian(self.dim_x, self.model_emission_det_cov)
-        
-
-        quad_forms.append(self._get_quad_form_in_z_obs_term(observations[0]))
-        quad_forms.append(QuadForm(Omega=-0.5*torch.inverse(self.model.prior.cov), A=torch.eye(self.dim_z), b=-self.model.prior.mean))
-
-
-        for observation in observations[1:]:
-
-            self._update_backward()
-
-            new_constants, new_quad_forms = self._expectations_under_backward(quad_forms, observation)
-
-
-            constants += new_constants
-            quad_forms = new_quad_forms
-
-            self._update_filtering(observation)
-
-
-        constants += -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.filtering_cov))
-
-        for quad_form in quad_forms:
-            constants += self._expect_quad_form_under_filtering(quad_form) 
-        constants += 0.5*torch.as_tensor(self.dim_z, dtype=torch.float64)
-
-        return constants 
-
-
+        return self.update(observations[1:])
 
 
 
