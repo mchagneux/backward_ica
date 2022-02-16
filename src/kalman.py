@@ -4,7 +4,7 @@ import numpy as np
 from torch.distributions.multivariate_normal import MultivariateNormal
 import torch 
 import torch.nn as nn
-
+from pykalman.standard import KalmanFilter
 
 class Kalman(nn.Module):
 
@@ -48,38 +48,38 @@ class Kalman(nn.Module):
         filtered_state_means = torch.zeros((num_samples, dim_z), dtype=torch.float64)
         filtered_state_covariances = torch.zeros((num_samples, dim_z, dim_z), dtype=torch.float64)
 
-        predicted_state_mean, predicted_state_covariance, filtered_state_means[0], filtered_state_covariances[0] = self.init(observations[0])
-        loglikelihood += self._log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[0])
+        predicted_state_means = torch.zeros_like(filtered_state_means)
+        predicted_state_covariances = torch.zeros_like(filtered_state_covariances)
+
+        predicted_state_means[0], predicted_state_covariances[0], filtered_state_means[0], filtered_state_covariances[0] = self.init(observations[0])
+        loglikelihood += self._log_likelihood_term(predicted_state_means[0], predicted_state_covariances[0], observations[0])
         for sample_nb in range(1, num_samples):
-            predicted_state_mean, predicted_state_covariance,  filtered_state_means[sample_nb],  filtered_state_covariances[sample_nb] = self.filter_step(
+            predicted_state_means[sample_nb], predicted_state_covariances[sample_nb],  filtered_state_means[sample_nb],  filtered_state_covariances[sample_nb] = self.filter_step(
                                                                             filtered_state_means[sample_nb-1],
                                                                             filtered_state_covariances[sample_nb-1],
                                                                             observations[sample_nb])
 
 
-            loglikelihood += self._log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[sample_nb])
+            loglikelihood += self._log_likelihood_term(predicted_state_means[sample_nb], predicted_state_covariances[sample_nb], observations[sample_nb])
 
 
-        return filtered_state_means, filtered_state_covariances, loglikelihood
+        return predicted_state_means, predicted_state_covariances, filtered_state_means, filtered_state_covariances, loglikelihood
     
     def smooth(self, observations):
 
         num_samples = len(observations)
 
-        filtering_means, filtering_covs, _  = self.filter(observations)
+        predicted_means, predicted_covs, filtered_means, filtered_covs, _ = self.filter(observations)
 
-        smoothed_means, smoothed_covs = torch.zeros_like(filtering_means), torch.zeros_like(filtering_covs)
+        smoothed_means, smoothed_covs = torch.zeros_like(filtered_means), torch.zeros_like(filtered_covs)
 
-        smoothed_means[-1], smoothed_covs[-1] = filtering_means[-1], filtering_covs[-1]
+        smoothed_means[-1], smoothed_covs[-1] = filtered_means[-1], filtered_covs[-1]
 
         for sample_nb in reversed(range(num_samples-1)):
             A = self.model.transition.map.weight
-            a = self.model.transition.map.bias
-            P = A @ filtering_covs[sample_nb] @ A.T + self.model.transition.cov
-
-            C = filtering_covs[sample_nb] @ A.T @ torch.inverse(P)
-            smoothed_means[sample_nb] = filtering_means[sample_nb] + C @ (smoothed_means[sample_nb+1] + (A @ filtering_means[sample_nb] + a))
-            smoothed_covs[sample_nb] = filtering_covs[sample_nb] + C @ (smoothed_covs[sample_nb+1] - P) @ C.T
+            C = filtered_covs[sample_nb] @ A.T @ torch.inverse(predicted_covs[sample_nb+1])
+            smoothed_means[sample_nb] = filtered_means[sample_nb] + C @ (smoothed_means[sample_nb+1] - predicted_means[sample_nb+1])
+            smoothed_covs[sample_nb] = filtered_covs[sample_nb] + C @ (smoothed_covs[sample_nb+1] - predicted_covs[sample_nb+1]) @ C.T
 
         return smoothed_means, smoothed_covs
 
