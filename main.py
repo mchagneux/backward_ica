@@ -17,7 +17,9 @@ observations = observations[:3]
 likelihood = Kalman(hmm.model).filter(observations)[2]
 likelihood_numpy = NumpyKalman(hmm.model).filter(observations.numpy())[2]
 likelihood_via_elbo = LinearGaussianELBO(hmm.model, hmm.model)(observations)
-print(likelihood_numpy - likelihood)
+print(likelihood_numpy - likelihood_via_elbo)
+
+
 # print(likelihood)
 # print(likelihood_via_elbo)
 # # example_model  = LinearGaussianHMM.get_random_model(2,2)

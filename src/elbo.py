@@ -140,7 +140,7 @@ class LinearGaussianELBO(torch.nn.Module):
 
     def _expect_V_under_filtering(self):
         
-        result = 0
+        result = self.constants_V 
         for quad_form in self.quad_forms_V:
             result += self._expect_quad_form_under_filtering(quad_form) 
         result += 0.5*torch.as_tensor(self.dim_z, dtype=torch.float64)
