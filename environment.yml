@@ -2,7 +2,8 @@ name: backward_ica
 channels:
     - default
 dependencies:
-    - python
-    - pip
+    - pytorch::pytorch
     - pip:
-        - -r requirements.txt 
+        - matplotlib 
+        - tqdm 
+        - scipy
