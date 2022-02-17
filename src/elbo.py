@@ -1,3 +1,4 @@
+from abc import ABCMeta, abstractmethod
 from collections import namedtuple
 from src.kalman import Kalman 
 import torch 
@@ -16,9 +17,10 @@ def _eval_quad_form(quad_form, x):
         common_term = quad_form.A @ x + quad_form.b
         return common_term.T @ quad_form.Omega @ common_term
 
-class LinearGaussianELBO(torch.nn.Module):
 
-    def __init__(self, model:nn.ParameterDict, v_model):
+class BackwardELBO(torch.nn.Module, metaclass=ABCMeta):
+
+    def __init__(self, model, v_model):
         super().__init__()
 
         self.model = model
@@ -27,21 +29,56 @@ class LinearGaussianELBO(torch.nn.Module):
         self.dim_z = torch.as_tensor(self.model.transition.cov.shape[0])
         self.dim_x = torch.as_tensor(self.model.emission.cov.shape[0])
 
-        
-        self.kalman = Kalman(self.v_model)
+    
+        self.constants_V = None
+        self.quad_forms_V = None
 
+    @abstractmethod
+    def _update_V(self, observations):
+        pass
+
+    @abstractmethod
+    def _init_V(self, observation):
+        pass
+
+    @abstractmethod
+    def _expect_V_under_filtering():
+        pass
+
+    def update(self, observations):
+        self._update_V(observations)
+        return self._expect_V_under_filtering()
+
+    def forward(self, observations):
+
+        self.model_transition_prec = torch.inverse(self.model.transition.cov)
+        self.model_transition_det_cov = torch.det(self.model.transition.cov)
+        self.model_emission_prec = torch.inverse(self.model.emission.cov)
+        self.model_emission_det_cov = torch.det(self.model.emission.cov)
+
+
+        self.v_model_transition_prec = torch.inverse(self.v_model.transition.cov)
+        self.v_model_transition_det_cov = torch.det(self.v_model.transition.cov)
+        self.v_model_emission_prec = torch.inverse(self.v_model.emission.cov)
+        self.v_model_emission_det_cov = torch.det(self.v_model.emission.cov)
+
+
+        self._init_V(observations[0])
+
+        return self.update(observations[1:])
+
+class LinearGaussianELBO(BackwardELBO):
+
+    def __init__(self, model, v_model):
+        super().__init__(model, v_model)
+
+        self.kalman = Kalman(self.v_model)
         self.backward_cov = None 
         self.backward_A = None 
         self.backward_a = None 
         self.filtering_mean = None 
         self.filtering_cov = None
-
-
-        self.constants_V = None
-        self.quad_forms_V = None
         self.term_to_remove_if_V_update = None
-
-
 
     def _expect_quad_form_under_backward(self, quad_form:QuadForm):
         # expectation of (Au+b)^T Omega (Au+b) under the backward 
@@ -88,8 +125,8 @@ class LinearGaussianELBO(torch.nn.Module):
         self.filtering_mean, self.filtering_cov = self.kalman.filter_step(self.filtering_mean, 
                                             self.filtering_cov, 
                                             observation)[2:]
-                
-    def init_V(self, observation):
+
+    def _init_V(self, observation):
 
 
         self.constants_V = torch.as_tensor(0., dtype=torch.float64)
@@ -105,7 +142,7 @@ class LinearGaussianELBO(torch.nn.Module):
         self.quad_forms_V.append(self._get_quad_form_in_z_obs_term(observation))
         self.quad_forms_V.append(QuadForm(Omega=-0.5*torch.inverse(self.model.prior.cov), A=torch.eye(self.dim_z), b=-self.model.prior.mean))
         
-    def update_V(self, observations):
+    def _update_V(self, observations):
 
         # if self.term_to_remove_if_V_update is not None: self.constants_V -= self.term_to_remove_if_V_update
 
@@ -151,34 +188,19 @@ class LinearGaussianELBO(torch.nn.Module):
 
         return result
 
-    def update(self, observations):
-        self.update_V(observations)
-        return self._expect_V_under_filtering()
 
-    def forward(self, observations):
+class NonLinearObsELBO(BackwardELBO):
 
-        self.model_transition_prec = torch.inverse(self.model.transition.cov)
-        self.model_transition_det_cov = torch.det(self.model.transition.cov)
-        self.model_emission_prec = torch.inverse(self.model.emission.cov)
-        self.model_emission_det_cov = torch.det(self.model.emission.cov)
+    def __init__(self, model, v_model):
+        super().__init__(model, v_model)
 
-
-        self.v_model_transition_prec = torch.inverse(self.v_model.transition.cov)
-        self.v_model_transition_det_cov = torch.det(self.v_model.transition.cov)
-        self.v_model_emission_prec = torch.inverse(self.v_model.emission.cov)
-        self.v_model_emission_det_cov = torch.det(self.v_model.emission.cov)
-
-
-        self.init_V(observations[0])
-
-        return self.update(observations[1:])
-
-
-
-
-
-        
-
+        self.kalman = Kalman(self.v_model)
+        self.backward_cov = None 
+        self.backward_A = None 
+        self.backward_a = None 
+        self.filtering_mean = None 
+        self.filtering_cov = None
+        self.term_to_remove_if_V_update = None
 
 
         

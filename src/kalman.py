@@ -1,4 +1,3 @@
-from random import sample
 from scipy.stats import multivariate_normal
 import numpy as np 
 from torch.distributions.multivariate_normal import MultivariateNormal

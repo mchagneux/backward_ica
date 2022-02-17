@@ -22,7 +22,8 @@ class HMM(ABC):
     @abstractmethod
     def sample_state_sequence(self, sequence_length):
         pass
-
+    
+    @abstractmethod
     def sample_joint_sequence(self, sequence_length):
         pass
         
