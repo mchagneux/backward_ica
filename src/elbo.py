@@ -80,22 +80,30 @@ class QLinearGaussian(BackwardELBO):
         self.backwards = [] 
         self.filtering = None
         self.term_to_remove_if_V_update = None
-        # self.expect_obs_term_under_backward = self._expect_quad_forms_under_backward
+        if isinstance(self.model.transition.map, nn.Linear): self._expect_obs_term_under_backward = self._expect_quad_form_under_backward            
+        else:pass 
 
-    
+
+    def _expect_quad_form_under_backward(self, quad_form, backward_index=-1):
+            constant = torch.trace(quad_form.Omega @ quad_form.A @ self.backwards[backward_index].cov @ quad_form.A.T)
+            integrated_quad_form = QuadForm(Omega=quad_form.Omega, 
+                                    A=quad_form.A @ self.backwards[backward_index].A, 
+                                    b=quad_form.A @ self.backwards[backward_index].a + quad_form.b)
+            return constant, integrated_quad_form
+                            
     def _expect_quad_forms_under_backward(self, quad_forms, backward_index=-1):
         # expectation of (Au+b)^T Omega (Au+b) under the backward 
         constants = 0
         integrated_quad_forms = []
         for quad_form in quad_forms: 
-            constants += torch.trace(quad_form.Omega @ quad_form.A @ self.backwards[backward_index].cov @ quad_form.A.T)
-            integrated_quad_forms.append(QuadForm(Omega=quad_form.Omega, 
-                                    A=quad_form.A @ self.backwards[backward_index].A, 
-                                    b=quad_form.A @ self.backwards[backward_index].a + quad_form.b))
+            constant, integrated_quad_form = self._expect_quad_form_under_backward(quad_form, backward_index)
+            constants += constant
+            integrated_quad_forms.append(integrated_quad_form)
+
         return constants, integrated_quad_forms
 
-    def _expect_obs_term_under_backward(self, term, backward_index):
-        return self._expect_quad_forms_under_backward([term], backward_index)
+    def _expect_nonlinear_term_under_backward(self, term, backward_index):
+        pass
 
     def _expect_transition_quad_form_under_backward(self, index=-1):
         # expectation of the quadratic form that appears in the log of the state transition density
@@ -173,9 +181,9 @@ class QLinearGaussian(BackwardELBO):
             obs_term, transition_term = term
             constant, integrated_obs_term = self._expect_obs_term_under_backward(obs_term, backward_index=backward_index)
             self.constants_V += constant 
-            constant, integrated_quad_form = self._expect_quad_forms_under_backward([transition_term], backward_index=backward_index)
+            constant, integrated_quad_form = self._expect_quad_form_under_backward(transition_term, backward_index=backward_index)
             self.constants_V += constant
-            self.terms_V[backward_index] = [*integrated_obs_term, *integrated_quad_form]
+            self.terms_V[backward_index] = [integrated_obs_term, integrated_quad_form]
 
         for quad_form_index, quad_forms in enumerate(self.terms_V):
             for backward_index in range(quad_form_index+1, len(self.backwards)):
