@@ -201,6 +201,7 @@ class NonLinearObsELBO(BackwardELBO):
         self.filtering_mean = None 
         self.filtering_cov = None
         self.term_to_remove_if_V_update = None
+        # self.expect_approximator = nn.Sequential(nn.Linear(in_features=, out_features=),nn.ReLU())
 
 
         
