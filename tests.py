@@ -1,5 +1,4 @@
-from pykalman import KalmanFilter
-from src.elbo import LinearGaussianELBO
+from src.elbo import QLinearGaussian
 from src.kalman import Kalman
 from src.hmm import LinearGaussianHMM
 import torch 
@@ -9,6 +8,6 @@ observations = hmm.sample_joint_sequence(10)[1]
 
 
 with torch.no_grad():
-    print(torch.abs(LinearGaussianELBO(hmm.model, hmm.model)(observations)  - Kalman(hmm.model).filter(observations)[-1]))
+    print(torch.abs(QLinearGaussian(hmm.model, hmm.model)(observations)  - Kalman(hmm.model).filter(observations)[-1]))
 
 
