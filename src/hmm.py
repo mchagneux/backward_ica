@@ -47,7 +47,7 @@ class AdditiveGaussianHMM(HMM):
         transition = nn.ModuleDict({'map':transition_map})
         transition.cov = nn.parameter.Parameter(torch.rand(state_dim))
 
-        emission_map = nn.Sequential(nn.Linear(obs_dim, obs_dim, bias=True), nn.ReLU())
+        emission_map = nn.Sequential(nn.Linear(obs_dim, obs_dim, bias=True), nn.SELU())
         emission = nn.ModuleDict({'map':emission_map})
         emission.cov = nn.parameter.Parameter(torch.rand(obs_dim))
 
