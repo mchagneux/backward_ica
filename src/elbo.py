@@ -34,37 +34,27 @@ def get_appropriate_elbo(variational_model_description, true_model_description):
 ## Neural approximators for some ELBOs
 
 
-class ApproximatorUnderBackward(nn.Module):
+class ApproximatorExpectationInQuadForm(nn.Module):
     def __init__(self, state_dim, obs_dim):
         super().__init__()
         self.state_dim = state_dim 
         self.obs_dim = obs_dim
-        self.A_tilde_approximator = nn.Sequential(nn.Linear(in_features=state_dim**2 + state_dim + state_dim**2, out_features = obs_dim*state_dim, bias=True), nn.SELU())
-        self.a_tilde_approximator = nn.Sequential(nn.Linear(in_features=state_dim**2 + state_dim +  state_dim**2, out_features = obs_dim, bias=True), nn.SELU())
-        self.constant_term_approximator = nn.Sequential(nn.Linear(in_features = state_dim**2 + state_dim + state_dim**2, out_features=1, bias=True), nn.SELU())
+        input_shape = state_dim**2 + state_dim + state_dim**2
+        self.A_tilde_approximator = nn.Sequential(nn.Linear(in_features=input_shape, out_features = obs_dim*state_dim, bias=True), nn.SELU())
+        self.a_tilde_approximator = nn.Sequential(nn.Linear(in_features=input_shape, out_features = obs_dim, bias=True), nn.SELU())
+        self.cov_tilde_approximator = nn.Sequential(nn.Linear(in_features=input_shape, out_features=(obs_dim * (obs_dim + 1)) // 2, bias=True), nn.SELU())
 
-    def forward(self, backward_A, backward_a, backward_cov):
-        inputs = torch.cat((backward_A.flatten(), backward_a, backward_cov.flatten()))
-        constant_term = self.constant_term_approximator(inputs)
-        A_tilde = self.A_tilde_approximator(inputs).view((self.obs_dim,self.state_dim))
+    def forward(self, A, a, cov):
+        inputs = torch.cat((A.flatten(), a, cov.flatten()))
+
+        A_tilde = self.A_tilde_approximator(inputs).view((self.obs_dim, self.state_dim))
         a_tilde = self.a_tilde_approximator(inputs)
-        return constant_term, A_tilde, a_tilde 
 
-class ApproximatorUnderFiltering(nn.Module):
-    def __init__(self, state_dim, obs_dim):
-        super().__init__()
-        self.state_dim = state_dim 
-        self.obs_dim = obs_dim
-        self.mu_tilde_approximator = nn.Sequential(nn.Linear(in_features=state_dim + state_dim**2, out_features = obs_dim, bias=True), nn.SELU())
-        self.Sigma_tilde_approximator = nn.Sequential(nn.Linear(in_features=state_dim + state_dim**2, out_features=(obs_dim * (obs_dim + 1)) // 2, bias=True), nn.SELU())
-    
-    def forward(self, filtering_mean, filtering_cov):
-        inputs = torch.cat((filtering_mean, filtering_cov.flatten()))
-        mu_tilde = self.mu_tilde_approximator(inputs)
-        Sigma_tilde = torch.empty((self.obs_dim,self.obs_dim))
-        Sigma_tilde[torch.tril_indices(self.obs_dim, self.obs_dim)] = self.Sigma_tilde_approximator(inputs)
-
-        return mu_tilde, Sigma_tilde @ Sigma_tilde.T
+        cov_tilde_elements = self.cov_tilde_approximator(inputs)
+        indices_to_fill = torch.triu_indices(self.obs_dim, self.obs_dim)
+        cov_tilde = torch.empty((self.obs_dim, self.obs_dim))
+        cov_tilde[indices_to_fill[0,:], indices_to_fill[1,:]] = cov_tilde_elements
+        return A_tilde, a_tilde, cov_tilde @ cov_tilde.T
 
 
 ## ELBOs 
@@ -187,8 +177,6 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
 
         self.backwards.append(Backward(A=backward_A, a=backward_a, cov=backward_cov))
 
-
-
     def _init_filtering(self, observation):
         self.filtering = Filtering(*self.kalman.init(observation)[2:])
 
@@ -209,7 +197,8 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
                             _constant_terms_from_log_gaussian(self.dim_x, self.model_emission_det_cov)
         
 
-        quad_forms_to_add = [self._get_obs_term(observation), QuadForm(Omega=-0.5*torch.inverse(self.model.prior.cov), A=torch.eye(self.dim_z), b=-self.model.prior.mean)]
+        quad_forms_to_add = [QuadForm(Omega=-0.5*torch.inverse(self.model.prior.cov), A=torch.eye(self.dim_z), b=-self.model.prior.mean), 
+                            self._get_obs_term(observation)]
         self.terms_V.append(quad_forms_to_add)
         
     def _update_V(self, observations):
@@ -224,18 +213,19 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
                             +  0.5 * torch.as_tensor(self.dim_z, dtype=torch.float64) \
                             + - 0.5 * torch.trace(self.model_transition_prec @ self.model.transition.map.weight @ self.backwards[-1].cov @ self.model.transition.map.weight.T)
             
-            quad_forms_to_add = [self._get_obs_term(observation), self._expect_transition_quad_form_under_backward()]
+            quad_forms_to_add = [self._expect_transition_quad_form_under_backward(), self._get_obs_term(observation)]
             self.terms_V.append(quad_forms_to_add)
             self._update_filtering(observation)
 
 
         for backward_index, term in zip(range(len(self.backwards)), self.terms_V):
-            obs_term, transition_term = term
-            constant, integrated_obs_term = self._expect_obs_term_under_backward(obs_term, backward_index=backward_index)
-            self.constants_V += constant 
+            transition_term, obs_term = term
             constant, integrated_quad_form = self._expect_quad_form_under_backward(transition_term, backward_index=backward_index)
             self.constants_V += constant
-            self.terms_V[backward_index] = [integrated_obs_term, integrated_quad_form]
+            constant, integrated_obs_term = self._expect_obs_term_under_backward(obs_term, backward_index=backward_index)
+            self.constants_V += constant 
+
+            self.terms_V[backward_index] = [integrated_quad_form, integrated_obs_term]
 
         for quad_form_index, quad_forms in enumerate(self.terms_V):
             for backward_index in range(quad_form_index+1, len(self.backwards)):
@@ -276,19 +266,19 @@ class NonLinearEmission(LinearGaussianQ):
 
         def __init__(self, model, v_model):
             super().__init__(model, v_model)
-            self.approximator_backward = ApproximatorUnderBackward(self.dim_z, self.dim_x)
-            self.approximator_filtering = ApproximatorUnderFiltering(self.dim_z, self.dim_x)
+            self.approximator = ApproximatorExpectationInQuadForm(self.dim_z, self.dim_x)
 
         def _expect_obs_term_under_backward(self, obs_term, backward_index):
             observation = obs_term
-            constant_term, A_tilde, a_tilde = self.approximator_backward(*self.backwards[backward_index])
+            A_tilde, a_tilde, cov_tilde = self.approximator(*self.backwards[backward_index])
+            constant_term = torch.trace(cov_tilde @ self.model_emission_prec)
             return constant_term, QuadForm(Omega=self.model_emission_prec, A=A_tilde, b=a_tilde - observation)
 
         def _expect_obs_term_under_filtering(self, obs_term):
-            observation = obs_term 
-            mu_tilde, Sigma_tilde = self.approximator_filtering(*self.filtering)
-
-            return torch.trace(Sigma_tilde @ self.model_emission_prec) + (mu_tilde - observation).T @ self.model_emission_prec @ (mu_tilde - observation)
+            observation = obs_term
+            _ , a_tilde, cov_tilde = self.approximator(A=torch.zeros((self.dim_x, self.dim_z)), a = self.filtering.mean, cov = self.filtering.cov)
+            constant_term = torch.trace(cov_tilde @ self.model_emission_prec)
+            return constant_term + (a_tilde - observation).T @ self.model_emission_prec @ (a_tilde - observation)
 
         def _get_obs_term(self, observation):
             return observation

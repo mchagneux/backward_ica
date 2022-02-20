@@ -22,26 +22,25 @@ v_model.emission.parametrizations.cov.original.requires_grad = False
 
 elbo_nonlinear_emission = get_appropriate_elbo(variational_model_description='linear_gaussian', true_model_description='nonlinear_emission')
 
-elbo_nonlinear_emission = elbo_nonlinear_emission(hmm.model, v_model)
+elbo = elbo_nonlinear_emission(hmm.model, v_model)
 
-print(elbo_nonlinear_emission(observation_sequences[0]))
-
-
-
-# # optimize the parameters of the ELBO (but theta deactivated above)
-# optimizer = torch.optim.Adam(params=elbo.parameters(), lr=1e-2)
+# print(elbo_nonlinear_emission(observation_sequences[0]))
 
 
-# eps = torch.inf
-# # optimizing model 
-# while eps > 0.1:
-#     epoch_loss = 0.0
-#     for observations in observation_sequences: 
-#         optimizer.zero_grad()
-#         loss = -elbo(observations)
-#         loss.backward()
-#         optimizer.step()
-#         epoch_loss += -loss
-#     with torch.no_grad():
-#         eps = torch.abs(true_evidence_all_sequences - epoch_loss)
-#         print('Average of "L(theta, phi) - log(p_theta(x))":', eps)
+
+# optimize the parameters of the ELBO (but theta deactivated above)
+optimizer = torch.optim.Adam(params=elbo.parameters(), lr=1e-2)
+
+
+eps = torch.inf
+# optimizing model 
+while True:
+    epoch_loss = 0.0
+    for observations in observation_sequences: 
+        optimizer.zero_grad()
+        loss = -elbo(observations)
+        loss.backward()
+        optimizer.step()
+        epoch_loss += -loss
+    with torch.no_grad():
+        print("Loss:", epoch_loss)
