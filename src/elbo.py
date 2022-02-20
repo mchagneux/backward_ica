@@ -22,10 +22,10 @@ def _eval_quad_form(quad_form, x):
 
 
 
-def get_appropriate_elbo(variational_model_description, true_model_description):
-    if variational_model_description == 'linear_gaussian':
-        if true_model_description == 'linear_emission': return LinearEmission
-        elif true_model_description == 'nonlinear_emission': return NonLinearEmission
+def get_appropriate_elbo(q_description, p_description):
+    if q_description == 'linear_gaussian':
+        if p_description == 'linear_emission': return LinearEmission
+        elif p_description == 'nonlinear_emission': return NonLinearEmission
         else: raise NotImplementedError
     else: 
         raise NotImplementedError
@@ -62,14 +62,14 @@ class ApproximatorExpectationInQuadForm(nn.Module):
 
 class BackwardELBO(torch.nn.Module, metaclass=ABCMeta):
 
-    def __init__(self, model, v_model):
+    def __init__(self, p, q):
         super().__init__()
 
-        self.model = model
-        self.v_model = v_model
+        self.p = p
+        self.q = q
 
-        self.dim_z = torch.as_tensor(self.model.transition.cov.shape[0])
-        self.dim_x = torch.as_tensor(self.model.emission.cov.shape[0])
+        self.dim_z = torch.as_tensor(self.p.transition.cov.shape[0])
+        self.dim_x = torch.as_tensor(self.p.emission.cov.shape[0])
 
         self.backwards = [] 
 
@@ -94,16 +94,16 @@ class BackwardELBO(torch.nn.Module, metaclass=ABCMeta):
 
     def forward(self, observations):
 
-        self.model_transition_prec = torch.inverse(self.model.transition.cov)
-        self.model_transition_det_cov = torch.det(self.model.transition.cov)
-        self.model_emission_prec = torch.inverse(self.model.emission.cov)
-        self.model_emission_det_cov = torch.det(self.model.emission.cov)
+        self.p_transition_prec = torch.inverse(self.p.transition.cov)
+        self.p_transition_det_cov = torch.det(self.p.transition.cov)
+        self.p_emission_prec = torch.inverse(self.p.emission.cov)
+        self.p_emission_det_cov = torch.det(self.p.emission.cov)
 
 
-        self.v_model_transition_prec = torch.inverse(self.v_model.transition.cov)
-        self.v_model_transition_det_cov = torch.det(self.v_model.transition.cov)
-        self.v_model_emission_prec = torch.inverse(self.v_model.emission.cov)
-        self.v_model_emission_det_cov = torch.det(self.v_model.emission.cov)
+        self.q_transition_prec = torch.inverse(self.q.transition.cov)
+        self.q_transition_det_cov = torch.det(self.q.transition.cov)
+        self.q_emission_prec = torch.inverse(self.q.emission.cov)
+        self.q_emission_det_cov = torch.det(self.q.emission.cov)
 
 
         self._init_V(observations[0])
@@ -114,10 +114,10 @@ class BackwardELBO(torch.nn.Module, metaclass=ABCMeta):
 
 class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
         
-    def __init__(self, model, v_model):
-        super().__init__(model, v_model)
+    def __init__(self, p, q):
+        super().__init__(p, q)
 
-        self.kalman = Kalman(self.v_model)
+        self.kalman = Kalman(self.q)
         self.filtering = None
         # self.term_to_remove_if_V_update = None
 
@@ -155,9 +155,9 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
     def _expect_transition_quad_form_under_backward(self, index=-1):
         # expectation of the quadratic form that appears in the log of the state transition density
 
-        quad_form_in_z = QuadForm(Omega=-0.5*self.model_transition_prec, 
-                                A=self.model.transition.map.weight @ self.backwards[index].A - torch.eye(self.model.transition.cov.shape[0]),
-                                b=self.model.transition.map.weight @ self.backwards[index].a + self.model.transition.map.bias)
+        quad_form_in_z = QuadForm(Omega=-0.5*self.p_transition_prec, 
+                                A=self.p.transition.map.weight @ self.backwards[index].A - torch.eye(self.p.transition.cov.shape[0]),
+                                b=self.p.transition.map.weight @ self.backwards[index].a + self.p.transition.map.bias)
         return quad_form_in_z
 
     def _expect_quad_form_under_filtering(self, quad_form:QuadForm):
@@ -167,13 +167,13 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
         
         filtering_prec = torch.inverse(self.filtering.cov)
 
-        backward_prec = self.v_model.transition.map.weight.T @ self.v_model_transition_prec @ self.v_model.transition.map.weight + filtering_prec
+        backward_prec = self.q.transition.map.weight.T @ self.q_transition_prec @ self.q.transition.map.weight + filtering_prec
 
         backward_cov = torch.inverse(backward_prec)
 
-        common_term = self.v_model.transition.map.weight.T @ self.v_model_transition_prec 
+        common_term = self.q.transition.map.weight.T @ self.q_transition_prec 
         backward_A = backward_cov @ common_term
-        backward_a = backward_cov @ (filtering_prec @ self.filtering.mean - common_term @  self.v_model.transition.map.bias)
+        backward_a = backward_cov @ (filtering_prec @ self.filtering.mean - common_term @  self.q.transition.map.bias)
 
         self.backwards.append(Backward(A=backward_A, a=backward_a, cov=backward_cov))
 
@@ -193,11 +193,11 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
 
         self._init_filtering(observation)
 
-        self.constants_V += _constant_terms_from_log_gaussian(self.dim_z, torch.det(self.model.prior.cov)) + \
-                            _constant_terms_from_log_gaussian(self.dim_x, self.model_emission_det_cov)
+        self.constants_V += _constant_terms_from_log_gaussian(self.dim_z, torch.det(self.p.prior.cov)) + \
+                            _constant_terms_from_log_gaussian(self.dim_x, self.p_emission_det_cov)
         
 
-        quad_forms_to_add = [QuadForm(Omega=-0.5*torch.inverse(self.model.prior.cov), A=torch.eye(self.dim_z), b=-self.model.prior.mean), 
+        quad_forms_to_add = [QuadForm(Omega=-0.5*torch.inverse(self.p.prior.cov), A=torch.eye(self.dim_z), b=-self.p.prior.mean), 
                             self._get_obs_term(observation)]
         self.terms_V.append(quad_forms_to_add)
         
@@ -207,11 +207,11 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
 
         for observation in torch.atleast_2d(observations):
             self._update_backward()
-            self.constants_V += _constant_terms_from_log_gaussian(self.dim_x, self.model_emission_det_cov) \
-                            +  _constant_terms_from_log_gaussian(self.dim_z, self.model_transition_det_cov) \
+            self.constants_V += _constant_terms_from_log_gaussian(self.dim_x, self.p_emission_det_cov) \
+                            +  _constant_terms_from_log_gaussian(self.dim_z, self.p_transition_det_cov) \
                             + -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.backwards[-1].cov)) \
                             +  0.5 * torch.as_tensor(self.dim_z, dtype=torch.float64) \
-                            + - 0.5 * torch.trace(self.model_transition_prec @ self.model.transition.map.weight @ self.backwards[-1].cov @ self.model.transition.map.weight.T)
+                            + - 0.5 * torch.trace(self.p_transition_prec @ self.p.transition.map.weight @ self.backwards[-1].cov @ self.p.transition.map.weight.T)
             
             quad_forms_to_add = [self._expect_transition_quad_form_under_backward(), self._get_obs_term(observation)]
             self.terms_V.append(quad_forms_to_add)
@@ -248,8 +248,8 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
         return result
 
 class LinearEmission(LinearGaussianQ):
-    def __init__(self, model, v_model):
-        super().__init__(model, v_model)
+    def __init__(self, p, q):
+        super().__init__(p, q)
 
     def _expect_obs_term_under_backward(self, obs_term, backward_index):
         return self._expect_quad_form_under_backward(obs_term, backward_index)
@@ -258,27 +258,27 @@ class LinearEmission(LinearGaussianQ):
         return self._expect_quad_form_under_filtering(obs_term)
 
     def _get_obs_term(self, observation):
-        return QuadForm(Omega=-0.5*self.model_emission_prec, 
-                        A = self.model.emission.map.weight, 
-                        b = self.model.emission.map.bias - observation)    
+        return QuadForm(Omega=-0.5*self.p_emission_prec, 
+                        A = self.p.emission.map.weight, 
+                        b = self.p.emission.map.bias - observation)    
 
 class NonLinearEmission(LinearGaussianQ):
 
-        def __init__(self, model, v_model):
-            super().__init__(model, v_model)
+        def __init__(self, p, q):
+            super().__init__(p, q)
             self.approximator = ApproximatorExpectationInQuadForm(self.dim_z, self.dim_x)
 
         def _expect_obs_term_under_backward(self, obs_term, backward_index):
             observation = obs_term
             A_tilde, a_tilde, cov_tilde = self.approximator(*self.backwards[backward_index])
-            constant_term = torch.trace(cov_tilde @ self.model_emission_prec)
-            return constant_term, QuadForm(Omega=self.model_emission_prec, A=A_tilde, b=a_tilde - observation)
+            constant_term = torch.trace(cov_tilde @ self.p_emission_prec)
+            return constant_term, QuadForm(Omega=self.p_emission_prec, A=A_tilde, b=a_tilde - observation)
 
         def _expect_obs_term_under_filtering(self, obs_term):
             observation = obs_term
             _ , a_tilde, cov_tilde = self.approximator(A=torch.zeros((self.dim_x, self.dim_z)), a = self.filtering.mean, cov = self.filtering.cov)
-            constant_term = torch.trace(cov_tilde @ self.model_emission_prec)
-            return constant_term + (a_tilde - observation).T @ self.model_emission_prec @ (a_tilde - observation)
+            constant_term = torch.trace(cov_tilde @ self.p_emission_prec)
+            return constant_term + (a_tilde - observation).T @ self.p_emission_prec @ (a_tilde - observation)
 
         def _get_obs_term(self, observation):
             return observation

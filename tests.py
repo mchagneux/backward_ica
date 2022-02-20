@@ -13,16 +13,16 @@ state_sequences = [sample[0] for sample in samples]
 observation_sequences = [sample[1] for sample in samples] 
 
 
-# the variational model is a random LGMM with same dimensions, and we will not learn the covariances for now
-v_model = LinearGaussianHMM.get_random_model(2,2)
-v_model.prior.parametrizations.cov.original.requires_grad = False
-v_model.transition.parametrizations.cov.original.requires_grad = False 
-v_model.emission.parametrizations.cov.original.requires_grad = False 
+# the variational p is a random LGMM with same dimensions, and we will not learn the covariances for now
+q = LinearGaussianHMM.get_random_model(2,2)
+q.prior.parametrizations.cov.original.requires_grad = False
+q.transition.parametrizations.cov.original.requires_grad = False 
+q.emission.parametrizations.cov.original.requires_grad = False 
 
 
 elbo_nonlinear_emission = get_appropriate_elbo(variational_model_description='linear_gaussian', true_model_description='nonlinear_emission')
 
-elbo = elbo_nonlinear_emission(hmm.model, v_model)
+elbo = elbo_nonlinear_emission(hmm.p, q)
 
 # print(elbo_nonlinear_emission(observation_sequences[0]))
 
@@ -33,7 +33,7 @@ optimizer = torch.optim.Adam(params=elbo.parameters(), lr=1e-2)
 
 
 eps = torch.inf
-# optimizing model 
+# optimizing p 
 while True:
     epoch_loss = 0.0
     for observations in observation_sequences: 
