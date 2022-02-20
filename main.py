@@ -59,6 +59,7 @@ def visualize_kalman_results(true_states, observations, filtered_state_means, fi
 
 
     plt.savefig('kalman')
+
 def test_kalman():
 
     model_params = get_model()
@@ -131,32 +132,32 @@ print('Evidence, numpy:',NumpyKalman(model).filter(observations)[2])
 # print('Evidence:',fast_kf(observations ,model)[2])
 # print('Evidence, numpy:',NumpyKalman(model).filter(observations)[2])
 
-init_v_model = get_random_model(key)
-fast_elbo = jax.jit(linear_gaussian_elbo)
-print('Init ELBO:', fast_elbo(model, model, observations))
+# init_v_model = get_random_model(key)
+# fast_elbo = jax.jit(linear_gaussian_elbo)
+print('Init ELBO:', linear_gaussian_elbo(model, model, observations))
 
-optimizer = optax.adam(learning_rate = 1e-2)
+# optimizer = optax.adam(learning_rate = 1e-2)
 
-n_epochs = 3000
+# n_epochs = 3000
 
-def fit(params: optax.Params, optimizer: optax.GradientTransformation) -> optax.Params:
-    opt_state = optimizer.init(params)
+# def fit(params: optax.Params, optimizer: optax.GradientTransformation) -> optax.Params:
+#     opt_state = optimizer.init(params)
 
-    @jax.jit
-    def step(params, opt_state, observations):
-        loss_value, grads = jax.value_and_grad(fast_elbo, argnums=1)(model, params, observations)
-        updates, opt_state = optimizer.update(grads, opt_state)
-        params = optax.apply_updates(params, updates)
-        return params, opt_state, loss_value
+#     @jax.jit
+#     def step(params, opt_state, observations):
+#         loss_value, grads = jax.value_and_grad(fast_elbo, argnums=1)(model, params, observations)
+#         updates, opt_state = optimizer.update(grads, opt_state)
+#         params = optax.apply_updates(params, updates)
+#         return params, opt_state, loss_value
 
-    for _ in tqdm(range(n_epochs)):
-        params, opt_state, loss_value = step(params, opt_state, observations)
+#     for _ in tqdm(range(n_epochs)):
+#         params, opt_state, loss_value = step(params, opt_state, observations)
 
-    print('ELBO:', loss_value)
+#     print('ELBO:', loss_value)
 
-    return params
+#     return params
   
-fitted_v_model = fit(init_v_model, optimizer)
+# fitted_v_model = fit(init_v_model, optimizer)
 
-print(model)
-print(fitted_v_model)
+# print(model)
+# print(fitted_v_model)

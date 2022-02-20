@@ -50,8 +50,8 @@ def filter(observations, model:Model):
     filtered_state_covariances = filtered_state_covariances.at[0].set(init_filtering_covariance)
     loglikelihood += log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[0], model.emission)
 
-    def _step(i, val):
-        transition, emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood = val
+    def _step(carry, i):
+        transition, emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood = carry
         predicted_state_mean, predicted_state_covariance, new_filtered_state_mean, new_filtered_state_covariance = filter_step(
                                                                         filtered_state_means[i-1],
                                                                         filtered_state_covariances[i-1],
@@ -64,12 +64,11 @@ def filter(observations, model:Model):
 
         loglikelihood += log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[i], emission)
 
-        return (transition, emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood)
+        return (transition, emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood), None
 
-    init_val = (model.transition, model.emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood)
+    init_carry = (model.transition, model.emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood)
 
-    _, _, _, filtered_state_means, filtered_state_covariances, loglikelihood = jax.lax.fori_loop(lower=1, upper=num_samples, body_fun = _step, init_val=init_val)
-
+    (_, _, _, filtered_state_means, filtered_state_covariances, loglikelihood), _ = jax.lax.scan(f=_step, init=init_carry, xs=jnp.arange(1,len(observations)))
 
 
     return filtered_state_means, filtered_state_covariances, loglikelihood

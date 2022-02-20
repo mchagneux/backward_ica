@@ -1,4 +1,5 @@
 from collections import namedtuple
+from turtle import back
 from typing import NamedTuple
 import utils.kalman as kalman 
 from utils.misc import *
@@ -33,37 +34,37 @@ def _constant_terms_from_log_gaussian(dim, det_cov):
         return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
     
 
-def _eval_quad_form(quad_form, x):
-    common_term = quad_form.A @ x + quad_form.b
-    return common_term.T @ quad_form.Omega @ common_term
+def _eval_quad_form(A, b, Omega, x):
+    common_term = A @ x + b
+    return common_term.T @ Omega @ common_term
 
-def _expect_quad_form_under_backward(quad_form:QuadForm, backward):
+def _expect_quad_form_under_backward(A, b, Omega, backward_A, backward_a, backward_cov):
     # expectation of (Au+b)^T Omega (Au+b) under the backward 
 
-    constants = trace(quad_form.Omega @ quad_form.A @ backward.cov @ quad_form.A.T)
-    quad_form_in_z = QuadForm(Omega=quad_form.Omega, 
-                            A=quad_form.A @ backward.A, 
-                            b=quad_form.A @ backward.a + quad_form.b)
-    return constants, quad_form_in_z
+    constants = trace(Omega @ A @ backward_cov @ A.T)
+    A = A @ backward_A
+    b = A @ backward_a + b
+    return constants, A, b, Omega
 
 
-def _expect_transition_quad_form_under_backward(backward, transition):
+def _expect_transition_quad_form_under_backward(backward_A, backward_a, backward_cov, transition):
     # expectation of the quadratic form that appears in the log of the state transition density
 
-    constants =  - 0.5 * trace(transition.prec @ transition.matrix @ backward.cov @ transition.matrix.T)
-    quad_form_in_z = QuadForm(Omega=-0.5*transition.prec, 
-                            A=transition.matrix @ backward.A - jnp.eye(transition.matrix.shape[0]),
-                            b=transition.matrix @ backward.a + transition.offset)
-    return constants, quad_form_in_z
+    constants =  - 0.5 * trace(transition.prec @ transition.matrix @ backward_cov @ transition.matrix.T)
+    Omega=-0.5*transition.prec
+    A=transition.matrix @ backward_A - jnp.eye(transition.matrix.shape[0])
+    b=transition.matrix @ backward_a + transition.offset
+    return constants, (A, b, Omega)
 
 
-def _expect_quad_form_under_filtering(quad_form:QuadForm, filtering):
-    return trace(quad_form.Omega @ quad_form.A @ filtering.cov @ quad_form.A) + _eval_quad_form(quad_form, filtering.mean)
+def _expect_quad_form_under_filtering(A, b, Omega, filtering_mean, filtering_cov):
+
+    return trace(Omega @ A @ filtering_cov @ A) + _eval_quad_form(A, b, Omega, filtering_mean)
 
 
-def _update_backward(filtering, v_transition):
+def _update_backward(filtering_mean, filtering_cov, v_transition):
     
-    filtering_prec = inv(filtering.cov)
+    filtering_prec = inv(filtering_cov)
 
     backward_prec = v_transition.matrix.T @ v_transition.prec @ v_transition.matrix + filtering_prec
 
@@ -71,67 +72,21 @@ def _update_backward(filtering, v_transition):
 
     common_term = v_transition.matrix.T @ v_transition.prec 
     A_backward = backward_cov @ common_term
-    a_backward = backward_cov @ (filtering_prec @ filtering.mean - common_term @  v_transition.offset)
+    a_backward = backward_cov @ (filtering_prec @ filtering_mean - common_term @  v_transition.offset)
 
 
-    return Backward(A_backward, a_backward, backward_cov)
-
+    return A_backward, a_backward, backward_cov
 
 def _get_quad_form_in_z_obs_term(observation, emission):
-    return QuadForm(Omega=-0.5*emission.prec, 
-                    A = emission.matrix, 
-                    b = emission.offset - observation)    
+    Omega=-0.5*emission.prec
+    A = emission.matrix
+    b = emission.offset - observation
+    return A, b, Omega
 
 
-def _new_terms(dims, backward, transition, emission, observation):
-
-    new_constants = 0
-    new_quad_forms = []
-
-    # dealing with observation term seen as a quadratic form in z
-    new_constants += _constant_terms_from_log_gaussian(dims.x, emission.det_cov)                                      
-    new_quad_forms.append(_get_quad_form_in_z_obs_term(observation, emission))
-
-    # dealing with true transition term whose integration in z_previous under the backward is a quadratic form in z
-    new_constants += _constant_terms_from_log_gaussian(dims.z, transition.det_cov)
-    constant, integrated_quad_form = _expect_transition_quad_form_under_backward(backward, transition)
-    new_constants += constant 
-    new_quad_forms.append(integrated_quad_form)
-
-    # dealing with backward term (integration of the quadratic form is just the dimension of z)
-    new_constants += -_constant_terms_from_log_gaussian(dims.z, det(backward.cov))
-    new_constants += 0.5*dims.z
-
-    
-    return new_constants, new_quad_forms
-
-def _init_filtering(observation, v_prior, v_emission):
-    filtering_mean, filtering_cov = kalman.init(observation, v_prior, v_emission)[2:]
-    return Filtering(filtering_mean, filtering_cov)
-
-
-def _update_filtering(observation, filtering, v_transition, v_emission):
-    filtering_mean, filtering_cov = kalman.filter_step(filtering.mean, 
-                                        filtering.cov, 
-                                        observation,
-                                        v_transition,
-                                        v_emission)[2:]
-
-    return Filtering(filtering_mean, filtering_cov)
-            
-
-def _set_quad_form_params(i, quad_forms, quad_form):
-    quad_forms_A, quad_forms_b, quad_forms_Omega = quad_forms
-    quad_forms_A = quad_forms_A.at[i].set(quad_form.A)
-    quad_forms_b = quad_forms_b.at[i].set(quad_form.b)
-    quad_forms_Omega = quad_forms_Omega.at[i].set(quad_form.Omega)
-    return [quad_forms_A, quad_forms_b, quad_forms_Omega]
-
-def _get_quad_form(i, quad_forms):
-    quad_forms_A, quad_forms_b, quad_forms_Omega = quad_forms
-    return QuadForm(Omega=quad_forms_Omega[i], A=quad_forms_A[i], b=quad_forms_b[i])
 
 def linear_gaussian_elbo(model:Model, v_model:Model, observations):
+
 
     prior = model.prior
     transition = Transition(matrix=model.transition.matrix, 
@@ -152,6 +107,7 @@ def linear_gaussian_elbo(model:Model, v_model:Model, observations):
                             cov=v_model.transition.cov, 
                             prec=inv(v_model.transition.cov), 
                             det_cov=det(v_model.transition.cov))
+
     v_emission = Emission(matrix=v_model.emission.matrix, 
                         offset=v_model.emission.offset, 
                         cov=v_model.emission.cov, 
@@ -161,70 +117,132 @@ def linear_gaussian_elbo(model:Model, v_model:Model, observations):
     dims = Dims(z=transition.matrix.shape[0], x=emission.matrix.shape[0])
 
 
+    filtering_means, filtering_covs, _  = kalman.filter(observations, v_model)
 
-    filtering = _init_filtering(observations[0], v_prior, v_emission)
+    compute_all_backwards = jax.vmap(_update_backward, in_axes=(0,0,None))
+    backward_As, backward_as, backward_covs = compute_all_backwards(filtering_means[:-1], filtering_covs[:-1], v_transition)
+
+
+    def _terms_from_single_step(backward_A, backward_a, backward_cov, observation, dims, transition, emission):
+
+        # dealing with true transition term whose integration in z_previous under the backward is a quadratic form in z
+        constants = _constant_terms_from_log_gaussian(dims.z, transition.det_cov)
+        constant, transition_term = _expect_transition_quad_form_under_backward(backward_A, backward_a, backward_cov, transition)
+        constants += constant 
+
+        # dealing with observation term seen as a quadratic form in z
+        constants += _constant_terms_from_log_gaussian(dims.x, emission.det_cov)                                      
+        obs_term = _get_quad_form_in_z_obs_term(observation, emission)
+
+        # dealing with backward term (integration of the quadratic form is just the dimension of z)
+        constants += -_constant_terms_from_log_gaussian(dims.z, det(backward_cov))
+        constants += 0.5*dims.z
+        
+        return constants, *transition_term, *obs_term
 
 
     constants = _constant_terms_from_log_gaussian(dims.z, det(prior.cov)) + \
-                 _constant_terms_from_log_gaussian(dims.x, emission.det_cov)
+                _constant_terms_from_log_gaussian(dims.x, emission.det_cov)
+                
+    init_transition_term = (jnp.eye(dims.z), -prior.mean, -0.5*inv(prior.cov))
+    init_obs_term = _get_quad_form_in_z_obs_term(observations[0], emission)
 
-    num_quad_forms = 2*len(observations)
-    quad_forms_A = jnp.empty((num_quad_forms, dims.z, dims.z))
-    quad_forms_b = jnp.empty((num_quad_forms, dims.z))
-    quad_forms_Omega = jnp.empty((num_quad_forms, dims.z, dims.z))
-    quad_forms = [quad_forms_A, quad_forms_b, quad_forms_Omega]
-    quad_forms = _set_quad_form_params(0, quad_forms, _get_quad_form_in_z_obs_term(observations[0], emission))
-    quad_forms = _set_quad_form_params(1, quad_forms, QuadForm(Omega=-0.5*inv(prior.cov), A=jnp.eye(dims.z), b=-prior.mean))
+    _terms_from_all_steps = jax.vmap(_terms_from_single_step, in_axes=(0,0,0,0,None,None,None))
+    new_terms  = _terms_from_all_steps(backward_As, backward_as, backward_covs, observations[1:], dims, transition, emission)
 
-    @jax.jit
-    def _step(i, val):
+    constants += new_terms[0]
+    transition_terms = new_terms[1:4]
+    transition_terms = (jnp.concatenate((jnp.expand_dims(init_transition_term[0], axis=0),transition_terms[0])),
+                        jnp.concatenate((jnp.expand_dims(init_transition_term[1], axis=0),transition_terms[1])),
+                        jnp.concatenate((jnp.expand_dims(init_transition_term[2], axis=0),transition_terms[2])))
+    obs_terms = new_terms[4:]
 
-        dims, transition, emission, v_transition, v_emission, observations, filtering, constants, quad_forms = val
+    obs_terms = (jnp.concatenate((jnp.expand_dims(init_transition_term[0], axis=0),obs_terms[0])),
+                        jnp.concatenate((jnp.expand_dims(init_transition_term[1], axis=0),obs_terms[1])),
+                        jnp.concatenate((jnp.expand_dims(init_transition_term[2], axis=0),obs_terms[2])))
+    
+    # backward_indices_for_integration = jnp.arange(len(obsersations)-1
 
-        backward = _update_backward(filtering, v_transition)
+    def _integration_step(carry, x):
+        constants, A, b, Omega = carry
+        backward_A, backward_a, backward_cov = x
+        new_constants, A, b, Omega = _expect_quad_form_under_backward(A, b, Omega, backward_A, backward_a, backward_cov)
+        return (constants+new_constants, A, b, Omega), None
+
+
+
+    transition_terms_to_integrate = [[0, transition_terms[0][i],transition_terms[1][i],transition_terms[2][i]] for i in range(len(observations)-1)]
+    dummy_backward_A, dummy_backward_a, dummy_backward_cov = jnp.eye(dims.z), jnp.zeros(shape=(dims.z,)), jnp.zeros(shape=(dims.z, dims.z))
+    num_backwards = len(observations)-1
+    corresponding_backwards_to_integrate_against = [[jnp.concatenate((jnp.repeat(dummy_backward_A, repeats=num_backwards - i), backward_As[i:])), 
+                                                    jnp.concatenate((jnp.repeat(dummy_backward_a, repeats=num_backwards - i), backward_as[i:])), 
+                                                    jnp.concatenate((jnp.repeat(dummy_backward_cov, repeats=num_backwards - i), backward_covs[i:]))]
+                                                    for i in range(num_backwards)]
+
+    indices = jnp.arange(0, len(transition_terms_to_integrate))
+    
+    results, _ = jax.lax.scan(f=_integrate_all, 
+                            init=transition_terms_to_integrate,
+                            xs=(indices, corresponding_backwards_to_integrate_against))
+
+    test = 0
+
+
+    # _integrate_all_terms = jax.tree_map(_integration, tree=(transition_terms))
+
+    # integrated_transition_terms = _integrate_all_terms(jnp.zeros(shape=(len(observations),)), *transition_terms, backwards_to_integrate_against)
+
+    test = 0
+
+    # @jax.jit
+    # def _step(i, val):
+
+    #     dims, transition, emission, v_transition, v_emission, observations, filtering, constants, quad_forms = val
+
+    #     backward = _update_backward(filtering, v_transition)
         
-        def _integration_step(j, val):
-            constants, quad_forms = val
-            constant, integrated_quad_form = _expect_quad_form_under_backward(_get_quad_form(j, quad_forms), backward)
-            constants += constant
-            quad_forms = _set_quad_form_params(j, quad_forms, integrated_quad_form)
-            return constants, quad_forms
+    #     def _integration_step(j, val):
+    #         constants, quad_forms = val
+    #         constant, integrated_quad_form = _expect_quad_form_under_backward(_get_quad_form(j, quad_forms), backward)
+    #         constants += constant
+    #         quad_forms = _set_quad_form_params(j, quad_forms, integrated_quad_form)
+    #         return constants, quad_forms
 
-        constants, quad_forms =  jax.lax.fori_loop(lower=0, upper=2*i, body_fun=_integration_step, init_val=(constants, quad_forms))
+    #     constants, quad_forms =  jax.lax.fori_loop(lower=0, upper=2*i, body_fun=_integration_step, init_val=(constants, quad_forms))
 
-        new_constants, new_quad_forms = _new_terms(dims,
-                                                backward,
-                                                transition,
-                                                emission, 
-                                                observations[i])
+    #     new_constants, new_quad_forms = _new_terms(dims,
+    #                                             backward,
+    #                                             transition,
+    #                                             emission, 
+    #                                             observations[i])
 
-        constants += new_constants
+    #     constants += new_constants
   
-        quad_forms = _set_quad_form_params(2*i, quad_forms, new_quad_forms[0])           
-        quad_forms = _set_quad_form_params(2*i+1, quad_forms, new_quad_forms[1])           
+    #     quad_forms = _set_quad_form_params(2*i, quad_forms, new_quad_forms[0])           
+    #     quad_forms = _set_quad_form_params(2*i+1, quad_forms, new_quad_forms[1])           
 
 
-        filtering = _update_filtering(observations[i], filtering, v_transition, v_emission)
+    #     filtering = _update_filtering(observations[i], filtering, v_transition, v_emission)
 
-        return dims, transition, emission, v_transition, v_emission, observations, filtering, constants, quad_forms
+    #     return dims, transition, emission, v_transition, v_emission, observations, filtering, constants, quad_forms
     
-    init_val = (dims, transition, emission, v_transition, v_emission, observations, filtering, constants, quad_forms)
+    # init_val = (dims, transition, emission, v_transition, v_emission, observations, filtering, constants, quad_forms)
 
-    _, _, _, _, _, _, filtering, constants, quad_forms = jax.lax.fori_loop(lower=1, upper=len(observations), body_fun=_step, init_val=init_val)
+    # _, _, _, _, _, _, filtering, constants, quad_forms = jax.lax.fori_loop(lower=1, upper=len(observations), body_fun=_step, init_val=init_val)
 
-    constants += -_constant_terms_from_log_gaussian(dims.z, det(filtering.cov))
+    # constants += -_constant_terms_from_log_gaussian(dims.z, det(filtering.cov))
 
-    def _filtering_integration_step(i, val):
-        filtering, quad_forms, constants = val
-        constants += _expect_quad_form_under_filtering(_get_quad_form(i, quad_forms), filtering) 
-        return filtering, quad_forms, constants
+    # def _filtering_integration_step(i, val):
+    #     filtering, quad_forms, constants = val
+    #     constants += _expect_quad_form_under_filtering(_get_quad_form(i, quad_forms), filtering) 
+    #     return filtering, quad_forms, constants
     
-    _, _, constants = jax.lax.fori_loop(lower=0, upper=num_quad_forms, body_fun=_filtering_integration_step, init_val=(filtering, quad_forms, constants))
+    # _, _, constants = jax.lax.fori_loop(lower=0, upper=num_quad_forms, body_fun=_filtering_integration_step, init_val=(filtering, quad_forms, constants))
     
 
-    constants += 0.5*dims.z
+    # constants += 0.5*dims.z
 
-    return -constants 
+    return 0 
 
 
 
