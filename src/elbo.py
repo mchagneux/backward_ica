@@ -40,9 +40,9 @@ class ApproximatorExpectationInQuadForm(nn.Module):
         self.state_dim = state_dim 
         self.obs_dim = obs_dim
         input_shape = state_dim**2 + state_dim + state_dim**2
-        self.A_tilde_approximator = nn.Sequential(nn.Linear(in_features=input_shape, out_features = obs_dim*state_dim, bias=True), nn.SELU())
-        self.a_tilde_approximator = nn.Sequential(nn.Linear(in_features=input_shape, out_features = obs_dim, bias=True), nn.SELU())
-        self.cov_tilde_approximator = nn.Sequential(nn.Linear(in_features=input_shape, out_features=(obs_dim * (obs_dim + 1)) // 2, bias=True), nn.SELU())
+        self.A_tilde_approximator = nn.Sequential(nn.Linear(in_features=input_shape, out_features = obs_dim*state_dim, bias=True), nn.ReLU())
+        self.a_tilde_approximator = nn.Sequential(nn.Linear(in_features=input_shape, out_features = obs_dim, bias=True), nn.ReLU())
+        self.cov_tilde_approximator = nn.Sequential(nn.Linear(in_features=input_shape, out_features=(obs_dim * (obs_dim + 1)) // 2, bias=True), nn.ReLU())
 
     def forward(self, A, a, cov):
         inputs = torch.cat((A.flatten(), a, cov.flatten()))
