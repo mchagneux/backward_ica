@@ -1,12 +1,12 @@
 import numpy as np
-from utils.kalman import filter as kalman_filter
-from utils.kalman import Kalman as NumpyKalman
-from utils.misc import * 
+from src.kalman import filter as kalman_filter
+from src.kalman import Kalman as NumpyKalman
+from src.misc import * 
 import matplotlib.pyplot as plt 
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
-from utils.linear_gaussian_hmm import sample_joint_sequence
-from utils.elbo import linear_gaussian_elbo
+from src.linear_gaussian_hmm import sample_joint_sequence
+from src.elbo import linear_gaussian_elbo
 
 import jax
 import jax.numpy as jnp

@@ -67,11 +67,6 @@ def filter(observations, model:Model):
         return (transition, emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood), None
 
     init_carry = (model.transition, model.emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood)
-<<<<<<< HEAD
-
-    (_, _, _, filtered_state_means, filtered_state_covariances, loglikelihood), _ = jax.lax.scan(f=_step, init=init_carry, xs=jnp.arange(1,len(observations)))
-=======
->>>>>>> tmp
 
     (_, _, _, filtered_state_means, filtered_state_covariances, loglikelihood), _ = jax.lax.scan(f=_step, init=init_carry, xs=jnp.arange(1,len(observations)))
 

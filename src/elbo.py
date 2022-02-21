@@ -167,56 +167,38 @@ def linear_gaussian_elbo(model:Model, v_model:Model, observations):
 
     def _integration_step(carry, x):
         constants, A, b, Omega = carry
-        backward_A, backward_a, backward_cov = x
-        new_constants, A, b, Omega = _expect_quad_form_under_backward(A, b, Omega, backward_A, backward_a, backward_cov)
+        backward_A, backward_a, backward_cov, integrate_flag = x
+        new_constants, A, b, Omega = jax.lax.cond(pred=integrate_flag,
+                                                true_fun = _expect_quad_form_under_backward,
+                                                false_fun = lambda A, b, Omega, backward_A, backward_a, backward_cov:  (0, A, b, Omega),
+                                                operands = (A, b, Omega, backward_A, backward_a, backward_cov))
+
         return (constants+new_constants, A, b, Omega), None
 
+    _integrate_transition_term = lambda transition_term, backwards, flags: jax.lax.scan(f = _integration_step,
+                                                                                        init = (0, transition_term[0], transition_term[1], transition_term[2]),
+                                                                                        xs = (backwards, flags))[0]
 
-
-    transition_terms_to_integrate = [[0, transition_terms[0][i],transition_terms[1][i],transition_terms[2][i]] for i in range(len(observations)-1)]
-    dummy_backward_A, dummy_backward_a, dummy_backward_cov = jnp.eye(dims.z), jnp.zeros(shape=(dims.z,)), jnp.zeros(shape=(dims.z, dims.z))
+    dummy_backward_A, dummy_backward_a, dummy_backward_cov = jnp.empty_like(backward_As[-1]), jnp.empty_like(backward_as[-1]), jnp.empty_like(backward_covs[-1])
     num_backwards = len(observations)-1
-    corresponding_backwards_to_integrate_against = [[jnp.concatenate((jnp.repeat(dummy_backward_A, repeats=num_backwards - i), backward_As[i:])), 
-                                                    jnp.concatenate((jnp.repeat(dummy_backward_a, repeats=num_backwards - i), backward_as[i:])), 
-                                                    jnp.concatenate((jnp.repeat(dummy_backward_cov, repeats=num_backwards - i), backward_covs[i:]))]
-                                                    for i in range(num_backwards)]
-
-    indices = jnp.arange(0, len(transition_terms_to_integrate))
+    test = jnp.stack([dummy_backward_A]*num_backwards)
+    backwards_As_for_integration = jnp.concatenate(([backward_As], jnp.concatenate([jnp.stack([dummy_backward_A]*i), backward_As[i:] for i in range(1, num_backwards)])))
+    backwards_as_for_integration = jnp.concatenate(([backward_as], jnp.concatenate([jnp.stack([dummy_backward_a]*i), backward_as[i:] for i in range(1, num_backwards)])))
+    backward_covs_for_integration = jnp.concatenate(([backward_covs], jnp.concatenate([jnp.stack([dummy_backward_cov]*i), backward_covs[i:] for i in range(1, num_backwards)])))
+                                                    
+    integrate_flags = jnp.array([[False]*i + [True]*(len(backward_As) - i) for i in range(len(backward_As))])
     
-    results, _ = jax.lax.scan(f=_integrate_all, 
-                            init=transition_terms_to_integrate,
-                            xs=(indices, corresponding_backwards_to_integrate_against))
+    # results, _ = jax.lax.scan(f=_integrate_all, 
+    #                         init=transition_terms_to_integrate,
+    #                         xs=(indices, corresponding_backwards_to_integrate_against))
+
+
+
+    # _integrate_all_terms = jax.tree_multimap(_integrate_transition_term, transition_terms_to_integrate, corresponding_backwards_to_integrate_against, integrate_flags)
 
     test = 0
-
-
-    # _integrate_all_terms = jax.tree_map(_integration, tree=(transition_terms))
 
     # integrated_transition_terms = _integrate_all_terms(jnp.zeros(shape=(len(observations),)), *transition_terms, backwards_to_integrate_against)
-
-    test = 0
-
-<<<<<<< HEAD
-    def _compute_V(dims, transition, emission, v_transition, v_emission, observations, filtering, constants, quad_forms):
-
-        with loops.Scope() as s:
-            s.index = 0
-            for i in s.range(1, len(observations)):
-                backward = _update_backward(filtering, v_transition)
-                while s.while_range(s.index < 2*i):
-                    constant, integrated_quad_form = _expect_quad_form_under_backward(_get_quad_form(s.index, quad_forms), backward)
-                    constants += constant
-                    quad_forms = _set_quad_form_params(s.index, quad_forms, integrated_quad_form)
-                    s.index +=1
-                s.index = 0
-
-        
-                new_constants, new_quad_forms = _new_terms(dims,
-                                                        backward,
-                                                        transition,
-                                                        emission, 
-                                                        observations[i])
-=======
     # @jax.jit
     # def _step(i, val):
 
@@ -243,21 +225,12 @@ def linear_gaussian_elbo(model:Model, v_model:Model, observations):
   
     #     quad_forms = _set_quad_form_params(2*i, quad_forms, new_quad_forms[0])           
     #     quad_forms = _set_quad_form_params(2*i+1, quad_forms, new_quad_forms[1])           
->>>>>>> tmp
 
-                constants += new_constants
+                # constants += new_constants
         
-                quad_forms = _set_quad_form_params(2*i, quad_forms, new_quad_forms[0])           
-                quad_forms = _set_quad_form_params(2*i+1, quad_forms, new_quad_forms[1])           
+                # quad_forms = _set_quad_form_params(2*i, quad_forms, new_quad_forms[0])           
+                # quad_forms = _set_quad_form_params(2*i+1, quad_forms, new_quad_forms[1])           
 
-<<<<<<< HEAD
-            filtering = _update_filtering(observations[i], filtering, v_transition, v_emission)
-        
-        return filtering, constants, quad_forms
-
-
-    filtering, constants, quad_forms = _compute_V(dims, transition, emission, v_transition, v_emission, observations, filtering, constants, quad_forms)
-=======
     #     filtering = _update_filtering(observations[i], filtering, v_transition, v_emission)
 
     #     return dims, transition, emission, v_transition, v_emission, observations, filtering, constants, quad_forms
@@ -265,34 +238,20 @@ def linear_gaussian_elbo(model:Model, v_model:Model, observations):
     # init_val = (dims, transition, emission, v_transition, v_emission, observations, filtering, constants, quad_forms)
 
     # _, _, _, _, _, _, filtering, constants, quad_forms = jax.lax.fori_loop(lower=1, upper=len(observations), body_fun=_step, init_val=init_val)
->>>>>>> tmp
 
     # constants += -_constant_terms_from_log_gaussian(dims.z, det(filtering.cov))
 
-<<<<<<< HEAD
-    def _filtering_integration_step(carry, i):
-        filtering, quad_forms, constants = carry
-        constants += _expect_quad_form_under_filtering(_get_quad_form(i, quad_forms), filtering) 
-        return (filtering, quad_forms, constants), None
-    
-    (_, _, constants), _ = jax.lax.scan(f=_filtering_integration_step, init=(filtering, quad_forms, constants), xs=jnp.arange(0,num_quad_forms))
-=======
     # def _filtering_integration_step(i, val):
     #     filtering, quad_forms, constants = val
     #     constants += _expect_quad_form_under_filtering(_get_quad_form(i, quad_forms), filtering) 
     #     return filtering, quad_forms, constants
     
     # _, _, constants = jax.lax.fori_loop(lower=0, upper=num_quad_forms, body_fun=_filtering_integration_step, init_val=(filtering, quad_forms, constants))
->>>>>>> tmp
     
 
     # constants += 0.5*dims.z
 
-<<<<<<< HEAD
-    return constants 
-=======
     return 0 
->>>>>>> tmp
 
 
 
