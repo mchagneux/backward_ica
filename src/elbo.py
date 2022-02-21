@@ -49,11 +49,10 @@ def _expect_quad_form_under_backward(A, b, Omega, backward_A, backward_a, backwa
 def _expect_transition_quad_form_under_backward(backward_A, backward_a, backward_cov, transition):
     # expectation of the quadratic form that appears in the log of the state transition density
 
-    constants =  - 0.5 * trace(transition.prec @ transition.matrix @ backward_cov @ transition.matrix.T)
     Omega=-0.5*transition.prec
     A = transition.matrix @ backward_A - jnp.eye(transition.matrix.shape[0])
     b = transition.matrix @ backward_a + transition.offset
-    return constants, (A, b, Omega)
+    return A, b, Omega
 
 
 def _expect_quad_form_under_filtering(A, b, Omega, filtering_mean, filtering_cov):
@@ -89,8 +88,8 @@ def _terms_from_single_step(backward_A, backward_a, backward_cov, observation, d
 
     # dealing with true transition term whose integration in z_previous under the backward is a quadratic form in z
     new_constants = _constant_terms_from_log_gaussian(dims.z, transition.det_cov)
-    constant, new_transition_term = _expect_transition_quad_form_under_backward(backward_A, backward_a, backward_cov, transition)
-    new_constants += constant 
+    new_transition_term = _expect_transition_quad_form_under_backward(backward_A, backward_a, backward_cov, transition)
+    new_constants += - 0.5 * jnp.trace(transition.prec @ transition.matrix @ backward_cov @ transition.prec.T)
 
     # dealing with observation term seen as a quadratic form in z
     new_constants += _constant_terms_from_log_gaussian(dims.x, emission.det_cov)                                      
@@ -99,7 +98,6 @@ def _terms_from_single_step(backward_A, backward_a, backward_cov, observation, d
     # dealing with backward term (integration of the quadratic form is just the dimension of z)
     new_constants += -_constant_terms_from_log_gaussian(dims.z, det(backward_cov))
     new_constants += 0.5*dims.z
-    new_constants += - 0.5 * jnp.trace(transition.prec @ transition.matrix @ backward_cov @ transition.prec.T)
 
     
     return new_constants, *new_transition_term, *new_obs_term

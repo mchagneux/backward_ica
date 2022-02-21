@@ -122,10 +122,12 @@ def get_random_model(key):
 # test_kalman()
 model = get_model()
 key = generate_key(0)
-observation_sequences = [sample_joint_sequence(key=key, sequence_length=100, model_params=model)[1] for _ in range(10)]
+observation_sequences = [sample_joint_sequence(key=key, sequence_length=3, model_params=model)[1] for _ in range(10)]
 
 fast_kf = jax.jit(kalman_filter)
-print('Evidence:',fast_kf(observation_sequences[0] ,model)[2])
+
+observations = jnp.zeros(shape=(3,2))
+print('Evidence:',fast_kf(observations ,model)[2])
 # print('Evidence, numpy:',NumpyKalman(model).filter(observations)[2])
 
 
@@ -138,7 +140,7 @@ print('Evidence:',fast_kf(observation_sequences[0] ,model)[2])
 
 # state_sequences = [sequence[0] for sequence in sequences]
 # observation_sequences = [sequence[1] for sequence in sequences]
-print('Init ELBO:', linear_gaussian_elbo(model, model, observation_sequences[0]))
+print('Init ELBO:', linear_gaussian_elbo(model, model, observations))
 # print('Grad ELBO:', fast_grad(model, model, observation_sequences[0]))
 
 # for observations in observation_sequences:
