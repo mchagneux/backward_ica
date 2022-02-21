@@ -218,7 +218,7 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
             self._update_filtering(observation)
 
 
-        for backward_index, term in zip(range(len(self.backwards)), self.terms_V):
+        for backward_index, term in zip(range(len(self.backwards)), self.terms_V[:-1]):
             transition_term, obs_term = term
             constant, integrated_quad_form = self._expect_quad_form_under_backward(transition_term, backward_index=backward_index)
             self.constants_V += constant
