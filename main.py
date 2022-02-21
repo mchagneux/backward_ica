@@ -122,11 +122,11 @@ def get_random_model(key):
 # test_kalman()
 model = get_model()
 key = generate_key(0)
-observation_sequences = [sample_joint_sequence(key=key, sequence_length=3, model_params=model)[1] for _ in range(10)]
+observation_sequences = [sample_joint_sequence(key=key, sequence_length=30, model_params=model)[1] for _ in range(10)]
 
 fast_kf = jax.jit(kalman_filter)
 
-observations = jnp.zeros(shape=(3,2))
+observations = jnp.zeros(shape=(15,2))
 print('Evidence:',fast_kf(observations ,model)[2])
 # print('Evidence, numpy:',NumpyKalman(model).filter(observations)[2])
 
