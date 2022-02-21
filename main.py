@@ -1,12 +1,12 @@
 import numpy as np
-from utils.kalman import filter as kalman_filter
-from utils.kalman import Kalman as NumpyKalman
-from utils.misc import * 
+from src.kalman import filter as kalman_filter
+from src.kalman import Kalman as NumpyKalman
+from src.misc import * 
 import matplotlib.pyplot as plt 
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
-from utils.linear_gaussian_hmm import sample_joint_sequence
-from utils.elbo import linear_gaussian_elbo
+from src.linear_gaussian_hmm import sample_joint_sequence
+from src.elbo import linear_gaussian_elbo
 
 import jax
 import jax.numpy as jnp
@@ -59,6 +59,7 @@ def visualize_kalman_results(true_states, observations, filtered_state_means, fi
 
 
     plt.savefig('kalman')
+
 def test_kalman():
 
     model_params = get_model()
@@ -121,20 +122,29 @@ def get_random_model(key):
 # test_kalman()
 model = get_model()
 key = generate_key(0)
-states, observations = sample_joint_sequence(key=key, sequence_length=100, model_params=model)
+observation_sequences = [sample_joint_sequence(key=key, sequence_length=100, model_params=model)[1] for _ in range(10)]
 
 fast_kf = jax.jit(kalman_filter)
-print('Evidence:',fast_kf(observations ,model)[2])
-print('Evidence, numpy:',NumpyKalman(model).filter(observations)[2])
+print('Evidence:',fast_kf(observation_sequences[0] ,model)[2])
+# print('Evidence, numpy:',NumpyKalman(model).filter(observations)[2])
 
 
 # print('Evidence:',fast_kf(observations ,model)[2])
 # print('Evidence, numpy:',NumpyKalman(model).filter(observations)[2])
 
 # init_v_model = get_random_model(key)
-# fast_elbo = jax.jit(linear_gaussian_elbo)
-print('Init ELBO:', linear_gaussian_elbo(model, model, observations))
+# fast_elbo = linear_gaussian_elbo
+# fast_grad = jax.jit(jax.grad(linear_gaussian_elbo, argnums=1))
 
+# state_sequences = [sequence[0] for sequence in sequences]
+# observation_sequences = [sequence[1] for sequence in sequences]
+print('Init ELBO:', linear_gaussian_elbo(model, model, observation_sequences[0]))
+# print('Grad ELBO:', fast_grad(model, model, observation_sequences[0]))
+
+# for observations in observation_sequences:
+#     print(fast_elbo(model, model, observations))
+
+# print('ELBO fast:',fast_elbo(model, model, observations[2:]))
 # optimizer = optax.adam(learning_rate = 1e-2)
 
 # n_epochs = 3000

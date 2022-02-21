@@ -2,9 +2,9 @@ from jax.numpy.linalg import inv
 import jax.numpy as jnp
 import numpy as np
 import jax
-from utils.misc import * 
+from .misc import * 
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
-from utils.distributions import Gaussian
+from .distributions import Gaussian
 
 def predict(current_state_mean, current_state_covariance, transition):
     predicted_state_mean = transition.matrix @ current_state_mean + transition.offset
@@ -69,7 +69,6 @@ def filter(observations, model:Model):
     init_carry = (model.transition, model.emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood)
 
     (_, _, _, filtered_state_means, filtered_state_covariances, loglikelihood), _ = jax.lax.scan(f=_step, init=init_carry, xs=jnp.arange(1,len(observations)))
-
 
 
     return filtered_state_means, filtered_state_covariances, loglikelihood

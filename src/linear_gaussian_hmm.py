@@ -1,4 +1,4 @@
-from utils.misc import * 
+from .misc import * 
 from jax.random import multivariate_normal
 import jax.numpy as jnp
 from jax import jit, random
