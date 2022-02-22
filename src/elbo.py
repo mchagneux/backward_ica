@@ -71,25 +71,51 @@ class BackwardELBO(torch.nn.Module, metaclass=ABCMeta):
         self.dim_z = torch.as_tensor(self.p.transition.cov.shape[0])
         self.dim_x = torch.as_tensor(self.p.emission.cov.shape[0])
 
-        self.backwards = [] 
+        self.constants_V = torch.as_tensor(0., dtype=torch.float64)
 
-        self.constants_V = None
-        self.terms_V = None
+        self.backward = Backward(A=torch.empty(size=(self.dim_z, self.dim_z)), 
+                                a=torch.empty(size=(self.dim_z,)), 
+                                cov=torch.empty(size=(self.dim_z, self.dim_z)))
+
+        self.filtering = Filtering(mean=torch.empty(size=(self.dim_z,)),
+                                cov=torch.empty(size=(self.dim_z,self.dim_z))) 
 
     @abstractmethod
-    def _update_V(self, observations):
+    def _init_filtering(self, observation):
         pass
+
+    @abstractmethod
+    def _update_filtering(self, observation):
+        pass
+
+    @abstractmethod
+    def _update_backward(self):
+        pass 
 
     @abstractmethod
     def _init_V(self, observation):
         pass
 
     @abstractmethod
+    def _update_V(self, observation):
+        pass
+
+    @abstractmethod
     def _expect_V_under_filtering():
         pass
 
-    def update(self, observations):
-        self._update_V(observations)
+    def init(self, observation):
+        self._init_V(observation)
+        self._init_filtering(observation)
+
+    def _update(self, observation):
+        self._update_backward()
+        self._update_filtering(observation)
+        self._update_V(observation)
+
+    def update(self, observation):
+        self.constants_V -= -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.filtering.cov))
+        self._update(observation)
         return self._expect_V_under_filtering()
 
     def forward(self, observations):
@@ -105,12 +131,13 @@ class BackwardELBO(torch.nn.Module, metaclass=ABCMeta):
         self.q_emission_prec = torch.inverse(self.q.emission.cov)
         self.q_emission_det_cov = torch.det(self.q.emission.cov)
 
+        self.init(observations[0])
 
-        self._init_V(observations[0])
+        for observation in observations[1:]:
+            self._update(observation)
+        self.constants_V += -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.filtering.cov))
 
-        result =  self.update(observations[1:])
-        self.backwards = []
-        return result
+        return self._expect_V_under_filtering()
 
 class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
         
@@ -118,12 +145,13 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
         super().__init__(p, q)
 
         self.kalman = Kalman(self.q)
-        self.filtering = None
         # self.term_to_remove_if_V_update = None
+        self.obs_terms = []
+        self.transition_terms = []
 
 
     @abstractmethod
-    def _expect_obs_term_under_backward(self, observation, backward_index):
+    def _expect_obs_term_under_backward(self, obs_term):
         pass
 
     @abstractmethod
@@ -134,34 +162,52 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
     def _get_obs_term(self, observation):
         pass
 
-    def _expect_quad_form_under_backward(self, quad_form, backward_index=-1):
-            constant = torch.trace(quad_form.Omega @ quad_form.A @ self.backwards[backward_index].cov @ quad_form.A.T)
-            integrated_quad_form = QuadForm(Omega=quad_form.Omega, 
-                                    A=quad_form.A @ self.backwards[backward_index].A, 
-                                    b=quad_form.A @ self.backwards[backward_index].a + quad_form.b)
-            return constant, integrated_quad_form
-                            
-    def _expect_quad_forms_under_backward(self, quad_forms, backward_index=-1):
-        # expectation of (Au+b)^T Omega (Au+b) under the backward 
-        constants = 0
-        integrated_quad_forms = []
-        for quad_form in quad_forms: 
-            constant, integrated_quad_form = self._expect_quad_form_under_backward(quad_form, backward_index)
-            constants += constant
-            integrated_quad_forms.append(integrated_quad_form)
+    def _init_V(self, observation):
 
-        return constants, integrated_quad_forms
+        self.constants_V += _constant_terms_from_log_gaussian(self.dim_z, torch.det(self.p.prior.cov)) + \
+                            _constant_terms_from_log_gaussian(self.dim_x, self.p_emission_det_cov)
+        
 
-    def _expect_transition_quad_form_under_backward(self, index=-1):
-        # expectation of the quadratic form that appears in the log of the state transition density
+        self.transition_terms.append(QuadForm(Omega=-0.5*torch.inverse(self.p.prior.cov), A=torch.eye(self.dim_z), b=-self.p.prior.mean))
+        self.obs_terms.append(self._get_obs_term(observation))
 
-        quad_form_in_z = QuadForm(Omega=-0.5*self.p_transition_prec, 
-                                A=self.p.transition.map.weight @ self.backwards[index].A - torch.eye(self.p.transition.cov.shape[0]),
-                                b=self.p.transition.map.weight @ self.backwards[index].a + self.p.transition.map.bias)
-        return quad_form_in_z
+    def _update_V(self, observation):
 
-    def _expect_quad_form_under_filtering(self, quad_form:QuadForm):
-        return torch.trace(quad_form.Omega @ quad_form.A @ self.filtering.cov @ quad_form.A) + _eval_quad_form(quad_form, self.filtering.mean)
+        self.constants_V += _constant_terms_from_log_gaussian(self.dim_x, self.p_emission_det_cov) \
+                        +  _constant_terms_from_log_gaussian(self.dim_z, self.p_transition_det_cov) \
+                        + -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.backward.cov)) \
+                        +  0.5 * torch.as_tensor(self.dim_z, dtype=torch.float64) \
+                        + - 0.5 * torch.trace(self.p_transition_prec @ self.p.transition.map.weight @ self.backward.cov @ self.p.transition.map.weight.T)
+        
+        for term_nb, (transition_term, obs_term) in enumerate(zip(self.transition_terms, self.obs_terms)):
+            constants_0, self.transition_terms[term_nb] = self._expect_quad_form_under_backward(transition_term)
+            constants_1, self.obs_terms[term_nb] = self._expect_obs_term_under_backward(obs_term)
+            self.constants_V += constants_0 + constants_1
+
+        self.transition_terms.append(self._expect_transition_quad_form_under_backward())
+        self.obs_terms.append(self._get_obs_term(observation))
+
+    def _expect_V_under_filtering(self):
+
+        result = self.constants_V 
+
+        for transition_term, obs_term in zip(self.transition_terms[:-1], self.obs_terms[:-1]):
+            result += self._expect_quad_form_under_filtering(transition_term) \
+                    + self._expect_quad_form_under_filtering(obs_term)
+
+
+        result += self._expect_quad_form_under_filtering(self.transition_terms[-1]) # the last term is an observation term that has never been integrated: it is not a quad form in the nonlinear case
+        result += self._expect_obs_term_under_filtering(self.obs_terms[-1]) # the last term is an observation term that has never been integrated: it is not a quad form in the nonlinear case
+
+        result += 0.5*torch.as_tensor(self.dim_z, dtype=torch.float64)
+
+        return result
+
+    def _init_filtering(self, observation):
+        self.filtering = Filtering(*self.kalman.init(observation)[2:])
+    
+    def _update_filtering(self, observation):
+        self.filtering = Filtering(*self.kalman.filter_step(*self.filtering, observation)[2:])
 
     def _update_backward(self):
         
@@ -175,84 +221,32 @@ class LinearGaussianQ(BackwardELBO, metaclass=ABCMeta):
         backward_A = backward_cov @ common_term
         backward_a = backward_cov @ (filtering_prec @ self.filtering.mean - common_term @  self.q.transition.map.bias)
 
-        self.backwards.append(Backward(A=backward_A, a=backward_a, cov=backward_cov))
+        self.backward = Backward(A=backward_A, a=backward_a, cov=backward_cov)
 
-    def _init_filtering(self, observation):
-        self.filtering = Filtering(*self.kalman.init(observation)[2:])
+    def _expect_quad_form_under_backward(self, quad_form):
+        constant = torch.trace(quad_form.Omega @ quad_form.A @ self.backward.cov @ quad_form.A.T)
+        integrated_quad_form = QuadForm(Omega=quad_form.Omega, 
+                                A=quad_form.A @ self.backward.A, 
+                                b=quad_form.A @ self.backward.a + quad_form.b)
+        return constant, integrated_quad_form
+                        
+    def _expect_transition_quad_form_under_backward(self):
+        # expectation of the quadratic form that appears in the log of the state transition density
 
-    def _update_filtering(self, observation):
-        self.filtering = Filtering(*self.kalman.filter_step(*self.filtering, 
-                                            observation)[2:])
+        quad_form_in_z = QuadForm(Omega=-0.5*self.p_transition_prec, 
+                                A=self.p.transition.map.weight @ self.backward.A - torch.eye(self.p.transition.cov.shape[0]),
+                                b=self.p.transition.map.weight @ self.backward.a + self.p.transition.map.bias)
+        return quad_form_in_z
 
-    def _init_V(self, observation):
-
-
-        self.constants_V = torch.as_tensor(0., dtype=torch.float64)
-        self.terms_V = []
-
-
-        self._init_filtering(observation)
-
-        self.constants_V += _constant_terms_from_log_gaussian(self.dim_z, torch.det(self.p.prior.cov)) + \
-                            _constant_terms_from_log_gaussian(self.dim_x, self.p_emission_det_cov)
-        
-
-        quad_forms_to_add = [QuadForm(Omega=-0.5*torch.inverse(self.p.prior.cov), A=torch.eye(self.dim_z), b=-self.p.prior.mean), 
-                            self._get_obs_term(observation)]
-        self.terms_V.append(quad_forms_to_add)
-        
-    def _update_V(self, observations):
-
-        # if self.term_to_remove_if_V_update is not None: self.constants_V -= self.term_to_remove_if_V_update
-
-        for observation in torch.atleast_2d(observations):
-            self._update_backward()
-            self.constants_V += _constant_terms_from_log_gaussian(self.dim_x, self.p_emission_det_cov) \
-                            +  _constant_terms_from_log_gaussian(self.dim_z, self.p_transition_det_cov) \
-                            + -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.backwards[-1].cov)) \
-                            +  0.5 * torch.as_tensor(self.dim_z, dtype=torch.float64) \
-                            + - 0.5 * torch.trace(self.p_transition_prec @ self.p.transition.map.weight @ self.backwards[-1].cov @ self.p.transition.map.weight.T)
-            
-            quad_forms_to_add = [self._expect_transition_quad_form_under_backward(), self._get_obs_term(observation)]
-            self.terms_V.append(quad_forms_to_add)
-            self._update_filtering(observation)
-
-
-        for backward_index, term in zip(range(len(self.backwards)), self.terms_V):
-            transition_term, obs_term = term
-            constant, integrated_quad_form = self._expect_quad_form_under_backward(transition_term, backward_index=backward_index)
-            self.constants_V += constant
-            constant, integrated_obs_term = self._expect_obs_term_under_backward(obs_term, backward_index=backward_index)
-            self.constants_V += constant 
-
-            self.terms_V[backward_index] = [integrated_quad_form, integrated_obs_term]
-
-        for quad_form_index, quad_forms in enumerate(self.terms_V):
-            for backward_index in range(quad_form_index+1, len(self.backwards)):
-                constants, quad_forms = self._expect_quad_forms_under_backward(quad_forms, backward_index=backward_index)
-                self.constants_V += constants
-            self.terms_V[quad_form_index] = quad_forms
-
-        self.terms_V = list(chain(*self.terms_V))
-
-        self.constants_V += -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.filtering.cov))
-
-    def _expect_V_under_filtering(self):
-        
-        result = self.constants_V 
-        for term in self.terms_V[:-1]:
-            result += self._expect_quad_form_under_filtering(term) 
-        result += self._expect_obs_term_under_filtering(self.terms_V[-1]) # the last term is an observation term that has never been integrated: it is not a quad form in the nonlinear case
-        result += 0.5*torch.as_tensor(self.dim_z, dtype=torch.float64)
-
-        return result
+    def _expect_quad_form_under_filtering(self, quad_form:QuadForm):
+        return torch.trace(quad_form.Omega @ quad_form.A @ self.filtering.cov @ quad_form.A) + _eval_quad_form(quad_form, self.filtering.mean)
 
 class LinearEmission(LinearGaussianQ):
     def __init__(self, p, q):
         super().__init__(p, q)
 
-    def _expect_obs_term_under_backward(self, obs_term, backward_index):
-        return self._expect_quad_form_under_backward(obs_term, backward_index)
+    def _expect_obs_term_under_backward(self, obs_term):
+        return self._expect_quad_form_under_backward(obs_term)
 
     def _expect_obs_term_under_filtering(self, obs_term):
         return self._expect_quad_form_under_filtering(obs_term)
@@ -268,9 +262,9 @@ class NonLinearEmission(LinearGaussianQ):
             super().__init__(p, q)
             self.approximator = ApproximatorExpectationInQuadForm(self.dim_z, self.dim_x)
 
-        def _expect_obs_term_under_backward(self, obs_term, backward_index):
+        def _expect_obs_term_under_backward(self, obs_term):
             observation = obs_term
-            A_tilde, a_tilde, cov_tilde = self.approximator(*self.backwards[backward_index])
+            A_tilde, a_tilde, cov_tilde = self.approximator(*self.backward)
             constant_term = torch.trace(cov_tilde @ self.p_emission_prec)
             return constant_term, QuadForm(Omega=self.p_emission_prec, A=A_tilde, b=a_tilde - observation)
 
