@@ -44,8 +44,8 @@ class QuadFormParametersFromExpectationOfNonLinearTerm(nn.Module):
         self.W_approximator =  nn.Sequential(nn.Linear(in_features=target_dim, out_features=target_dim**2, bias=True), nn.SELU())
 
 
-    def forward(self, filtering_params, backward_params, nonlinear_map):
-        next_state_sample = MultivariateNormal(*filtering_params).sample()
+    def forward(self, predict_params, backward_params, nonlinear_map):
+        next_state_sample = MultivariateNormal(*predict_params).sample()
         backward_sample = MultivariateNormal(loc=backward_params.A @ next_state_sample + backward_params.a, 
                                             covariance_matrix=backward_params.cov).sample() 
         mapped_sample = nonlinear_map(backward_sample)
@@ -110,8 +110,9 @@ class BackwardELBO(torch.nn.Module, metaclass=ABCMeta):
 
     def _update(self, observation):
         self._update_backward()
-        self._update_filtering(observation)
         self._update_V(observation)
+        self._update_filtering(observation)
+
 
     def update(self, observation):
         self.constants_V -= -_constant_terms_from_log_gaussian(self.dim_z, torch.det(self.filtering_params.cov))
@@ -271,11 +272,13 @@ class NonLinearEmission(LinearGaussianQ):
             
         def _expect_obs_term_under_backward(self, obs_term):
             observation = obs_term
-            nonlinear_map = partial(_quad_form_in_emission_term(observation=observation, 
-                                                                emission_map=self.p.emission.map, 
-                                                                emission_prec=self.p_emission_prec))
+            nonlinear_map = lambda z: _quad_form_in_emission_term(observation=observation, 
+                                                                emission_map=self.p.emission.map,
+                                                                emission_prec=self.p_emission_prec, 
+                                                                z=z)
             
-            v, W = self.approximator(filtering_params=self.filtering_params, 
+            predict_params = self.kalman.predict(*self.filtering_params)
+            v, W = self.approximator(predict_params=predict_params, 
                                     backward_params=self.backward_params, 
                                     nonlinear_map=nonlinear_map)
 
@@ -285,9 +288,13 @@ class NonLinearEmission(LinearGaussianQ):
                         
         def _expect_obs_term_under_filtering(self, obs_term):
             observation = obs_term
-            _ , a_tilde, cov_tilde = self.approximator(A=torch.zeros((self.dim_x, self.dim_z)), a = self.filtering_params.mean, cov = self.filtering_params.cov)
-            constant_term = torch.trace(cov_tilde @ self.p_emission_prec)
-            return constant_term + (a_tilde - observation).T @ self.p_emission_prec @ (a_tilde - observation)
+            nonlinear_map = lambda z: _quad_form_in_emission_term(observation=observation, 
+                                                                emission_map=self.p.emission.map,
+                                                                emission_prec=self.p_emission_prec, 
+                                                                z=z)
+
+            return nonlinear_map(MultivariateNormal(loc=self.filtering_params.mean, 
+                                                    covariance_matrix=self.filtering_params.cov).sample())
 
         def _get_obs_term(self, observation):
             return observation
