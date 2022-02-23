@@ -2,3 +2,4 @@
 **/__pycache_/
 *.png
 test.py
+.vscode/
