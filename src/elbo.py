@@ -1,6 +1,6 @@
 from abc import abstractmethod, abstractstaticmethod
 import src.kalman as kalman
-from src.misc import Model, QuadForm
+from src.misc import Model, QuadForm, build_covs
 import jax.numpy as jnp
 from collections import namedtuple
 import jax 
@@ -172,7 +172,10 @@ def add_precision_and_dets(model):
 
 
 
-def linear_gaussian_elbo(p, q, observations):
+def linear_gaussian_elbo(p_raw, q_raw, observations):
+
+    p = build_covs(p_raw)
+    q = build_covs(q_raw)
 
     p = add_precision_and_dets(p)
     q = add_precision_and_dets(q)
@@ -181,6 +184,7 @@ def linear_gaussian_elbo(p, q, observations):
 
     integrate_up_to_array = jnp.arange(start=0, stop=2*len(observations[1:]), step=2)
 
+    
     # for observation, integrate_up_to in zip(observations[1:], integrate_up_to_array):
     #     new_constants, quad_forms, nonlinear_term, q_filtering = _update(observation, integrate_up_to, quad_forms, nonlinear_term, q_filtering, p, q)
     #     constants_V += new_constants
@@ -203,8 +207,8 @@ def linear_gaussian_elbo(p, q, observations):
     (quad_forms, nonlinear_term, q_filtering, p, q), constants = lax.scan(f=V_step, 
                                 init=(quad_forms, nonlinear_term, q_filtering, p, q),
                                 xs=(observations[1:], integrate_up_to_array))
-
-    constants_V += jnp.sum(constants) -_constant_terms_from_log_gaussian(p.transition.cov.shape[0], jnp.linalg.det(q_filtering.cov))
+    constants_V += jnp.sum(constants) 
+    constants_V += -_constant_terms_from_log_gaussian(p.transition.cov.shape[0], jnp.linalg.det(q_filtering.cov))
 
     return _expect_V_under_filtering(constants_V, quad_forms, nonlinear_term, q_filtering)
     

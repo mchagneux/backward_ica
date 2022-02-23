@@ -7,20 +7,22 @@ from jax import lax
 class LinearGaussianHMM:
 
     def get_random_model(key, state_dim=2, obs_dim=2):
+        default_state_cov = 1e-2*jnp.ones(state_dim)
+        default_emission_cov = 1e-2*jnp.ones(obs_dim)
+
+        key, *subkeys = random.split(key, 2)
+        prior_mean = uniform(subkeys[0], shape=(state_dim,))
+        prior_cov = default_state_cov
 
         key, *subkeys = random.split(key, 3)
-        prior_mean = uniform(subkeys[0], shape=(state_dim,))
-        prior_cov = jnp.diag(uniform(subkeys[1], shape=(state_dim,))**2)
-
-        key, *subkeys = random.split(key, 4)
         transition_weight = jnp.diag(uniform(subkeys[0], shape=(state_dim,)))
         transition_bias = uniform(subkeys[1], shape=(state_dim,))
-        transition_cov = jnp.diag(uniform(subkeys[2], shape=(state_dim,))**2)
+        transition_cov = default_state_cov
 
-        key, *subkeys = random.split(key, 4)
+        key, *subkeys = random.split(key, 3)
         emission_weight = uniform(subkeys[0], shape=(state_dim, obs_dim))
         emission_bias = uniform(subkeys[1], shape=(obs_dim,))
-        emission_cov = jnp.diag(uniform(subkeys[2], shape=(obs_dim,)) ** 2)
+        emission_cov = default_emission_cov
 
         return Model(prior=Prior(prior_mean, prior_cov),
                 transition=Transition(transition_weight, transition_bias, transition_cov),
