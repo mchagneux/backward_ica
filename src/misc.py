@@ -8,13 +8,11 @@ Emission = namedtuple('Observation',['weight','bias','cov'])
 Dims = namedtuple('Dims',['z','x'])
 QuadForm = namedtuple('QuadForm',['Omega','A','b'])
 
-def build_covs(model):
-    prior_cov = jnp.diag(model.prior.cov ** 2) 
-    transition_cov = jnp.diag(model.transition.cov ** 2)
-    emission_cov = jnp.diag(model.emission.cov ** 2)
-    
-    model = Model(prior=Prior(model.prior.mean, prior_cov),
-                transition=Transition(model.transition.weight, model.transition.bias, transition_cov),
-                emission=Emission(model.emission.weight, model.emission.bias, emission_cov))
-                
-    return model 
+def actual_model_from_raw_parameters(raw_model):
+    prior_cov = jnp.diag(raw_model.prior.cov ** 2) 
+    transition_cov = jnp.diag(raw_model.transition.cov ** 2)
+    emission_cov = jnp.diag(raw_model.emission.cov ** 2)
+                    
+    return Model(prior=Prior(raw_model.prior.mean, prior_cov),
+                transition=Transition(raw_model.transition.weight, raw_model.transition.bias, transition_cov),
+                emission=Emission(raw_model.emission.weight, raw_model.emission.bias, emission_cov)) 

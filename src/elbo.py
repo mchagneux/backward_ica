@@ -1,6 +1,6 @@
 from abc import abstractmethod, abstractstaticmethod
 import src.kalman as kalman
-from src.misc import Model, QuadForm, build_covs
+from src.misc import Model, QuadForm, actual_model_from_raw_parameters
 import jax.numpy as jnp
 from collections import namedtuple
 import jax 
@@ -158,7 +158,9 @@ def _update(observation, integrate_up_to, quad_forms, nonlinear_term, q_filterin
 
     return constants, quad_forms, nonlinear_term, q_filtering
 
-def add_precision_and_dets(model):
+def prepare_parameters(model):
+
+    model = actual_model_from_raw_parameters(model)
 
     transition = Transition(*model.transition, 
                         jnp.linalg.inv(model.transition.cov),
@@ -167,18 +169,15 @@ def add_precision_and_dets(model):
                         jnp.linalg.inv(model.emission.cov),
                         jnp.linalg.det(model.emission.cov))
 
-    return Model(prior=model.prior, transition=transition, emission=emission)
-
-
+    return Model(prior=model.prior, 
+                transition=transition, 
+                emission=emission)
 
 
 def linear_gaussian_elbo(p_raw, q_raw, observations):
 
-    p = build_covs(p_raw)
-    q = build_covs(q_raw)
-
-    p = add_precision_and_dets(p)
-    q = add_precision_and_dets(q)
+    p = prepare_parameters(p_raw)
+    q = prepare_parameters(q_raw)
     
     constants_V, quad_forms, nonlinear_term, q_filtering = init(observations, p, q)
 
