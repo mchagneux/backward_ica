@@ -1,38 +1,45 @@
+from abc import abstractmethod, ABCMeta
 from src.misc import QuadForm
 from src.elbo import linear_gaussian_elbo
 from src.hmm import LinearGaussianHMM
-from src.kalman import NumpyKalman
-from src.kalman import filter
+from src import kalman
 from jax.random import PRNGKey
 import jax.numpy as jnp
 import jax
+import optax
+from jax import random
 
-quad_forms = QuadForm(A=jnp.array([jnp.eye(2)]*5), b=jnp.array([jnp.ones(2)]*5), Omega=jnp.array([jnp.eye(2)]*5))
+key = PRNGKey(0)
+key, subkey = random.split(key)
+p = LinearGaussianHMM.get_random_model(key=subkey, state_dim=2, obs_dim=2)
+
+num_sequences = 10 
+length = 8
+
+linear_gaussian_sampler = jax.vmap(LinearGaussianHMM.sample_joint_sequence, in_axes=(0, None, None))
+key, *subkeys = random.split(key, num_sequences+1)
+state_sequences, obs_sequences = linear_gaussian_sampler(jnp.array(subkeys), p, length)
 
 
-# def function_applied_to_quad_form(quad_form, nb_to_add):
-#     A = quad_form.A + nb_to_add
-#     b = quad_form.b + nb_to_add
-#     Omega = quad_form.Omega + nb_to_add
-#     return QuadForm(A=A, b=b, Omega=Omega)
+filter_obs_sequences = jax.vmap(kalman.filter, in_axes=(0, None))
+mean_elbo_across_sequences = jax.vmap(linear_gaussian_elbo, in_axes=(None, None,0))
+ 
+average_evidence_across_sequences = jnp.mean(filter_obs_sequences(obs_sequences, p)[-1])
 
+print('Average evidence across sequences:', jnp.mean(mean_elbo_across_sequences(p, p, obs_sequences)))
+print('Average elbo across sequences', jnp.mean(mean_elbo_across_sequences(p, p, obs_sequences)))
 
-# function_applied_to_quad_forms = jax.vmap(function_applied_to_quad_form, in_axes=(0,None))
+grad_elbo_theta = jax.grad(linear_gaussian_elbo, 
+                        argnums=1)
 
-# transformed_quad_forms = function_applied_to_quad_forms(quad_forms, 1)
+grads_theta = grad_elbo_theta(p,p,obs_sequences[0])
 
-A = quad_forms.A.at[3].set(2*jnp.eye(2))
+# elbo = linear_gaussian_elbo(p=p, 
+#                             q=p, 
+#                             observations=observations)
 
-quad_forms = QuadForm(A=A, b=quad_forms.b, Omega=quad_forms.Omega)
-print(quad_forms.A[3])
-
-# key = PRNGKey(0)
-# key, model = LinearGaussianHMM.get_random_model(key=key, state_dim=2, obs_dim=2)
-# key, states, observations = LinearGaussianHMM.sample_joint_sequence(key, model, 10)
-# _, _, filtered_means, filtered_covs, likelihood = filter(model=model, observations=observations)
-# filtered_means_numpy, filtered_covs_numpy, likelihood_numpy = NumpyKalman(model).filter(observations)
-
-# elbo = linear_gaussian_elbo(model, model, observations)
-
-# print(likelihood - likelihood_numpy)
 # print(jnp.abs(elbo - likelihood))
+
+
+
+

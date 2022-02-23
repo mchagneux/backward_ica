@@ -22,9 +22,9 @@ class LinearGaussianHMM:
         emission_bias = uniform(subkeys[1], shape=(obs_dim,))
         emission_cov = jnp.diag(uniform(subkeys[2], shape=(obs_dim,)) ** 2)
 
-        return key, Model(prior=Prior(prior_mean, prior_cov),
-                    transition=Transition(transition_weight, transition_bias, transition_cov),
-                    emission=Emission(emission_weight, emission_bias, emission_cov))
+        return Model(prior=Prior(prior_mean, prior_cov),
+                transition=Transition(transition_weight, transition_bias, transition_cov),
+                emission=Emission(emission_weight, emission_bias, emission_cov))
 
     def sample_single_step_joint(carry, x):
         key, previous_state, transition, emission = carry
@@ -59,7 +59,7 @@ class LinearGaussianHMM:
         state_samples = jnp.concatenate((init_state[None,:], state_samples))
         obs_samples = jnp.concatenate((init_obs[None,:], obs_samples))
 
-        return key, state_samples, obs_samples
+        return state_samples, obs_samples
 
 
         
