@@ -1,221 +1,215 @@
-from collections import namedtuple
-from turtle import back, backward
-from typing import NamedTuple
-import src.kalman as kalman 
-from .misc import *
-import jax
+from abc import abstractmethod, abstractstaticmethod
+from turtle import back
+import src.kalman as kalman
+from src.misc import Dims, Prior, Model, QuadForm
+from numpy import empty_like
 import jax.numpy as jnp
-from jax.numpy import trace
-from jax.numpy.linalg import det, inv
-from jax import jit
-from jax.experimental import loops
+from collections import namedtuple
+import jax 
+from jax import lax 
+jax.config.update("jax_enable_x64", True)
 
+Backward = namedtuple('Backward', ['A','b','Omega'])
+Filtering = namedtuple('Filtering', ['mean','cov'])
 
-Backward = namedtuple('Backward',['A','a','cov'])
-Filtering = namedtuple('Filtering',['mean','cov'])
-
-Transition = namedtuple('Transition',['matrix','offset','cov','prec','det_cov'])
-Emission = namedtuple('Emission',['matrix','offset','cov','prec','det_cov'])
-
-
-
-def _sum_quad_forms(quad_forms):
-    transformed_quad_forms = []
-    ndim_A = quad_forms[0].A.shape[0]
-    for quad_form in quad_forms: 
-        transformed_quad_forms.append(QuadForm(Omega=quad_form.A.T @ quad_form.Omega @ quad_form.A, A = jnp.eye(ndim_A), b = jnp.linalg.solve(quad_form.A, quad_form.b)))
-    
-    Omega_sum = sum(quad_form.Omega for quad_form in transformed_quad_forms)
-    b_sum = jnp.linalg.solve(Omega_sum, sum(quad_form.b @ quad_form.Omega for quad_form in transformed_quad_forms))
-
-    return QuadForm(Omega = Omega_sum, A = jnp.eye(ndim_A), b = b_sum)
+Transition = namedtuple('Transition',['weight', 'bias', 'cov', 'prec', 'det_cov'])
+Emission = namedtuple('Emission',['weight', 'bias', 'cov', 'prec', 'det_cov'])
 
 def _constant_terms_from_log_gaussian(dim, det_cov):
-        return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
+    return -0.5*(dim* jnp.log(2*jnp.pi) + jnp.log(det_cov))
+
+def _eval_quad_form(quad_form, x):
+    common_term = quad_form.A @ x + quad_form.b
+    return common_term.T @ quad_form.Omega @ common_term
+
+def _expect_obs_term_under_backward(obs_term, q_backward):
+    return _expect_quad_form_under_backward(obs_term, q_backward)
+
+def _expect_obs_term_under_filtering(obs_term, q_filtering):
+    return _expect_quad_form_under_filtering(obs_term, q_filtering)
+
+def _get_obs_term(observation, p_emission):
+    A = p_emission.weight
+    b = p_emission.bias - observation
+    Omega= - 0.5*p_emission.prec
+    return QuadForm(A=A, b=b, Omega=Omega)
+
+def _init_filtering(observation, q_prior, q_emission):
+    return kalman.init(observation, q_prior, q_emission)[2:]
+
+def _update_filtering(observation, q_filtering, q_transition, q_emission):
+    return kalman.filter_step(*q_filtering, observation, q_transition, q_emission)[2:]
+
+def _update_backward(q_filtering, q_transition):
+
+    filtering_prec = jnp.linalg.inv(q_filtering.cov)
+
+    backward_prec = q_transition.weight.T @ q_transition.prec @ q_transition.weight + filtering_prec
+
+    cov = jnp.linalg.inv(backward_prec)
+
+    common_term = q_transition.weight.T @ q_transition.prec 
+    A = cov @ common_term
+    a = cov @ (filtering_prec @ q_filtering.mean - common_term @  q_transition.bias)
+
+    return Backward(A=A, a=a, cov=cov)
+
+def _integrate_previous_terms(constants_V, integrate_up_to, quad_forms, nonlinear_term, q_backward):
+
+    masks = jnp.arange(start=0, stop=len(bs)) <= integrate_up_to
+    constants0, quad_forms = jax.vmap(_expect_quad_form_under_backward_masked, in_axes=(0,0,None))(masks, quad_forms, q_backward)
+
+    constants1, quad_form = _expect_obs_term_under_backward(nonlinear_term, q_backward)
     
-def _eval_quad_form(A, b, Omega, x):
-    common_term = A @ x + b
-    return common_term.T @ Omega @ common_term
+    As = quad_forms.A.at[integrate_up_to+1].set(quad_form.A)
+    bs = quad_forms.b.at[integrate_up_to+1].set(quad_form.b)
+    Omegas = quad_forms.Omega.at[integrate_up_to+1].set(quad_form.Omega)
 
-def _expect_quad_form_under_backward(A, b, Omega, backward_A, backward_a, backward_cov):
-    # expectation of (Au+b)^T Omega (Au+b) under the backward 
-
-    constants = trace(Omega @ A @ backward_cov @ A.T)
-    A = A @ backward_A
-    b = A @ backward_a + b
-    return constants, A, b, Omega
+    return constants_V + jnp.sum(constants0) + constants1, QuadForm(A=As, b=bs, Omega=Omegas)
 
 
-def _expect_transition_quad_form_under_backward(backward_A, backward_a, backward_cov, transition):
+def _init_V(observation, dims, p):
+    constants_V = _constant_terms_from_log_gaussian(dims.z, jnp.linalg.det(p.prior.cov)) + \
+                  _constant_terms_from_log_gaussian(dims.x, p.emission.det_cov)
+    
+    A, b, Omega = jnp.eye(dims.z), -p.prior.mean, -0.5 * jnp.linalg.inv(p.prior.cov)
+    nonlinear_term = _get_obs_term(observation, p.emission)
+
+    return constants_V, A, b, Omega, nonlinear_term 
+
+def _expect_transition_quad_form_under_backward(q_backward, transition):
     # expectation of the quadratic form that appears in the log of the state transition density
 
-    Omega=-0.5*transition.prec
-    A = transition.matrix @ backward_A - jnp.eye(transition.matrix.shape[0])
-    b = transition.matrix @ backward_a + transition.offset
-    return A, b, Omega
+    A=transition.weight @ q_backward.A - jnp.eye(transition.cov.shape[0])
+    b=transition.weight @ q_backward.a + transition.bias
+    Omega = -0.5*transition.prec
 
+    return QuadForm(A=A, b=b, Omega=Omega) 
 
-def _expect_quad_form_under_filtering(A, b, Omega, filtering_mean, filtering_cov):
+def _no_integration(quad_form, q_backward):
+    return 0.0, *quad_form
 
-    return trace(Omega @ A @ filtering_cov @ A.T) + _eval_quad_form(A, b, Omega, filtering_mean)
+def _expect_quad_form_under_backward(quad_form, q_backward):
+    constant = jnp.trace(quad_form.Omega @ quad_form.A @ q_backward.cov @ quad_form.A.T)
+    A = quad_form.A @ q_backward.A
+    b = quad_form.A @ q_backward.a + quad_form.b
+    Omega = quad_form.Omega
+    return constant, QuadForm(A=A, b=b, Omega=Omega)
 
+def _expect_quad_form_under_backward_masked(mask, quad_form, q_backward):
+    return lax.cond(mask, _expect_quad_form_under_backward, _no_integration, quad_form, q_backward)
 
-def _update_backward(filtering_mean, filtering_cov, v_transition):
+def _update_V(observation, integrate_up_to, constants_V, quad_forms, nonlinear_term, q_backward, dims, p):
+
+    constants_V, quad_forms =  _integrate_previous_terms(constants_V, integrate_up_to, quad_forms, nonlinear_term, q_backward)
+
+    constants_V +=  _constant_terms_from_log_gaussian(dims.x, p.emission.det_cov) \
+                +   _constant_terms_from_log_gaussian(dims.z, p.transition.det_cov) \
+                + - _constant_terms_from_log_gaussian(dims.z, jnp.linalg.det(q_backward.cov)) \
+                +  0.5 * dims.z \
+                + - 0.5 * jnp.trace(p.transition.prec @ p.transition.weight @ q_backward.cov @ p.transition.weight.T)
+
+    quad_form = _expect_transition_quad_form_under_backward(q_backward, p.transition)
     
-    filtering_prec = inv(filtering_cov)
-
-    backward_prec = v_transition.matrix.T @ v_transition.prec @ v_transition.matrix + filtering_prec
-
-    backward_cov = inv(backward_prec)
-
-    common_term = v_transition.matrix.T @ v_transition.prec 
-    A_backward = backward_cov @ common_term
-    a_backward = backward_cov @ (filtering_prec @ filtering_mean - common_term @  v_transition.offset)
-
-
-    return A_backward, a_backward, backward_cov
-
-def _get_quad_form_in_z_obs_term(observation, emission):
-    Omega=-0.5*emission.prec
-    A = emission.matrix
-    b = emission.offset - observation
-    return A, b, Omega
-
-
-
-
-def _terms_from_single_step(backward_A, backward_a, backward_cov, observation, dims, transition, emission):
-
-    # dealing with true transition term whose integration in z_previous under the backward is a quadratic form in z
-    new_constants = _constant_terms_from_log_gaussian(dims.z, transition.det_cov)
-    new_transition_term = _expect_transition_quad_form_under_backward(backward_A, backward_a, backward_cov, transition)
-    new_constants += - 0.5 * jnp.trace(transition.prec @ transition.matrix @ backward_cov @ transition.prec.T)
-
-    # dealing with observation term seen as a quadratic form in z
-    new_constants += _constant_terms_from_log_gaussian(dims.x, emission.det_cov)                                      
-    new_obs_term = _get_quad_form_in_z_obs_term(observation, emission)
-
-    # dealing with backward term (integration of the quadratic form is just the dimension of z)
-    new_constants += -_constant_terms_from_log_gaussian(dims.z, det(backward_cov))
-    new_constants += 0.5*dims.z
-
+    As = quad_forms.A.at[integrate_up_to+2].set(quad_form.A)
+    bs = quad_forms.b.at[integrate_up_to+2].set(quad_form.b)
+    Omegas = quad_forms.Omega.at[integrate_up_to+2].set(quad_form.Omega)
     
-    return new_constants, *new_transition_term, *new_obs_term
+    nonlinear_term = _get_obs_term(observation, p.emission)
 
-def _no_integration(A, b, Omega, backward_A, backward_a, backward_cov):
-    return 0.0, A, b, Omega
+    return constants_V, QuadForm(A=As, b=bs, Omega=Omegas), nonlinear_term
 
-def _backward_integration_step(carry, x):
-    constants, A, b, Omega = carry
-    backward_A, backward_a, backward_cov, flag = x
+def _expect_quad_form_under_filtering(quad_form, q_filtering):
+    return jnp.trace(quad_form.Omega @ quad_form.A @ q_filtering.cov @ quad_form.A.T) + _eval_quad_form(quad_form, q_filtering.mean)
 
-    new_constants, A, b, Omega = jax.lax.cond(flag, 
-                                            _expect_quad_form_under_backward,
-                                            _no_integration, 
-                                            A, b, Omega, backward_A, backward_a, backward_cov)
-                                                
-    return (constants+new_constants, A, b, Omega), None
+def _expect_V_under_filtering(constants_V, quad_forms, nonlinear_term, q_filtering, dims):
+    result = constants_V
 
-def _integrate_term_under_backward(A, b, Omega, index_for_mask, backward_As, backward_as, backward_covs):
+    result += jnp.sum(jax.vmap(_expect_quad_form_under_filtering, in_axes=(0, None))(quad_forms, q_filtering)) \
+            + _expect_obs_term_under_filtering(nonlinear_term, q_filtering)
 
-    mask = jnp.arange(0, len(backward_As)) >= index_for_mask 
-    return jax.lax.scan(f=_backward_integration_step, init=(0.0, A, b, Omega), xs=(backward_As, backward_as, backward_covs, mask))[0]
+    result += 0.5*dims.z
 
+    return result
 
-def linear_gaussian_elbo(model:Model, v_model:Model, observations):
+def init(observations, dims, p, q):
+    constants_V, A, b, Omega, nonlinear_term = _init_V(observations[0], dims, p)
+    q_filtering = _init_filtering(observations[0], q.prior, q.emission)
 
+    As = jnp.empty(shape=(2*len(observations)-1, dims.z, dims.z))
+    bs = jnp.empty(shape=(2*len(observations)-1, dims.z))
+    Omegas = jnp.empty_like(As)
 
-    prior = model.prior
-    transition = Transition(matrix=model.transition.matrix, 
-                            offset=model.transition.offset, 
-                            cov=model.transition.cov, 
-                            prec=inv(model.transition.cov), 
-                            det_cov=det(model.transition.cov))
+    As = As.at[0].set(A)
+    bs  = bs.at[0].set(b)
+    Omegas = Omegas.at[0].set(Omega)
 
-    emission = Emission(matrix=model.emission.matrix, 
-                        offset=model.emission.offset, 
-                        cov=model.emission.cov, 
-                        prec = inv(model.emission.cov), 
-                        det_cov=det(model.emission.cov))
-    
-    v_transition = Transition(matrix=v_model.transition.matrix, 
-                            offset=v_model.transition.offset, 
-                            cov=v_model.transition.cov, 
-                            prec=inv(v_model.transition.cov), 
-                            det_cov=det(v_model.transition.cov))
+    return constants_V, QuadForm(A=As, b=bs, Omega=Omegas), nonlinear_term, q_filtering
 
-    
-    dims = Dims(z=transition.matrix.shape[0], x=emission.matrix.shape[0])
+def _update(observation, integrate_up_to, constants_V, quad_forms, nonlinear_term, q_filtering, dims, p, q):
+    q_backward = _update_backward(q_filtering, q.transition)
+    constants_V, quad_forms, nonlinear_term = _update_V(observation, 
+                                                    integrate_up_to,
+                                                    constants_V, 
+                                                    quad_forms, 
+                                                    nonlinear_term, 
+                                                    q_backward, 
+                                                    dims, p)
+    q_filtering = _update_filtering(observation, q_filtering, q.transition, q.emission)
 
+    return constants_V, quad_forms, nonlinear_term, q_filtering
 
-    filtering_means, filtering_covs, _  = kalman.filter(observations, v_model)
+def compute_precision_and_dets(model):
 
-    backward_As, backward_as, backward_covs = jax.vmap(_update_backward, in_axes=(0,0,None))(filtering_means[:-1], 
-                                                                                            filtering_covs[:-1], 
-                                                                                            v_transition)
+    transition = Transition(*model.transition, 
+                            jnp.linalg.inv(model.transition.cov),
+                            jnp.linalg.det(model.transition.cov))
+    emission = Emission(*model.emission, 
+                            jnp.linalg.inv(model.emission.cov),
+                            jnp.linalg.det(model.emission.cov))
 
-
-    constants = _constant_terms_from_log_gaussian(dims.z, det(prior.cov)) + \
-                _constant_terms_from_log_gaussian(dims.x, emission.det_cov)
-                
-    init_transition_term = (jnp.eye(dims.z), -prior.mean, -0.5*inv(prior.cov))
-    init_obs_term = _get_quad_form_in_z_obs_term(observations[0], emission)
-
-    new_terms  = jax.vmap(_terms_from_single_step, in_axes=(0,0,0,0,None,None,None))(backward_As, 
-                                                                                    backward_as, 
-                                                                                    backward_covs, 
-                                                                                    observations[1:], 
-                                                                                    dims, transition, emission)
-
-    constants += jnp.sum(new_terms[0])
-    transition_terms = new_terms[1:4]
-    obs_terms = new_terms[4:]
+    return Model(prior=model.prior, transition=transition, emission=emission)
 
 
-    transition_terms = (jnp.concatenate((jnp.expand_dims(init_transition_term[0], axis=0), transition_terms[0])),
-                        jnp.concatenate((jnp.expand_dims(init_transition_term[1], axis=0), transition_terms[1])),
-                        jnp.concatenate((jnp.expand_dims(init_transition_term[2], axis=0), transition_terms[2])))
+def V_step(carry, x):
 
+    observation, integrate_up_to = x 
+    constants_V, quad_forms, nonlinear_term, q_filtering, dims, p, q = carry 
 
-    obs_terms = (jnp.concatenate((jnp.expand_dims(init_obs_term[0], axis=0), obs_terms[0])),
-                jnp.concatenate((jnp.expand_dims(init_obs_term[1], axis=0), obs_terms[1])),
-                jnp.concatenate((jnp.expand_dims(init_obs_term[2], axis=0), obs_terms[2])))
+    constants_V, quad_forms, nonlinear_term, q_filtering = _update(observation, 
+                                                                    integrate_up_to,
+                                                                    constants_V, 
+                                                                    quad_forms, 
+                                                                    nonlinear_term, 
+                                                                    q_filtering, 
+                                                                    dims, 
+                                                                    p, q)
 
+    return (constants_V, quad_forms, nonlinear_term, q_filtering, dims, p, q), None
+
+def linear_gaussian_elbo(p, q, observations):
+
+    p = compute_precision_and_dets(p)
+    q = compute_precision_and_dets(q)
+
+    dims = Dims(z=p.transition.cov.shape[0],
+                x=p.emission.cov.shape[0])
 
     
-    num_backwards = len(backward_As)
+    constants_V, quad_forms, nonlinear_term, q_filtering = init(observations, dims, p, q)
 
-    _integrate_all_terms = jax.vmap(_integrate_term_under_backward, in_axes=(0,0,0,0, None, None, None))
-    _integrate_against_filtering = jax.vmap(_expect_quad_form_under_filtering, in_axes=(0, 0, 0, None, None))
+    integrate_up_to_array = jnp.arange(start=0, stop=2*len(observations[1:]), step=2)
 
-    indices_for_masks = jnp.arange(0, num_backwards)
+    (constants_V, quad_forms, nonlinear_term, q_filtering, dims, p, q), _ = lax.scan(f=V_step, 
+                                init=(constants_V, quad_forms, nonlinear_term, q_filtering, dims, p, q),
+                                xs=(observations[1:], integrate_up_to_array))
 
-    constants_from_integration, As, bs, Omegas = _integrate_all_terms(transition_terms[0][:-1], transition_terms[1][:-1], transition_terms[2][:-1], indices_for_masks, backward_As, backward_as, backward_covs)
-    constants += jnp.sum(constants_from_integration)
-    constants += jnp.sum(_integrate_against_filtering(As, bs, Omegas, filtering_means[-1], filtering_covs[-1]))
-    constants += _expect_quad_form_under_filtering(transition_terms[0][-1], transition_terms[1][-1], transition_terms[2][-1], filtering_means[-1], filtering_covs[-1])
+    constants_V += -_constant_terms_from_log_gaussian(dims.z, jnp.linalg.det(q_filtering.cov))
 
-    constants_from_integration, As, bs, Omegas = _integrate_all_terms(obs_terms[0][:-1], obs_terms[1][:-1], obs_terms[2][:-1], indices_for_masks, backward_As, backward_as, backward_covs)
-    constants += jnp.sum(constants_from_integration)
-    constants += jnp.sum(_integrate_against_filtering(As, bs, Omegas, filtering_means[-1], filtering_covs[-1]))
-    constants += _expect_quad_form_under_filtering(obs_terms[0][-1], obs_terms[1][-1], obs_terms[2][-1], filtering_means[-1], filtering_covs[-1])
-
-    constants += -_constant_terms_from_log_gaussian(dims.z, det(filtering_covs[-1])) + 0.5*dims.z
+    return _expect_V_under_filtering(constants_V, quad_forms, nonlinear_term, q_filtering, dims)
     
-    return constants
 
-
-
-
-
-
+    
 
 
         
-
-
-
-        
-        
-
-

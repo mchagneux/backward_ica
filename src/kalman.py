@@ -4,105 +4,97 @@ import numpy as np
 import jax
 from .misc import * 
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
-from .distributions import Gaussian
+from scipy.stats import multivariate_normal
+jax.config.update("jax_enable_x64", True)
 
-def predict(current_state_mean, current_state_covariance, transition):
-    predicted_state_mean = transition.matrix @ current_state_mean + transition.offset
-    predicted_state_covariance = transition.matrix @ current_state_covariance @ transition.matrix.T + transition.cov
-    return predicted_state_mean, predicted_state_covariance
+def predict(current_state_mean, current_state_cov, transition):
+    predictive_mean = transition.weight @ current_state_mean + transition.bias
+    predictive_cov = transition.weight @ current_state_cov @ transition.weight.T + transition.cov
+    return predictive_mean, predictive_cov
 
-def update(predicted_state_mean, predicted_state_covariance, observation, emission: Emission):
-    predicted_observation_mean = emission.matrix @ predicted_state_mean + emission.offset
-    predicted_observation_covariance = emission.matrix @ predicted_state_covariance @ emission.matrix.T + emission.cov
-    kalman_gain = predicted_state_covariance  @ emission.matrix.T @ inv(predicted_observation_covariance)
+def update(predictive_mean, predictive_cov, observation, emission: Emission):
+    predicted_observation_mean = emission.weight @ predictive_mean + emission.bias
+    predicted_observation_cov = emission.weight @ predictive_cov @ emission.weight.T + emission.cov
+    kalman_gain = predictive_cov  @ emission.weight.T @ inv(predicted_observation_cov)
 
-    corrected_state_mean = predicted_state_mean + kalman_gain @ (observation - predicted_observation_mean)
-    corrected_state_covariance = predicted_state_covariance - kalman_gain @ emission.matrix @ predicted_state_covariance
+    corrected_state_mean = predictive_mean + kalman_gain @ (observation - predicted_observation_mean)
+    corrected_state_cov = predictive_cov - kalman_gain @ emission.weight @ predictive_cov
 
-    return corrected_state_mean, corrected_state_covariance
+    return corrected_state_mean, corrected_state_cov
 
-@jax.jit
-def filter_step(current_state_mean, current_state_covariance, observation, transition:Transition, emission:Emission):
-    predicted_mean, predicted_cov = predict(current_state_mean, current_state_covariance, transition)
+def filter_step(current_state_mean, current_state_cov, observation, transition:Transition, emission:Emission):
+    predicted_mean, predicted_cov = predict(current_state_mean, current_state_cov, transition)
     filtered_mean, filtered_cov = update(predicted_mean, predicted_cov, observation, emission)
     return predicted_mean, predicted_cov, filtered_mean, filtered_cov
 
-def init(observation, prior_params:Prior, observation_params:Emission):
-    init_filtering_mean, init_filtering_cov = update(prior_params.mean, prior_params.cov, observation, observation_params)
-    return prior_params.mean, prior_params.cov, init_filtering_mean, init_filtering_cov
+def init(observation, prior:Prior, emission:Emission):
+    init_filtering_mean, init_filtering_cov = update(prior.mean, prior.cov, observation, emission)
+    return prior.mean, prior.cov, init_filtering_mean, init_filtering_cov
 
-def log_likelihood_term(predicted_state_mean, predicted_state_covariance, observation, observation_params:Emission):
+def log_likelihood_term(predictive_mean, predictive_cov, observation, emission:Emission):
     return gaussian_logpdf(x=observation, 
-                        mean=observation_params.matrix @ predicted_state_mean + observation_params.offset, 
-                        cov=observation_params.matrix @ predicted_state_covariance @ observation_params.matrix.T + observation_params.cov)
+                        mean=emission.weight @ predictive_mean + emission.bias, 
+                        cov=emission.weight @ predictive_cov @ emission.weight.T + emission.cov)
 
-@jax.jit
+
 def filter(observations, model:Model):
-    num_samples = len(observations)
-    loglikelihood = 0
-    dim_z = model.transition.matrix.shape[0]
+    init_predictive_mean, init_predictive_cov, init_filtering_mean, init_filtering_cov = init(observations[0], model.prior, model.emission)
+    loglikelihood = log_likelihood_term(init_predictive_mean, init_predictive_cov, observations[0], model.emission)
 
-    filtered_state_means = jnp.zeros((num_samples, dim_z))
-    filtered_state_covariances = jnp.zeros((num_samples, dim_z, dim_z))
+    def _step(carry, x):
+        loglikelihood, filtering_mean, filtering_cov, transition, emission  = carry
+        predictive_mean, predictive_cov, filtering_mean, filtering_cov = filter_step(current_state_mean=filtering_mean,
+                                                                                    current_state_cov=filtering_cov,
+                                                                                    observation=x,
+                                                                                    transition=transition,
+                                                                                    emission=emission)
 
-    predicted_state_mean, predicted_state_covariance, init_filtering_mean, init_filtering_covariance = init(observations[0], model.prior, model.emission)
-    filtered_state_means = filtered_state_means.at[0].set(init_filtering_mean)
-    filtered_state_covariances = filtered_state_covariances.at[0].set(init_filtering_covariance)
-    loglikelihood += log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[0], model.emission)
+        loglikelihood += log_likelihood_term(predictive_mean, predictive_cov, x, emission)
 
-    def _step(carry, i):
-        transition, emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood = carry
-        predicted_state_mean, predicted_state_covariance, new_filtered_state_mean, new_filtered_state_covariance = filter_step(
-                                                                        filtered_state_means[i-1],
-                                                                        filtered_state_covariances[i-1],
-                                                                        observations[i],
-                                                                        transition,
-                                                                        emission)
+        return (loglikelihood, filtering_mean, filtering_cov, transition, emission), (predictive_mean, predictive_cov, filtering_mean, filtering_cov)
 
-        filtered_state_means = filtered_state_means.at[i].set(new_filtered_state_mean)
-        filtered_state_covariances = filtered_state_covariances.at[i].set(new_filtered_state_covariance)
+    (loglikelihood, *_), (predictive_means, predictive_covs, filtering_means, filtering_covs) = jax.lax.scan(f=_step, 
+                                init=(loglikelihood, init_filtering_mean, init_filtering_cov, model.transition, model.emission), 
+                                xs=observations[1:])
 
-        loglikelihood += log_likelihood_term(predicted_state_mean, predicted_state_covariance, observations[i], emission)
+    predictive_means = jnp.concatenate((init_predictive_mean[None,:], predictive_means))
+    predictive_covs = jnp.concatenate((init_predictive_cov[None,:], predictive_covs))
+    filtering_means =  jnp.concatenate((init_filtering_mean[None,:], filtering_means))
+    filtering_covs =  jnp.concatenate((init_filtering_cov[None,:], filtering_covs))
 
-        return (transition, emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood), None
+    return predictive_means, predictive_covs, filtering_means, filtering_covs, loglikelihood
 
-    init_carry = (model.transition, model.emission, observations, filtered_state_means, filtered_state_covariances, loglikelihood)
+class NumpyKalman: 
 
-    (_, _, _, filtered_state_means, filtered_state_covariances, loglikelihood), _ = jax.lax.scan(f=_step, init=init_carry, xs=jnp.arange(1,len(observations)))
-
-
-    return filtered_state_means, filtered_state_covariances, loglikelihood
-
-class Kalman: 
     def __init__(self,
-            model: Model):
+            model:Model):
 
-        self.transition_matrix = model.transition.matrix 
-        self.transition_offset = model.transition.offset
-        self.transition_covariance = model.transition.cov
-        self.observation_matrix = model.emission.matrix
-        self.observation_offset = model.emission.offset
-        self.observation_covariance = model.emission.cov
-        self.dim_state = model.transition.matrix.shape[0]
-        self.prior_mean, self.prior_cov = model.prior.mean, model.prior.cov
+        self.transition_weight = np.array(model.transition.weight)
+        self.transition_bias = np.array(model.transition.bias)
+        self.transition_cov =  np.array(model.transition.cov)
+        self.observation_weight = np.array(model.emission.weight)
+        self.observation_bias = np.array(model.emission.bias)
+        self.observation_cov = np.array(model.emission.cov)
+        self.dim_state = model.transition.cov.shape[0]
+        self.prior_mean, self.prior_cov = np.array(model.prior.mean), np.array(model.prior.cov)
 
-    def predict(self, current_state_mean, current_state_covariance):
-        predicted_state_mean = self.transition_matrix @ current_state_mean + self.transition_offset
-        predicted_state_covariance = self.transition_matrix @ current_state_covariance @ self.transition_matrix.T + self.transition_covariance
-        return predicted_state_mean, predicted_state_covariance
+    def predict(self, current_state_mean, current_state_cov):
+        predictive_mean = self.transition_weight @ current_state_mean + self.transition_bias
+        predictive_cov = self.transition_weight @ current_state_cov @ self.transition_weight.T + self.transition_cov
+        return predictive_mean, predictive_cov
         
-    def update(self, predicted_state_mean, predicted_state_covariance, observation):
-        predicted_observation_mean = self.observation_matrix @ predicted_state_mean + self.observation_offset
-        predicted_observation_covariance = self.observation_matrix @ predicted_state_covariance @ self.observation_matrix.T + self.observation_covariance
-        kalman_gain = predicted_state_covariance @ self.observation_matrix.T @ inv(predicted_observation_covariance)
+    def update(self, predictive_mean, predictive_cov, observation):
+        predicted_observation_mean = self.observation_weight @ predictive_mean + self.observation_bias
+        predicted_observation_cov = self.observation_weight @ predictive_cov @ self.observation_weight.T + self.observation_cov
+        kalman_gain = predictive_cov @ self.observation_weight.T @ np.linalg.inv(predicted_observation_cov)
 
-        corrected_state_mean = predicted_state_mean + kalman_gain @ (observation - predicted_observation_mean)
-        corrected_state_covariance = predicted_state_covariance - kalman_gain @ self.observation_matrix @ predicted_state_covariance
+        corrected_state_mean = predictive_mean + kalman_gain @ (observation - predicted_observation_mean)
+        corrected_state_cov = predictive_cov - kalman_gain @ self.observation_weight @ predictive_cov
 
-        return corrected_state_mean, corrected_state_covariance
+        return corrected_state_mean, corrected_state_cov
 
-    def filter_step(self, current_state_mean, current_state_covariance, observation):
-        predicted_mean, predicted_cov = self.predict(current_state_mean, current_state_covariance)
+    def filter_step(self, current_state_mean, current_state_cov, observation):
+        predicted_mean, predicted_cov = self.predict(current_state_mean, current_state_cov)
         filtered_mean, filtered_cov = self.update(predicted_mean, predicted_cov, observation)
         return predicted_mean, predicted_cov, filtered_mean, filtered_cov
     
@@ -110,29 +102,29 @@ class Kalman:
         init_filtering_mean, init_filtering_cov = self.update(self.prior_mean, self.prior_cov, observation)
         return self.prior_mean, self.prior_cov, init_filtering_mean, init_filtering_cov
 
-    def loglikelihood_term(self, predicted_state_mean, predicted_state_covariance, observation):
-        return Gaussian(
-            mean=self.observation_matrix @ predicted_state_mean + self.observation_offset, 
-            cov=self.observation_matrix @ predicted_state_covariance @ self.observation_matrix.T + self.observation_covariance).logpdf(observation)
+    def loglikelihood_term(self, predictive_mean, predictive_cov, observation):
+        return multivariate_normal(
+            mean=self.observation_weight @ predictive_mean + self.observation_bias, 
+            cov=self.observation_weight @ predictive_cov @ self.observation_weight.T + self.observation_cov).logpdf(observation)
 
     def filter(self, observations):
         num_samples = len(observations)
         loglikelihood = 0
 
-        filtered_state_means = np.zeros((num_samples, self.dim_state))
-        filtered_state_covariances = np.zeros((num_samples, self.dim_state, self.dim_state))
+        filtering_means = np.zeros((num_samples, self.dim_state))
+        filtering_covs = np.zeros((num_samples, self.dim_state, self.dim_state))
 
-        predicted_state_mean, predicted_state_covariance, filtered_state_means[0], filtered_state_covariances[0] = self.init(observations[0])
-        loglikelihood += self.loglikelihood_term(predicted_state_mean, predicted_state_covariance, observations[0])
+        predictive_mean, predictive_cov, filtering_means[0], filtering_covs[0] = self.init(observations[0])
+        loglikelihood += self.loglikelihood_term(predictive_mean, predictive_cov, observations[0])
 
         for sample_nb in range(1, num_samples):
-            predicted_state_mean, predicted_state_covariance, filtered_state_means[sample_nb], filtered_state_covariances[sample_nb] = self.filter_step(
-                                                                            filtered_state_means[sample_nb-1],
-                                                                            filtered_state_covariances[sample_nb-1],
+            predictive_mean, predictive_cov, filtering_means[sample_nb], filtering_covs[sample_nb] = self.filter_step(
+                                                                            filtering_means[sample_nb-1],
+                                                                            filtering_covs[sample_nb-1],
                                                                             observations[sample_nb])
 
-            loglikelihood += self.loglikelihood_term(predicted_state_mean, predicted_state_covariance, observations[sample_nb])
+            loglikelihood += self.loglikelihood_term(predictive_mean, predictive_cov, observations[sample_nb])
 
 
-        return filtered_state_means, filtered_state_covariances, loglikelihood
+        return filtering_means, filtering_covs, loglikelihood
 
