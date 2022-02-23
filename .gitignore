@@ -1,2 +1,5 @@
-**/__pycache__/
 *.pyc
+**/__pycache_/
+*.png
+test.py
+.vscode/
