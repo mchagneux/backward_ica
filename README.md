@@ -3,7 +3,7 @@
 ## Self-contained Google Colab notebook
 *If you do not want to set up the project on your own machine.*
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mchagneux/backward_ica/blob/main/demos.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mchagneux/backward_ica/blob/jax/demos.ipynb)
 
 
 ## Local installation 
