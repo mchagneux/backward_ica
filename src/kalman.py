@@ -5,7 +5,9 @@ import jax
 from .misc import * 
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
 from scipy.stats import multivariate_normal
+from jax import lax
 jax.config.update("jax_enable_x64", True)
+from pykalman.standard import KalmanFilter
 
 def predict(current_state_mean, current_state_cov, transition):
     predictive_mean = transition.weight @ current_state_mean + transition.bias
@@ -53,7 +55,7 @@ def filter(observations, model:Model):
 
         return (loglikelihood, filtering_mean, filtering_cov, transition, emission), (predictive_mean, predictive_cov, filtering_mean, filtering_cov)
 
-    (loglikelihood, *_), (predictive_means, predictive_covs, filtering_means, filtering_covs) = jax.lax.scan(f=_step, 
+    (loglikelihood, *_), (predictive_means, predictive_covs, filtering_means, filtering_covs) = lax.scan(f=_step, 
                                 init=(loglikelihood, init_filtering_mean, init_filtering_cov, model.transition, model.emission), 
                                 xs=observations[1:])
 
@@ -64,67 +66,34 @@ def filter(observations, model:Model):
 
     return predictive_means, predictive_covs, filtering_means, filtering_covs, loglikelihood
 
-class NumpyKalman: 
 
-    def __init__(self,
-            model:Model):
-
-        self.transition_weight = np.array(model.transition.weight)
-        self.transition_bias = np.array(model.transition.bias)
-        self.transition_cov =  np.array(model.transition.cov)
-        self.observation_weight = np.array(model.emission.weight)
-        self.observation_bias = np.array(model.emission.bias)
-        self.observation_cov = np.array(model.emission.cov)
-        self.dim_state = model.transition.cov.shape[0]
-        self.prior_mean, self.prior_cov = np.array(model.prior.mean), np.array(model.prior.cov)
-
-    def predict(self, current_state_mean, current_state_cov):
-        predictive_mean = self.transition_weight @ current_state_mean + self.transition_bias
-        predictive_cov = self.transition_weight @ current_state_cov @ self.transition_weight.T + self.transition_cov
-        return predictive_mean, predictive_cov
-        
-    def update(self, predictive_mean, predictive_cov, observation):
-        predicted_observation_mean = self.observation_weight @ predictive_mean + self.observation_bias
-        predicted_observation_cov = self.observation_weight @ predictive_cov @ self.observation_weight.T + self.observation_cov
-        kalman_gain = predictive_cov @ self.observation_weight.T @ np.linalg.inv(predicted_observation_cov)
-
-        corrected_state_mean = predictive_mean + kalman_gain @ (observation - predicted_observation_mean)
-        corrected_state_cov = predictive_cov - kalman_gain @ self.observation_weight @ predictive_cov
-
-        return corrected_state_mean, corrected_state_cov
-
-    def filter_step(self, current_state_mean, current_state_cov, observation):
-        predicted_mean, predicted_cov = self.predict(current_state_mean, current_state_cov)
-        filtered_mean, filtered_cov = self.update(predicted_mean, predicted_cov, observation)
-        return predicted_mean, predicted_cov, filtered_mean, filtered_cov
+def smooth_step(carry, x):
+    next_smoothing_mean, next_smoothing_cov, transition_matrix = carry 
+    filtering_mean, filtering_cov, next_predictive_mean, next_predictive_cov = x  
     
-    def init(self, observation):
-        init_filtering_mean, init_filtering_cov = self.update(self.prior_mean, self.prior_cov, observation)
-        return self.prior_mean, self.prior_cov, init_filtering_mean, init_filtering_cov
+    C = filtering_cov @ transition_matrix @ jnp.linalg.inv(next_predictive_cov)
+    smoothing_mean = filtering_mean + C @ (next_smoothing_mean - next_predictive_mean)
+    smoothing_cov = filtering_cov + C @ (next_smoothing_cov - next_predictive_cov) @ C.T
 
-    def loglikelihood_term(self, predictive_mean, predictive_cov, observation):
-        return multivariate_normal(
-            mean=self.observation_weight @ predictive_mean + self.observation_bias, 
-            cov=self.observation_weight @ predictive_cov @ self.observation_weight.T + self.observation_cov).logpdf(observation)
-
-    def filter(self, observations):
-        num_samples = len(observations)
-        loglikelihood = 0
-
-        filtering_means = np.zeros((num_samples, self.dim_state))
-        filtering_covs = np.zeros((num_samples, self.dim_state, self.dim_state))
-
-        predictive_mean, predictive_cov, filtering_means[0], filtering_covs[0] = self.init(observations[0])
-        loglikelihood += self.loglikelihood_term(predictive_mean, predictive_cov, observations[0])
-
-        for sample_nb in range(1, num_samples):
-            predictive_mean, predictive_cov, filtering_means[sample_nb], filtering_covs[sample_nb] = self.filter_step(
-                                                                            filtering_means[sample_nb-1],
-                                                                            filtering_covs[sample_nb-1],
-                                                                            observations[sample_nb])
-
-            loglikelihood += self.loglikelihood_term(predictive_mean, predictive_cov, observations[sample_nb])
+    return (smoothing_mean, smoothing_cov, transition_matrix), (smoothing_mean, smoothing_cov)
 
 
-        return filtering_means, filtering_covs, loglikelihood
+def smooth(observations, model):
+
+    predictive_means, predictive_covs, filtering_means, filtering_covs = filter(observations, model)[:-1]
+
+    last_smoothing_mean, last_smoothing_cov = filtering_means[-1], filtering_covs[-1]
+
+    _, (smoothing_means, smoothing_covs) = lax.scan(f=smooth_step,
+                                            init=(last_smoothing_mean, last_smoothing_cov, model.transition.weight),
+                                            xs=(filtering_means[:-1], 
+                                                filtering_covs[:-1],
+                                                predictive_means[1:],
+                                                predictive_covs[1:]),
+                                            reverse=True)
+
+    smoothing_means = jnp.concatenate((smoothing_means, last_smoothing_mean[None,:]))
+    smoothing_covs = jnp.concatenate((smoothing_covs, last_smoothing_cov[None,:]))
+
+    return smoothing_means, smoothing_covs
 

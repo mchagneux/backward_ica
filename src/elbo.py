@@ -58,10 +58,10 @@ def _integrate_previous_terms(integrate_up_to, quad_forms, nonlinear_term, q_bac
     constants0, quad_forms = jax.vmap(_expect_quad_form_under_backward_masked, in_axes=(0,0,None))(masks, quad_forms, q_backward)
 
     constants1, quad_form = _expect_obs_term_under_backward(nonlinear_term, q_backward)
-    
-    As = quad_forms.A.at[integrate_up_to+1].set(quad_form.A)
-    bs = quad_forms.b.at[integrate_up_to+1].set(quad_form.b)
-    Omegas = quad_forms.Omega.at[integrate_up_to+1].set(quad_form.Omega)
+    As, bs, Omegas = quad_forms.A, quad_forms.b, quad_forms.Omega
+    As = As.at[integrate_up_to+1].set(quad_form.A)
+    bs = bs.at[integrate_up_to+1].set(quad_form.b)
+    Omegas = Omegas.at[integrate_up_to+1].set(quad_form.Omega)
 
     return jnp.sum(constants0) + constants1, QuadForm(A=As, b=bs, Omega=Omegas)
 
@@ -109,10 +109,10 @@ def _update_V(observation, integrate_up_to, quad_forms, nonlinear_term, q_backwa
                 + - 0.5 * jnp.trace(p.transition.prec @ p.transition.weight @ q_backward.cov @ p.transition.weight.T)
 
     quad_form = _expect_transition_quad_form_under_backward(q_backward, p.transition)
-    
-    As = quad_forms.A.at[integrate_up_to+2].set(quad_form.A)
-    bs = quad_forms.b.at[integrate_up_to+2].set(quad_form.b)
-    Omegas = quad_forms.Omega.at[integrate_up_to+2].set(quad_form.Omega)
+    As, bs, Omegas = quad_forms.A, quad_forms.b, quad_forms.Omega
+    As = As.at[integrate_up_to+2].set(quad_form.A)
+    bs = bs.at[integrate_up_to+2].set(quad_form.b)
+    Omegas = Omegas.at[integrate_up_to+2].set(quad_form.Omega)
     
     nonlinear_term = _get_obs_term(observation, p.emission)
 

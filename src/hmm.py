@@ -15,12 +15,12 @@ class LinearGaussianHMM:
         prior_cov = default_state_cov
 
         key, *subkeys = random.split(key, 3)
-        transition_weight = jnp.diag(uniform(subkeys[0], shape=(state_dim,)))
+        transition_weight = uniform(subkeys[0], shape=(state_dim,))
         transition_bias = uniform(subkeys[1], shape=(state_dim,))
         transition_cov = default_state_cov
 
         key, *subkeys = random.split(key, 3)
-        emission_weight = uniform(subkeys[0], shape=(state_dim, obs_dim))
+        emission_weight = uniform(subkeys[0], shape=(state_dim,))
         emission_bias = uniform(subkeys[1], shape=(obs_dim,))
         emission_cov = default_emission_cov
 
