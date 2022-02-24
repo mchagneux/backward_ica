@@ -15,7 +15,7 @@ key = PRNGKey(0)
 import matplotlib.pyplot as plt
 #%% Checking that L(p,p) = log p(x)
 
-state_dim, obs_dim = 2, 2 
+state_dim, obs_dim = 2, 3
 num_sequences = 20
 length = 8
 
@@ -34,9 +34,9 @@ state_sequences, obs_sequences = linear_gaussian_sampler(jnp.array(subkeys), p, 
 filter_obs_sequences = jax.vmap(kalman.filter, in_axes=(0, None))
 elbo_sequences = jax.vmap(linear_gaussian_elbo, in_axes=(None, None, 0))
 
-average_evidence_across_sequences = jnp.mean(filter_obs_sequences(obs_sequences, p)[-1])
-average_elbo_across_sequences_with_true_model = jnp.mean(elbo_sequences(p_raw, p_raw, obs_sequences))
-print('Difference mean evidence Kalman and mean ELBO when q=p:', jnp.abs(average_evidence_across_sequences-average_elbo_across_sequences_with_true_model))
+# average_evidence_across_sequences = jnp.mean(filter_obs_sequences(obs_sequences, p)[-1])
+# average_elbo_across_sequences_with_true_model = jnp.mean(elbo_sequences(p_raw, p_raw, obs_sequences))
+# print('Difference mean evidence Kalman and mean ELBO when q=p:', jnp.abs(average_evidence_across_sequences-average_elbo_across_sequences_with_true_model))
 
 
 #%% Setting up optimizer 

@@ -54,16 +54,25 @@ def _update_backward(q_filtering, q_transition):
 
 def _integrate_previous_terms(integrate_up_to, quad_forms, nonlinear_term, q_backward):
 
-    masks = jnp.arange(start=0, stop=quad_forms.A.shape[0]) <= integrate_up_to
-    constants0, quad_forms = jax.vmap(_expect_quad_form_under_backward_masked, in_axes=(0,0,None))(masks, quad_forms, q_backward)
+    quad_forms_transition, quad_forms_emission = quad_forms
 
-    constants1, quad_form = _expect_obs_term_under_backward(nonlinear_term, q_backward)
-    As, bs, Omegas = quad_forms.A, quad_forms.b, quad_forms.Omega
-    As = As.at[integrate_up_to+1].set(quad_form.A)
-    bs = bs.at[integrate_up_to+1].set(quad_form.b)
-    Omegas = Omegas.at[integrate_up_to+1].set(quad_form.Omega)
+    masks = jnp.arange(start=0, stop=quad_forms_transition.A.shape[0]) <= integrate_up_to
+    _expect_quad_forms_under_backward_masked = jax.vmap(_expect_quad_form_under_backward_masked, in_axes=(0,0,None))
+    
+    constants0, quad_forms_transition = _expect_quad_forms_under_backward_masked(masks, quad_forms_transition, q_backward)
 
-    return jnp.sum(constants0) + constants1, QuadForm(A=As, b=bs, Omega=Omegas)
+    masks = masks.at[integrate_up_to].set(False)
+    constants1, quad_forms_emission = _expect_quad_forms_under_backward_masked(masks, quad_forms_emission, q_backward)
+
+    constants2, quad_form = _expect_obs_term_under_backward(nonlinear_term, q_backward)
+
+    As, bs, Omegas = quad_forms_emission.A, quad_forms_emission.b, quad_forms_emission.Omega
+    As = As.at[integrate_up_to].set(quad_form.A)
+    bs = bs.at[integrate_up_to].set(quad_form.b)
+    Omegas = Omegas.at[integrate_up_to].set(quad_form.Omega)
+    quad_forms_emission = QuadForm(A=As, b=bs, Omega=Omegas)
+
+    return jnp.sum(constants0) + jnp.sum(constants1) + constants2, quad_forms_transition, quad_forms_emission
 
 
 def _init_V(observation, p):
@@ -71,10 +80,10 @@ def _init_V(observation, p):
     constants_V = _constant_terms_from_log_gaussian(p.transition.cov.shape[0], jnp.linalg.det(p.prior.cov)) + \
                   _constant_terms_from_log_gaussian(p.emission.cov.shape[0], p.emission.det_cov)
     
-    A, b, Omega = jnp.eye(p.transition.cov.shape[0]), -p.prior.mean, -0.5 * jnp.linalg.inv(p.prior.cov)
+    init_transition_term = QuadForm(A=jnp.eye(p.transition.cov.shape[0]), b=-p.prior.mean, Omega=-0.5 * jnp.linalg.inv(p.prior.cov))
     nonlinear_term = _get_obs_term(observation, p.emission)
 
-    return constants_V, A, b, Omega, nonlinear_term 
+    return constants_V, init_transition_term, nonlinear_term 
 
 def _expect_transition_quad_form_under_backward(q_backward, p_transition):
     # expectation of the quadratic form that appears in the log of the state transition density
@@ -89,18 +98,24 @@ def _no_integration(quad_form, q_backward):
     return 0.0, quad_form
 
 def _expect_quad_form_under_backward(quad_form, q_backward):
-    constant = jnp.trace(quad_form.Omega @ quad_form.A @ q_backward.cov @ quad_form.A.T)
+    Sigma = quad_form.A @ q_backward.cov @ quad_form.A.T
+    constant = jnp.trace(quad_form.Omega @ Sigma)
     A = quad_form.A @ q_backward.A
     b = quad_form.A @ q_backward.a + quad_form.b
     Omega = quad_form.Omega
     return constant, QuadForm(A=A, b=b, Omega=Omega)
 
 def _expect_quad_form_under_backward_masked(mask, quad_form, q_backward):
+    # if mask: 
+    #     return _expect_quad_form_under_backward(quad_form, q_backward)
+
+    # return _no_integration(quad_form, q_backward)
     return lax.cond(mask, _expect_quad_form_under_backward, _no_integration, quad_form, q_backward)
 
 def _update_V(observation, integrate_up_to, quad_forms, nonlinear_term, q_backward, p):
 
-    constants, quad_forms =  _integrate_previous_terms(integrate_up_to, quad_forms, nonlinear_term, q_backward)
+    constants, quad_forms_transition, quad_forms_emission =  _integrate_previous_terms(integrate_up_to, quad_forms, nonlinear_term, q_backward)
+
     dim_z, dim_x = p.transition.cov.shape[0], p.emission.cov.shape[0]
     constants +=  _constant_terms_from_log_gaussian(dim_x, p.emission.det_cov) \
                 +   _constant_terms_from_log_gaussian(dim_z, p.transition.det_cov) \
@@ -109,14 +124,17 @@ def _update_V(observation, integrate_up_to, quad_forms, nonlinear_term, q_backwa
                 + - 0.5 * jnp.trace(p.transition.prec @ p.transition.weight @ q_backward.cov @ p.transition.weight.T)
 
     quad_form = _expect_transition_quad_form_under_backward(q_backward, p.transition)
-    As, bs, Omegas = quad_forms.A, quad_forms.b, quad_forms.Omega
-    As = As.at[integrate_up_to+2].set(quad_form.A)
-    bs = bs.at[integrate_up_to+2].set(quad_form.b)
-    Omegas = Omegas.at[integrate_up_to+2].set(quad_form.Omega)
+
+    As, bs, Omegas = quad_forms_transition.A, quad_forms_transition.b, quad_forms_transition.Omega
+
+    As = As.at[integrate_up_to+1].set(quad_form.A)
+    bs = bs.at[integrate_up_to+1].set(quad_form.b)
+    Omegas = Omegas.at[integrate_up_to+1].set(quad_form.Omega)
+    quad_forms_transition = QuadForm(A=As, b=bs, Omega=Omegas)
     
     nonlinear_term = _get_obs_term(observation, p.emission)
 
-    return constants, QuadForm(A=As, b=bs, Omega=Omegas), nonlinear_term
+    return constants, [quad_forms_transition, quad_forms_emission], nonlinear_term
 
 def _expect_quad_form_under_filtering(quad_form, q_filtering):
     return jnp.trace(quad_form.Omega @ quad_form.A @ q_filtering.cov @ quad_form.A.T) + _eval_quad_form(quad_form, q_filtering.mean)
@@ -124,7 +142,13 @@ def _expect_quad_form_under_filtering(quad_form, q_filtering):
 def _expect_V_under_filtering(constants_V, quad_forms, nonlinear_term, q_filtering):
     result = constants_V
 
-    result += jnp.sum(jax.vmap(_expect_quad_form_under_filtering, in_axes=(0, None))(quad_forms, q_filtering)) \
+    quad_forms_transition, quad_forms_emission = quad_forms
+    quad_forms_emission = QuadForm(A=quad_forms_emission.A[:-1], b=quad_forms_emission.b[:-1], Omega=quad_forms_emission.Omega[:-1])
+
+    expect_quad_forms_under_filtering = jax.vmap(_expect_quad_form_under_filtering, in_axes=(0, None))
+
+    result += jnp.sum(expect_quad_forms_under_filtering(quad_forms_transition, q_filtering)) \
+            + jnp.sum(expect_quad_forms_under_filtering(quad_forms_emission, q_filtering)) \
             + _expect_obs_term_under_filtering(nonlinear_term, q_filtering)
 
     result += 0.5*q_filtering.mean.shape[0]
@@ -133,18 +157,27 @@ def _expect_V_under_filtering(constants_V, quad_forms, nonlinear_term, q_filteri
 
 def init(observations, p, q):
 
-    constants_V, A, b, Omega, nonlinear_term = _init_V(observations[0], p)
+    constants_V, init_transition_term, nonlinear_term = _init_V(observations[0], p)
     q_filtering = _init_filtering(observations[0], q.prior, q.emission)
     dim_z = p.transition.cov.shape[0]
-    As = jnp.empty(shape=(2*len(observations)-1, dim_z, dim_z))
-    bs = jnp.empty(shape=(2*len(observations)-1, dim_z))
-    Omegas = jnp.empty_like(As)
 
-    As = As.at[0].set(A)
-    bs  = bs.at[0].set(b)
-    Omegas = Omegas.at[0].set(Omega)
+    num_terms = len(observations)
+    As =jnp.empty(shape=(num_terms, dim_z, dim_z))
+    bs=jnp.empty(shape=(num_terms, dim_z))
+    Omegas=jnp.empty(shape=(num_terms, dim_z, dim_z))
 
-    return constants_V, QuadForm(A=As, b=bs, Omega=Omegas), nonlinear_term, q_filtering
+    As = As.at[0].set(init_transition_term.A)
+    bs  = bs.at[0].set(init_transition_term.b)
+    Omegas = Omegas.at[0].set(init_transition_term.Omega)
+    quad_forms_transition = QuadForm(A=As, b=bs, Omega=Omegas)
+
+    dim_x = p.emission.cov.shape[0]
+    quad_forms_emission = QuadForm(A=jnp.empty(shape=(num_terms, dim_x, dim_z)),
+                                b=jnp.empty(shape=(num_terms, dim_x)),
+                                Omega=jnp.empty(shape=(num_terms, dim_x, dim_x)))
+        
+    quad_forms = [quad_forms_transition, quad_forms_emission]
+    return constants_V, quad_forms, nonlinear_term, q_filtering
 
 def _update(observation, integrate_up_to, quad_forms, nonlinear_term, q_filtering, p, q):
     q_backward = _update_backward(q_filtering, q.transition)
@@ -181,10 +214,12 @@ def linear_gaussian_elbo(p_raw, q_raw, observations):
     
     constants_V, quad_forms, nonlinear_term, q_filtering = init(observations, p, q)
 
-    integrate_up_to_array = jnp.arange(start=0, stop=2*len(observations[1:]), step=2)
+    observations = observations[1:]
+
+    integrate_up_to_array = jnp.arange(start=0, stop=len(observations))
 
     
-    # for observation, integrate_up_to in zip(observations[1:], integrate_up_to_array):
+    # for observation, integrate_up_to in zip(observations, integrate_up_to_array):
     #     new_constants, quad_forms, nonlinear_term, q_filtering = _update(observation, integrate_up_to, quad_forms, nonlinear_term, q_filtering, p, q)
     #     constants_V += new_constants
 
@@ -205,7 +240,8 @@ def linear_gaussian_elbo(p_raw, q_raw, observations):
 
     (quad_forms, nonlinear_term, q_filtering, p, q), constants = lax.scan(f=V_step, 
                                 init=(quad_forms, nonlinear_term, q_filtering, p, q),
-                                xs=(observations[1:], integrate_up_to_array))
+                                xs=(observations, integrate_up_to_array))
+
     constants_V += jnp.sum(constants) 
     constants_V += -_constant_terms_from_log_gaussian(p.transition.cov.shape[0], jnp.linalg.det(q_filtering.cov))
 

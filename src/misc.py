@@ -16,4 +16,4 @@ def actual_model_from_raw_parameters(raw_model):
                     
     return Model(prior=Prior(raw_model.prior.mean, prior_cov),
                 transition=Transition(jnp.diag(raw_model.transition.weight), raw_model.transition.bias, transition_cov),
-                emission=Emission(jnp.diag(raw_model.emission.weight), raw_model.emission.bias, emission_cov)) 
+                emission=Emission(raw_model.emission.weight, raw_model.emission.bias, emission_cov)) 

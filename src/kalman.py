@@ -97,3 +97,28 @@ def smooth(observations, model):
 
     return smoothing_means, smoothing_covs
 
+
+
+def filter_pykalman(observations, model):
+
+    engine = KalmanFilter(transition_matrices=model.transition.weight, 
+                        observation_matrices=model.emission.weight,
+                        transition_covariance=model.transition.cov,
+                        observation_covariance=model.emission.cov,
+                        transition_offsets=model.transition.bias,
+                        observation_offsets=model.emission.bias,
+                        initial_state_mean=model.prior.mean,
+                        initial_state_covariance=model.prior.cov)
+
+    return engine.filter(observations)
+
+def smooth_pykalman(observations, model):
+    engine = KalmanFilter(transition_matrices=model.transition.weight, 
+                        observation_matrices=model.emission.weight,
+                        transition_covariance=model.transition.cov,
+                        observation_covariance=model.emission.cov,
+                        transition_offsets=model.transition.bias,
+                        observation_offsets=model.emission.bias,
+                        initial_state_mean=model.prior.mean,
+                        initial_state_covariance=model.prior.cov)
+    return engine.smooth(observations)

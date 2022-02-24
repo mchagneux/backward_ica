@@ -20,7 +20,7 @@ class LinearGaussianHMM:
         transition_cov = default_state_cov
 
         key, *subkeys = random.split(key, 3)
-        emission_weight = uniform(subkeys[0], shape=(state_dim,))
+        emission_weight = uniform(subkeys[0], shape=(obs_dim,state_dim))
         emission_bias = uniform(subkeys[1], shape=(obs_dim,))
         emission_cov = default_emission_cov
 
@@ -38,7 +38,7 @@ class LinearGaussianHMM:
 
         new_obs = multivariate_normal(key=subkeys[1], 
                                     mean=emission.weight @ new_state + emission.bias,
-                                    cov=transition.cov)
+                                    cov=emission.cov)
 
         return (key, new_state, transition, emission), (new_state, new_obs)
 
