@@ -1,4 +1,3 @@
-#%%
 from functools import partial
 from src.elbo import linear_gaussian_elbo
 from src.hmm import LinearGaussianHMM
@@ -13,16 +12,17 @@ jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_debug_nans", True)
 key = PRNGKey(0)
 import matplotlib.pyplot as plt
-#%% Checking that L(p,p) = log p(x)
+# jax.config.update("jax_debug_nans",'True')
 
+
+#%% Linear tests
 state_dim, obs_dim = 2, 3
-num_sequences = 20
-length = 8
-
+num_sequences = 30
+length = 16
+print('Total amount of simulated observations:', num_sequences * length)
 key, *subkeys = random.split(key,3)
 
 p_raw = LinearGaussianHMM.get_random_model(key=subkeys[0], state_dim=state_dim, obs_dim=obs_dim)
-q_raw = LinearGaussianHMM.get_random_model(key=subkeys[1], state_dim=state_dim, obs_dim=obs_dim)
 
 p = actual_model_from_raw_parameters(p_raw)
 
@@ -32,14 +32,13 @@ state_sequences, obs_sequences = linear_gaussian_sampler(jnp.array(subkeys), p, 
 
 
 filter_obs_sequences = jax.vmap(kalman.filter, in_axes=(0, None))
-elbo_sequences = jax.vmap(linear_gaussian_elbo, in_axes=(None, None, 0))
+elbo_sequences = jax.jit(jax.vmap(linear_gaussian_elbo, in_axes=(None, None, 0)))
 
-# average_evidence_across_sequences = jnp.mean(filter_obs_sequences(obs_sequences, p)[-1])
-# average_elbo_across_sequences_with_true_model = jnp.mean(elbo_sequences(p_raw, p_raw, obs_sequences))
-# print('Difference mean evidence Kalman and mean ELBO when q=p:', jnp.abs(average_evidence_across_sequences-average_elbo_across_sequences_with_true_model))
+average_evidence_across_sequences = jnp.mean(filter_obs_sequences(obs_sequences, p)[-1])
+average_elbo_across_sequences_with_true_model = jnp.mean(elbo_sequences(p_raw, p_raw, obs_sequences))
+print('Mean evidence across sequences:', average_evidence_across_sequences)
+print('Difference mean evidence Kalman and mean ELBO when q=p:', jnp.abs(average_evidence_across_sequences-average_elbo_across_sequences_with_true_model))
 
-
-#%% Setting up optimizer 
 def step(p_raw, q_raw, opt_state, batch):
     loss_value, grads = jax.value_and_grad(linear_gaussian_elbo, argnums=1)(p_raw, q_raw, batch)
     updates, opt_state = optimizer.update(grads, opt_state, q_raw)
@@ -48,9 +47,9 @@ def step(p_raw, q_raw, opt_state, batch):
 step = jax.jit(step)
 q_raw = LinearGaussianHMM.get_random_model(key=subkeys[1], state_dim=state_dim, obs_dim=obs_dim)
 average_elbo_across_sequences_with_init_q = jnp.mean(elbo_sequences(p_raw, q_raw, obs_sequences))
-print('Different mean evidence and mean ELBO when q=q0:', jnp.abs(average_evidence_across_sequences-average_elbo_across_sequences_with_init_q))
+print('Difference mean evidence and mean ELBO when q=q0:', jnp.abs(average_evidence_across_sequences-average_elbo_across_sequences_with_init_q))
 
-#%% Running optim
+
 optimizer = optax.adam(learning_rate=-1e-3)
 
 def fit(p_raw, q_raw, optimizer: optax.GradientTransformation) -> optax.Params:
@@ -73,21 +72,21 @@ def fit(p_raw, q_raw, optimizer: optax.GradientTransformation) -> optax.Params:
     return q_raw, mean_elbos
 
 
-q_raw, mean_elbos = fit(p_raw, q_raw, optimizer)
+fitted_q_raw, mean_elbos = fit(p_raw, q_raw, optimizer)
 
 plt.plot(mean_elbos)
 plt.xlabel('Epoch nb'), 
 plt.ylabel('Mean of $\mathcal{L}(\\theta,\phi) - log p_{\\theta}$')
+fitted_q = actual_model_from_raw_parameters(fitted_q_raw)
 
-#%% Computing expectations 
-
-q = actual_model_from_raw_parameters(q_raw)
 
 def squared_error_expectation_against_true_states(states, observations, approximate_linear_gaussian_model, additive_functional):
     smoothed_states, _ = kalman.smooth(observations, approximate_linear_gaussian_model)
-    return (additive_functional(smoothed_states) - additive_functional(states)) ** 2
+    return jnp.sqrt((additive_functional(smoothed_states) - additive_functional(states)) ** 2)
 
 additive_functional = partial(jnp.sum, axis=0)
 mse_in_expectations = jax.vmap(squared_error_expectation_against_true_states, in_axes=(0,0, None, None))
-print('MSE(E_q(h(z)), z_true):', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, q, additive_functional), axis=0))
+print('MSE(E_q(h(z)), z_true):', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, fitted_q, additive_functional), axis=0))
 print('MSE(E_p(h(z)), z_true):', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, p, additive_functional), axis=0))
+
+#%% Nonlinear tests 
