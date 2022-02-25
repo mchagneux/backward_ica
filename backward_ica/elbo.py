@@ -7,6 +7,21 @@ from .misc import parameters_from_raw_parameters
 config.update("jax_enable_x64", True)
 
 
+def _create_quad_form(A, b, Omega):
+    return {'A':A, 'b':b, 'Omega':Omega}
+
+def _create_filtering(mean, cov):
+    return {'mean':mean, 'cov':cov}
+
+def _create_backward(A, a, cov):
+    return {'A':A, 'a':a, 'cov':cov}
+
+def _update_quad_forms_at_index(quad_forms, quad_form, index):
+    quad_forms['A'] = quad_forms['A'].at[index].set(quad_form['A'])
+    quad_forms['b'] = quad_forms['b'].at[index].set(quad_form['b'])
+    quad_forms['Omega'] = quad_forms['Omega'].at[index].set(quad_form['Omega'])
+    return quad_forms
+
 def _constant_terms_from_log_gaussian(dim, det_cov):
     return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
 
@@ -21,15 +36,16 @@ def _expect_obs_term_under_filtering(obs_term, q_filtering):
     return _expect_quad_form_under_filtering(obs_term, q_filtering)
 
 def _get_obs_term(observation, p_emission):
-    return {'A':p_emission['weight'],'b':p_emission['bias'] - observation,'Omega':- 0.5*p_emission['prec']}
+    
+    return _create_quad_form(A=p_emission['weight'],
+                            b=p_emission['bias'] - observation,
+                            Omega=- 0.5*p_emission['prec'])
 
 def _init_filtering(observation, q_prior, q_emission):
-    filtering_mean, filtering_cov = kalman_init(observation, q_prior, q_emission)[2:]
-    return {'mean':filtering_mean,'cov':filtering_cov}
+    return _create_filtering(*kalman_init(observation, q_prior, q_emission)[2:])
 
 def _update_filtering(observation, q_filtering, q_transition, q_emission):
-    filtering_mean, filtering_cov = kalman_filter_step(*q_filtering, observation, q_transition, q_emission)[2:]
-    return {'mean':filtering_mean,'cov':filtering_cov}
+    return _create_filtering(*kalman_filter_step(q_filtering['mean'], q_filtering['cov'], observation, q_transition, q_emission)[2:])
 
 def _update_backward(q_filtering, q_transition):
 
@@ -43,7 +59,7 @@ def _update_backward(q_filtering, q_transition):
     A = cov @ common_term
     a = cov @ (filtering_prec @ q_filtering['mean'] - common_term @  q_transition['bias'])
 
-    return {'A':a, 'a':a, 'cov':cov}
+    return _create_backward(A=A,a=a,cov=cov)
 
 def _integrate_previous_terms(integrate_up_to, quad_forms, nonlinear_term, q_backward):
 
@@ -59,9 +75,9 @@ def _integrate_previous_terms(integrate_up_to, quad_forms, nonlinear_term, q_bac
 
     constants2, quad_form = _expect_obs_term_under_backward(nonlinear_term, q_backward)
 
-    quad_forms_emission['A'] = quad_forms_emission['A'].at[integrate_up_to].set(quad_form['A'])
-    quad_forms_emission['b'] = quad_forms_emission['b'].at[integrate_up_to].set(quad_form['b'])
-    quad_forms_emission['Omega'] = quad_forms_emission['Omega'].at[integrate_up_to].set(quad_form['Omega'])
+    quad_forms_emission = _update_quad_forms_at_index(quad_forms_emission, 
+                                                    quad_form, 
+                                                    index=integrate_up_to)
 
     return jnp.sum(constants0) + jnp.sum(constants1) + constants2, quad_forms_transition, quad_forms_emission
 
@@ -117,9 +133,9 @@ def _update_V(observation, integrate_up_to, quad_forms, nonlinear_term, q_backwa
     quad_form = _expect_transition_quad_form_under_backward(q_backward, p['transition'])
 
 
-    quad_forms_transition['A'] = quad_forms_transition['A'].at[integrate_up_to+1].set(quad_form['A'])
-    quad_forms_transition['b'] = quad_forms_transition['b'].at[integrate_up_to+1].set(quad_form['b'])
-    quad_forms_transition['Omega'] = quad_forms_transition['Omega'].at[integrate_up_to+1].set(quad_form['Omega'])
+    quad_forms_transition = _update_quad_forms_at_index(quad_forms_transition, 
+                                                    quad_form, 
+                                                    index=integrate_up_to+1)
     
     nonlinear_term = _get_obs_term(observation, p['emission'])
 
@@ -161,13 +177,14 @@ def init(observations, p, q):
     bs  = bs.at[0].set(init_transition_term['b'])
     Omegas = Omegas.at[0].set(init_transition_term['Omega'])
 
-    quad_forms_transition = {'A':As, 'b':bs, 'Omega':Omegas}
+    quad_forms_transition = _create_quad_form(A=As, b=bs, Omega=Omegas)
 
     dim_x = p['emission']['cov'].shape[0]
-    quad_forms_emission = {'A': jnp.empty(shape=(num_terms, dim_x, dim_z)),
-                        'b' : jnp.empty(shape=(num_terms, dim_x)),
-                        'Omega': jnp.empty(shape=(num_terms, dim_x, dim_x))}
-        
+
+    quad_forms_emission = _create_quad_form(A=jnp.empty(shape=(num_terms, dim_x, dim_z)),
+                                            b=jnp.empty(shape=(num_terms, dim_x)),
+                                            Omega=jnp.empty(shape=(num_terms, dim_x, dim_x)))
+            
     quad_forms = [quad_forms_transition, quad_forms_emission]
     return constants_V, quad_forms, nonlinear_term, q_filtering
 
