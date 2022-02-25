@@ -1,2 +1,1 @@
-jax[cpu]
-optax 
+optax
