@@ -1,5 +1,4 @@
 from jax import vmap, lax, config, numpy as jnp
-from collections import namedtuple
 
 from .kalman import filter_step as kalman_filter_step, init as kalman_init
 from .misc import parameters_from_raw_parameters

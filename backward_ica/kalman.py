@@ -1,8 +1,5 @@
 from jax import numpy as jnp, lax, config
 from jax.scipy.stats.multivariate_normal import logpdf as jax_gaussian_logpdf
-
-import numpy as np
-from scipy.stats import multivariate_normal
 from pykalman.standard import KalmanFilter
 
 from .misc import * 
