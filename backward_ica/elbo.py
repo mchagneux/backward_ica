@@ -1,9 +1,14 @@
+from typing import * 
 from jax import vmap, lax, config, numpy as jnp
+from jax.tree_util import register_pytree_node_class
 
 from .kalman import filter_step as kalman_filter_step, init as kalman_init
 from .misc import parameters_from_raw_parameters
-
+from typing import * 
 config.update("jax_enable_x64", True)
+
+
+
 
 
 def _create_quad_form(A, b, Omega):
@@ -21,10 +26,29 @@ def _update_quad_forms_at_index(quad_forms, quad_form, index):
     quad_forms['Omega'] = quad_forms['Omega'].at[index].set(quad_form['Omega'])
     return quad_forms
 
-def _constant_terms_from_log_gaussian(dim, det_cov):
+def _constant_terms_from_log_gaussian(dim:int, det_cov:float)->float:
+    """Utility function to compute the log of the term that is against the exponential for a multivariate Normal
+
+    Args:
+        dim (int): the dimension of the support of the multivariate Normal
+        det_cov (float): the precomputed determinant of the covariance matrix 
+
+    Returns:
+        float: the value of the requested factor  
+    """
+
     return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
 
-def _eval_quad_form(quad_form, x):
+def _eval_quad_form(quad_form:dict, x:Collection[float])->float:
+    """Evaluates a quadratic form (Ax+b)^T @ Omega @ (Ax+b) at a given value of x
+
+    Args:
+        quad_form (dict): a dict containing parameters A,b and Omega of the quadratic form
+        x (Collection[float]): the value at which to evaluate the quadratic form
+
+    Returns:
+        float: the scalar corresponding to the evaluated quadratic form 
+    """
     common_term = quad_form['A'] @ x + quad_form['b']
     return common_term.T @ quad_form['Omega'] @ common_term
 
