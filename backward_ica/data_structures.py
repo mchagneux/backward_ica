@@ -23,6 +23,20 @@ class QuadForm:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
+    def set(self, quad_form, index:int):
+        self.A = self.A.at[index].set(quad_form.A)
+        self.b = self.b.at[index].set(quad_form.b)
+        self.Omega = self.b.at[index].set(quad_form.Omega)
+
+    def get(self, index):
+        return QuadForm(self.A[index], self.b[index], self.Omega[index])
+
+    def evaluate(self, x):
+        common_term = self.A @ x + self.b
+        return common_term.T @ self.Omega @ common_term
+
+
+
 @dataclass(init=True, repr=True)
 @register_pytree_node_class
 class Backward:
@@ -50,7 +64,7 @@ class Filtering:
     
     def __iter__(self):
         return iter((self.mean, self.cov))
-        
+
     def tree_flatten(self):
         return ((self.mean, self.cov), None) 
 
