@@ -90,4 +90,5 @@ additive_functional = partial(jnp.sum, axis=0)
 mse_in_expectations = vmap(squared_error_expectation_against_true_states, in_axes=(0,0, None, None))
 print('Smoothed with q:', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, fitted_q, additive_functional), axis=0))
 print('Smoothed with p:', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, p, additive_functional), axis=0))
+
 #%% 
