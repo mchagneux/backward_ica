@@ -11,7 +11,7 @@ key = random.PRNGKey(0)
 
 from backward_ica.kalman import filter as kalman_filter, smooth as kalman_smooth
 from backward_ica.elbo import linear_gaussian_elbo
-from backward_ica.misc import parameters_from_raw_parameters
+from backward_ica.misc import format_p, format_q, increase_parameterization
 from backward_ica.hmm import LinearGaussianHMM
 
 #%% Generate dataset
@@ -24,7 +24,7 @@ key, *subkeys = random.split(key, 3)
 p_raw = LinearGaussianHMM.get_random_model(key=subkeys[0], state_dim=state_dim, obs_dim=obs_dim)
 q_raw = LinearGaussianHMM.get_random_model(key=subkeys[1], state_dim=state_dim, obs_dim=obs_dim)
 
-p = parameters_from_raw_parameters(p_raw)
+p = format_p(p_raw)
 
 linear_gaussian_sampler = vmap(LinearGaussianHMM.sample_joint_sequence, in_axes=(0, None, None))
 likelihood_via_kalman = lambda observations, model: kalman_filter(observations, model)[-1]
@@ -59,8 +59,8 @@ def fit(p_raw, q_raw, optimizer: optax.GradientTransformation) -> optax.Params:
     old_mean_epoch_elbo = -jnp.mean(elbo_sequences(p_raw, q_raw, obs_sequences))
     epoch_nb = 0
     mean_elbos = [old_mean_epoch_elbo - average_evidence_dataset]
-    # while eps > 1e-2:
-    for _ in range(10):
+    while eps > 1e-2:
+    # for _ in range(10):
         epoch_elbo = 0.0
         for batch in obs_sequences: 
             p_raw, q_raw, opt_state, elbo_value = step(p_raw, q_raw, opt_state, batch)
@@ -80,6 +80,14 @@ plt.xlabel('Epoch nb'),
 plt.ylabel('$|\mathcal{L}(\\theta,\\phi)- \log p_\\theta(x)|$')
 plt.show()
 
-fitted_q = parameters_from_raw_parameters(fitted_q_raw)
+fitted_q = format_p(fitted_q_raw)
 
+def squared_error_expectation_against_true_states(states, observations, approximate_linear_gaussian_model, additive_functional):
+    smoothed_states, _ = kalman_smooth(observations, approximate_linear_gaussian_model)
+    return jnp.sqrt((additive_functional(smoothed_states) - additive_functional(states)) ** 2)
+
+additive_functional = partial(jnp.sum, axis=0)
+mse_in_expectations = vmap(squared_error_expectation_against_true_states, in_axes=(0,0, None, None))
+print('Smoothed with q:', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, fitted_q, additive_functional), axis=0))
+print('Smoothed with p:', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, p, additive_functional), axis=0))
 #%% 

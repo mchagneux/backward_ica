@@ -1,14 +1,31 @@
 from copy import deepcopy 
 import jax.numpy as jnp
 
-def parameters_from_raw_parameters(raw_model):
 
+def increase_parameterization(raw_model):
     model = deepcopy(raw_model)
+
+    model['transition']['weight'] = jnp.diag(model['transition']['weight'])
+    return model 
     
-    model['prior']['cov'] = jnp.diag(raw_model['prior']['cov'] ** 2) 
+def format_p(p_raw):
+
+    model = deepcopy(p_raw)
+    
+    model['prior']['cov'] = jnp.diag(model['prior']['cov'] ** 2) 
     model['transition']['weight'] = jnp.diag(model['transition']['weight'])
 
-    model['transition']['cov'] = jnp.diag(raw_model['transition']['cov'] ** 2)
-    model['emission']['cov'] = jnp.diag(raw_model['emission']['cov'] ** 2)
+    model['transition']['cov'] = jnp.diag(model['transition']['cov'] ** 2)
+    model['emission']['cov'] = jnp.diag(model['emission']['cov'] ** 2)
+                    
+    return model
+
+def format_q(q_raw):
+
+    model = deepcopy(q_raw)
+    
+    model['prior']['cov'] = jnp.diag(model['prior']['cov'] ** 2) 
+    model['transition']['cov'] = jnp.diag(model['transition']['cov'] ** 2)
+    model['emission']['cov'] = jnp.diag(model['emission']['cov'] ** 2)
                     
     return model
