@@ -12,7 +12,7 @@ key = random.PRNGKey(0)
 from backward_ica.kalman import filter as kalman_filter, smooth as kalman_smooth
 from backward_ica.elbo import linear_gaussian_elbo
 from backward_ica.misc import format_p, format_q, increase_parameterization
-from backward_ica.hmm import LinearGaussianHMM
+from backward_ica.hmm import AdditiveGaussianHMM, LinearGaussianHMM
 
 #%% Generate dataset
 state_dim, obs_dim = 2, 3
@@ -26,7 +26,7 @@ q_raw = LinearGaussianHMM.get_random_model(key=subkeys[1], state_dim=state_dim, 
 
 p = format_p(p_raw)
 
-linear_gaussian_sampler = vmap(LinearGaussianHMM.sample_joint_sequence, in_axes=(0, None, None))
+linear_gaussian_sampler = vmap(AdditiveGaussianHMM.sample_joint_sequence, in_axes=(0, None, None))
 likelihood_via_kalman = lambda observations, model: kalman_filter(observations, model)[-1]
 
 evidence_sequences = vmap(likelihood_via_kalman, in_axes=(0, None))
@@ -91,4 +91,5 @@ mse_in_expectations = vmap(squared_error_expectation_against_true_states, in_axe
 print('Smoothed with q:', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, fitted_q, additive_functional), axis=0))
 print('Smoothed with p:', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, p, additive_functional), axis=0))
 
-#%% 
+#%% Trying the nonlinear case 
+
