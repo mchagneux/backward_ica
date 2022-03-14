@@ -1,3 +1,4 @@
+from sqlite3 import NotSupportedError
 from jax import lax, numpy as jnp, random, tree_util, vmap
 from jax.nn import relu
 from .misc import * 
@@ -9,21 +10,8 @@ def linear_map(matrix, offset, input):
 def nonlinear_map(params, input):
     return relu(params['weight'] @ input + params['bias'])
 
-mappings = {'linear':tree_util.Partial(linear_map), 
-            'nonlinear': tree_util.Partial(nonlinear_map)}
-
-# class Module1(equinox.module.Module):
-#     param1:np.ndarray
-#     def test(self, x):
-#         return self.param1 + x
-# class Module2(equinox.module.Module):
-#     internal_module:Module1
-
-
-
-# test = Module2(Module1(np.ones(2)))
-
-# print(jax.tree_util.tree_flatten(test))
+mappings = {'linear':('linear', tree_util.Partial(linear_map)), 
+            'nonlinear': ('nonlinear', tree_util.Partial(nonlinear_map))}
 
 @tree_util.register_pytree_node_class
 class GaussianKernel:
@@ -40,8 +28,11 @@ class GaussianKernel:
     def map(self, x):
         return self.mapping(self.mapping_params, x)
 
-    def sample(self, key, state):
-        return random.multivariate_normal(key=key, mean=self.map(state), cov=self.cov)
+    def sample(self, keys, condition):
+        def sample_step(key, condition, mapping, mapping_params, cov):
+            return random.multivariate_normal(key=key, mean=mapping(mapping_params, condition), cov=cov)
+
+        return vmap(sample_step, in_axes=(0, 0, None, None, None))(keys, condition, self.mapping, self.mapping_params, self.cov)
 
     def tree_flatten(self):
         return ((self.mapping, self.mapping_params, self.cov), self.mapping_type)
@@ -49,7 +40,14 @@ class GaussianKernel:
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children, aux_data)
-    
+
+    def sample_chain(self, keys, init_sample):
+        def chain_step(carry, x):
+            previous_sample, mapping, mapping_params, cov = carry 
+            key = x 
+            sample = random.multivariate_normal(key=key, mean=mapping(mapping_params, previous_sample), cov=cov)
+            return (sample, mapping, mapping_params, cov), sample
+        return lax.scan(f=chain_step, init=(init_sample, self.mapping, self.mapping_params, self.cov), xs=keys)[1]
 
 @tree_util.register_pytree_node_class
 class GaussianPrior:
@@ -57,8 +55,10 @@ class GaussianPrior:
         self.mean = mean
         self.cov = cov
     
-    def sample(self, key):
-        return random.multivariate_normal(key=key, mean=self.mean, cov=self.cov)
+    def sample(self, keys):
+        def sample_step(key, mean, cov):
+            return random.multivariate_normal(key=key, mean=mean, cov=cov)
+        return vmap(sample_step, in_axes=(0, None, None))(keys, self.mean, self.cov)
 
     def tree_flatten(self):
         return ((self.mean, self.cov), None)
@@ -68,7 +68,7 @@ class GaussianPrior:
         return cls(*children)
 
 @tree_util.register_pytree_node_class
-class HMM:
+class GaussianHMM:
     def __init__(self, prior:GaussianPrior, transition:GaussianKernel, emission:GaussianKernel):
         self.prior = prior
         self.transition = transition
@@ -81,36 +81,15 @@ class HMM:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
-
     def sample(self, key, length):
-
-        def sample_state(carry, x):
-            key = x
-            previous_state, transition = carry
-
-            new_state = transition.sample(key, previous_state)
-
-            return (new_state, transition), new_state
-
-        def sample_obs(key, emission, state):
-            return 
-
 
         keys = random.split(key, 2*length)
         keys.reshape((length,2))
-        init_state = self.prior.sample(key=keys[0,0])
-
-        _, state_samples = lax.scan(f=sample_state, 
-                                    init=(init_state, self.transition), 
-                                    xs=keys[0,1:])
-        
-        state_samples = jnp.concatenate((init_state[None,:], state_samples))
-
-        obs_samples = vmap(emission)
+        init_state = self.prior.sample(keys=keys[0,0])
+        state_samples = jnp.concatenate((init_state[None,:], self.transition.sample_chain(keys[0,1:], init_state)))
+        obs_samples = self.emission.sample(keys[1,:], condition=state_samples)
 
         return state_samples, obs_samples        
-
-
 
 
 def get_raw_linear_gaussian_model(key, state_dim=2, obs_dim=2):
@@ -132,8 +111,8 @@ def get_raw_linear_gaussian_model(key, state_dim=2, obs_dim=2):
     emission_cov = default_emission_cov
 
     return {'prior':{'mean':prior_mean, 'cov':prior_cov}, 
-            'transition': {'mapping':'linear', 'mapping_params': {'weight':transition_weight, 'bias': transition_bias},'cov':transition_cov},
-            'emission': {'mapping':'linear', 'mapping_params':{'weight':emission_weight, 'bias': emission_bias},'cov':emission_cov}}
+            'transition': {'mapping':mappings['linear'], 'mapping_params': {'weight':transition_weight, 'bias': transition_bias},'cov':transition_cov},
+            'emission': {'mapping':mappings['linear'], 'mapping_params':{'weight':emission_weight, 'bias': emission_bias},'cov':emission_cov}}
 
 
 
