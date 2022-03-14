@@ -8,12 +8,12 @@ from .misc import *
 config.update("jax_enable_x64", True)
 
 def predict(current_state_mean, current_state_cov, transition):
-    predictive_mean = transition['weight'] @ current_state_mean + transition['bias']
+    predictive_mean = transition['map'](transition['params'], current_state_mean)
     predictive_cov = transition['weight'] @ current_state_cov @ transition['weight'].T + transition['cov']
     return predictive_mean, predictive_cov
 
 def update(predictive_mean, predictive_cov, observation, emission):
-    predicted_observation_mean = emission['weight'] @ predictive_mean + emission['bias']
+    predicted_observation_mean = emission['map'](emission['params'], predictive_mean)
     predicted_observation_cov = emission['weight'] @ predictive_cov @ emission['weight'].T + emission['cov']
     kalman_gain = predictive_cov  @ emission['weight'].T @ jnp.linalg.inv(predicted_observation_cov)
 
@@ -33,7 +33,7 @@ def init(observation, prior, emission):
 
 def log_likelihood_term(predictive_mean, predictive_cov, observation, emission):
     return jax_gaussian_logpdf(x=observation, 
-                        mean=emission['weight'] @ predictive_mean + emission['bias'], 
+                        mean=emission['map'](emission['params'], predictive_mean), 
                         cov=emission['weight'] @ predictive_cov @ emission['weight'].T + emission['cov'])
 
 
