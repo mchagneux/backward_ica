@@ -3,12 +3,15 @@ from typing import *
 from jax import vmap, lax, config, numpy as jnp
 from jax.tree_util import register_pytree_node_class
 
+from backward_ica.hmm import GaussianHMM
+
 from .kalman import filter_step as kalman_filter_step, init as kalman_init
-from .misc import format_p, format_q
+from .utils import *
 from typing import * 
 config.update("jax_enable_x64", True)
 
 
+### Some abstractions for frequently used objects when computing elbo via backwards decomposition
 
 @dataclass(init=True, repr=True)
 @register_pytree_node_class
@@ -43,7 +46,7 @@ class QuadForm:
         
 @dataclass(init=True, repr=True)
 @register_pytree_node_class
-class Filtering:
+class FilteringParams:
 
     mean:jnp.ndarray
     cov:jnp.ndarray
@@ -60,7 +63,7 @@ class Filtering:
 
 @dataclass(init=True, repr=True)
 @register_pytree_node_class
-class Backward:
+class BackwardParams:
 
     A:jnp.ndarray
     a:jnp.ndarray
@@ -90,39 +93,39 @@ def _constant_terms_from_log_gaussian(dim:int, det_cov:float)->float:
 
     return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
 
-def _expect_obs_term_under_backward(obs_term, q_backward):
+def _expect_obs_term_under_backward(obs_term, q_backward:BackwardParams):
     return _expect_quad_form_under_backward(obs_term, q_backward)
 
-def _expect_obs_term_under_filtering(obs_term, q_filtering):
+def _expect_obs_term_under_filtering(obs_term, q_filtering:FilteringParams):
     return _expect_quad_form_under_filtering(obs_term, q_filtering)
 
-def _get_obs_term(observation, p_emission):
+def _get_obs_term(observation, p_emission:GaussianKernel):
     
-    return QuadForm(A=p_emission['weight'],
-                    b=p_emission['bias'] - observation,
-                    Omega=- 0.5*p_emission['prec'])
+    return QuadForm(A=p_emission.weight,
+                    b=p_emission.bias - observation,
+                    Omega=- 0.5*p_emission.prec)
 
-def _init_filtering(observation, q_prior, q_emission):
-    return Filtering(*kalman_init(observation, q_prior, q_emission)[2:])
+def _init_filtering(observation, q_prior:Gaussian, q_emission:GaussianKernel):
+    return FilteringParams(*kalman_init(observation, q_prior, q_emission)[2:])
 
-def _update_filtering(observation, q_filtering, q_transition, q_emission):
-    return Filtering(*kalman_filter_step(*q_filtering, observation, q_transition, q_emission)[2:])
+def _update_filtering(observation, q_filtering:FilteringParams, q_transition:GaussianKernel, q_emission:GaussianKernel):
+    return FilteringParams(*kalman_filter_step(*q_filtering, observation, q_transition, q_emission)[2:])
 
-def _update_backward(q_filtering, q_transition):
+def _update_backward(q_filtering:FilteringParams, q_transition:GaussianKernel):
 
     filtering_prec = jnp.linalg.inv(q_filtering.cov)
 
-    backward_prec = q_transition['weight'].T @ q_transition['prec'] @ q_transition['weight'] + filtering_prec
+    backward_prec = q_transition.weight.T @ q_transition.prec @ q_transition.weight + filtering_prec
 
     cov = jnp.linalg.inv(backward_prec)
 
-    common_term = q_transition['weight'].T @ q_transition['prec'] 
+    common_term = q_transition.weight.T @ q_transition.prec
     A = cov @ common_term
-    a = cov @ (filtering_prec @ q_filtering.mean - common_term @  q_transition['bias'])
+    a = cov @ (filtering_prec @ q_filtering.mean - common_term @  q_transition.bias)
 
-    return Backward(A,a,cov)
+    return BackwardParams(A,a,cov)
 
-def _integrate_previous_terms(integrate_up_to:int, quadratic_terms:Collection[QuadForm], nonlinear_term, q_backward):
+def _integrate_previous_terms(integrate_up_to:int, quadratic_terms:Collection[QuadForm], nonlinear_term, q_backward:BackwardParams):
 
     quad_forms_transition, quad_forms_emission = quadratic_terms
 
@@ -140,31 +143,31 @@ def _integrate_previous_terms(integrate_up_to:int, quadratic_terms:Collection[Qu
     return jnp.sum(constants0) + jnp.sum(constants1) + constants2, quad_forms_transition, quad_forms_emission
 
 
-def _init_V(observation, p):
+def _init_V(observation, p:GaussianHMM):
 
-    constants_V = _constant_terms_from_log_gaussian(p['transition']['cov'].shape[0], jnp.linalg.det(p['prior']['cov'])) + \
-                  _constant_terms_from_log_gaussian(p['emission']['cov'].shape[0], p['emission']['det_cov'])
+    constants_V = _constant_terms_from_log_gaussian(p.transition.cov.shape[0], jnp.linalg.det(p.prior.cov)) + \
+                  _constant_terms_from_log_gaussian(p.emission.cov.shape[0], p.emission.det_cov)
     
-    init_transition_term = QuadForm(A=jnp.eye(p['transition']['cov'].shape[0]),
-                                    b=-p['prior']['mean'], 
-                                    Omega=-0.5 * jnp.linalg.inv(p['prior']['cov']))
-    nonlinear_term = _get_obs_term(observation, p['emission'])
+    init_transition_term = QuadForm(A=jnp.eye(p.transition.cov.shape[0]),
+                                    b=-p.prior.mean, 
+                                    Omega=-0.5 * jnp.linalg.inv(p.prior.cov))
+    nonlinear_term = _get_obs_term(observation, p.emission)
 
     return constants_V, init_transition_term, nonlinear_term 
 
-def _expect_transition_quad_form_under_backward(q_backward, p_transition):
+def _expect_transition_quad_form_under_backward(q_backward:BackwardParams, p_transition:GaussianKernel):
     # expectation of the quadratic form that appears in the log of the state transition density
 
-    A=p_transition['weight'] @ q_backward.A - jnp.eye(p_transition['cov'].shape[0])
-    b=p_transition['weight'] @ q_backward.a + p_transition['bias']
-    Omega = -0.5*p_transition['prec']
+    A=p_transition.weight @ q_backward.A - jnp.eye(p_transition.cov.shape[0])
+    b=p_transition.weight @ q_backward.a + p_transition.bias
+    Omega = -0.5*p_transition.prec
 
     return QuadForm(A,b,Omega)
 
 def _no_integration(quad_form, q_backward):
     return 0.0, quad_form
 
-def _expect_quad_form_under_backward(quad_form:QuadForm, q_backward:Backward):
+def _expect_quad_form_under_backward(quad_form:QuadForm, q_backward:BackwardParams):
     # the result is still a quadratic forms with new parameters, following the formula for expected values of quadratic forms  
     Sigma = quad_form.A @ q_backward.cov @ quad_form.A.T
     constant = jnp.trace(quad_form.Omega @ Sigma)
@@ -173,41 +176,41 @@ def _expect_quad_form_under_backward(quad_form:QuadForm, q_backward:Backward):
     Omega = quad_form.Omega
     return constant, QuadForm(A,b,Omega)
 
-def _expect_quad_form_under_backward_masked(mask, quad_form:QuadForm, q_backward:Backward):
+def _expect_quad_form_under_backward_masked(mask, quad_form:QuadForm, q_backward:BackwardParams):
     # if mask: 
     #     return _expect_quad_form_under_backward(quad_form, q_backward)
 
     # return _no_integration(quad_form, q_backward)
     return lax.cond(mask, _expect_quad_form_under_backward, _no_integration, quad_form, q_backward)
 
-def _update_V(observation, integrate_up_to, quadratic_terms, nonlinear_term, q_backward:Backward, p):
+def _update_V(observation, integrate_up_to, quadratic_terms, nonlinear_term, q_backward:BackwardParams, p:GaussianHMM):
 
-    dim_z, dim_x = p['transition']['cov'].shape[0], p['emission']['cov'].shape[0]
+    dim_z, dim_x = p.transition.cov.shape[0], p.emission.cov.shape[0]
 
     # integrating all previous terms up to current interation
     constants, quad_forms_transition, quad_forms_emission =  _integrate_previous_terms(integrate_up_to, quadratic_terms, nonlinear_term, q_backward)
 
     # the backward term integrated under itself integrates to constant terms 
     constants +=  - _constant_terms_from_log_gaussian(dim_z, jnp.linalg.det(q_backward.cov)) \
-                +  0.5 * dim_z - 0.5 * jnp.trace(p['transition']['prec'] @ p['transition']['weight'] @ q_backward.cov @ p['transition']['weight'].T) 
+                +  0.5 * dim_z - 0.5 * jnp.trace(p.transition.prec @ p.transition.weight @ q_backward.cov @ p.transition.weight.T) 
 
 
 
     # integrating new transition term under new backward
-    constants += _constant_terms_from_log_gaussian(dim_z, p['transition']['det_cov']) 
-    new_quad_form_transition = _expect_transition_quad_form_under_backward(q_backward, p['transition'])
+    constants += _constant_terms_from_log_gaussian(dim_z, p.transition.det_cov) 
+    new_quad_form_transition = _expect_transition_quad_form_under_backward(q_backward, p.transition)
     quad_forms_transition.set(new_quad_form_transition, index=integrate_up_to+1) 
 
     # adding observation term that will be integrated at next step 
-    constants += _constant_terms_from_log_gaussian(dim_x, p['emission']['det_cov'])
-    nonlinear_term = _get_obs_term(observation, p['emission']) 
+    constants += _constant_terms_from_log_gaussian(dim_x, p.emission.det_cov)
+    nonlinear_term = _get_obs_term(observation, p.emission) 
 
     return constants, [quad_forms_transition, quad_forms_emission], nonlinear_term
 
-def _expect_quad_form_under_filtering(quad_form, q_filtering):
+def _expect_quad_form_under_filtering(quad_form:QuadForm, q_filtering:FilteringParams):
     return jnp.trace(quad_form.Omega @ quad_form.A @ q_filtering.cov @ quad_form.A.T) + quad_form.evaluate(q_filtering.mean)
 
-def _expect_V_under_filtering(constants_V, quadratic_terms, nonlinear_term, q_filtering:Filtering):
+def _expect_V_under_filtering(constants_V, quadratic_terms, nonlinear_term, q_filtering:FilteringParams):
     result = constants_V
 
     quad_forms_transition, quad_forms_emission = quadratic_terms
@@ -229,18 +232,18 @@ def _expect_V_under_filtering(constants_V, quadratic_terms, nonlinear_term, q_fi
 
     return result
 
-def init(observations, p, q):
+def init(observations, p:GaussianHMM, q:GaussianHMM):
 
     constants_V, init_transition_term, nonlinear_term = _init_V(observations[0], p)
-    q_filtering = _init_filtering(observations[0], q['prior'], q['emission'])
-    dim_z = p['transition']['cov'].shape[0]
+    q_filtering = _init_filtering(observations[0], q.prior, q.emission)
+    dim_z = p.transition.cov.shape[0]
 
     num_terms = len(observations)
     quad_forms_transition = QuadForm(A=jnp.empty(shape=(num_terms, dim_z, dim_z)), 
                                     b=jnp.empty(shape=(num_terms, dim_z)),
                                     Omega=jnp.empty(shape=(num_terms, dim_z, dim_z))).set(init_transition_term,index=0)
 
-    dim_x = p['emission']['cov'].shape[0]
+    dim_x = p.emission.cov.shape[0]
 
     quad_forms_emission = QuadForm(A=jnp.empty(shape=(num_terms, dim_x, dim_z)),
                                 b=jnp.empty(shape=(num_terms, dim_x)),
@@ -249,8 +252,8 @@ def init(observations, p, q):
     quadratic_terms = [quad_forms_transition, quad_forms_emission]
     return constants_V, quadratic_terms, nonlinear_term, q_filtering
 
-def _update(observation, integrate_up_to, quadratic_terms, nonlinear_term, q_filtering, p, q):
-    q_backward = _update_backward(q_filtering, q['transition'])
+def _update(observation, integrate_up_to, quadratic_terms, nonlinear_term, q_filtering:FilteringParams, p:GaussianHMM, q:GaussianHMM):
+    q_backward = _update_backward(q_filtering, q.transition)
     constants, quadratic_terms, nonlinear_term = _update_V(observation, 
                                                     integrate_up_to,
                                                     quadratic_terms, 
@@ -258,41 +261,14 @@ def _update(observation, integrate_up_to, quadratic_terms, nonlinear_term, q_fil
                                                     q_backward, 
                                                     p)
 
-    q_filtering = _update_filtering(observation, q_filtering, q['transition'], q['emission'])
+    q_filtering = _update_filtering(observation, q_filtering, q.transition, q.emission)
 
     return constants, quadratic_terms, nonlinear_term, q_filtering
 
-def prepare_p(p_raw):
+def linear_gaussian_elbo(observations, p_raw, q_raw, p_aux_info, q_aux_info):
 
-    p = format_p(p_raw)
-
-    p['transition']['prec'] =  jnp.linalg.inv(p['transition']['cov'])
-    p['transition']['det_cov'] = jnp.linalg.det(p['transition']['cov'])
-
-    p['emission']['prec'] =  jnp.linalg.inv(p['emission']['cov'])
-    p['emission']['det_cov'] = jnp.linalg.det(p['emission']['cov'])
-
-
-    return p
-
-def prepare_q(q_raw):
-
-    q = format_q(q_raw)
-
-    q['transition']['prec'] =  jnp.linalg.inv(q['transition']['cov'])
-    q['transition']['det_cov'] = jnp.linalg.det(q['transition']['cov'])
-
-    q['emission']['prec'] =  jnp.linalg.inv(q['emission']['cov'])
-    q['emission']['det_cov'] = jnp.linalg.det(q['emission']['cov'])
-
-
-    return q
-
-def linear_gaussian_elbo(p_raw, q_raw, observations):
-
-    p = prepare_p(p_raw)
-    # q = prepare_q(q_raw) 
-    q = prepare_p(q_raw) # we impose the same conditioning on q and p for now 
+    p = GaussianHMM.build_from_dict(p_raw, p_aux_info)
+    q = GaussianHMM.build_from_dict(q_raw, q_aux_info) 
     
     constants_V, quadratic_terms, nonlinear_term, q_filtering = init(observations, p, q)
 
@@ -326,7 +302,7 @@ def linear_gaussian_elbo(p_raw, q_raw, observations):
                                 xs=(observations, integrate_up_to_array))
 
     constants_V += jnp.sum(constants) 
-    constants_V += -_constant_terms_from_log_gaussian(p['transition']['cov'].shape[0], jnp.linalg.det(q_filtering.cov))
+    constants_V += -_constant_terms_from_log_gaussian(p.transition.cov.shape[0], jnp.linalg.det(q_filtering.cov))
 
     return _expect_V_under_filtering(constants_V, quadratic_terms, nonlinear_term, q_filtering)
     

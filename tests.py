@@ -4,6 +4,7 @@ from jax import numpy as jnp, random, config, jit, vmap, value_and_grad
 import optax
 
 import matplotlib.pyplot as plt
+from backward_ica.hmm import GaussianHMM
 
 config.update("jax_enable_x64", True)
 key = random.PRNGKey(0)
@@ -11,41 +12,40 @@ key = random.PRNGKey(0)
 
 from backward_ica.kalman import filter as kalman_filter, smooth as kalman_smooth
 from backward_ica.elbo import linear_gaussian_elbo
-from backward_ica.misc import format_p, format_q, increase_parameterization
-from backward_ica.hmm import AdditiveGaussianHMM, LinearGaussianHMM
 
 #%% Generate dataset
 state_dim, obs_dim = 2, 3
 num_sequences = 30
-length = 16
+sequences_length = 16
 
-key, *subkeys = random.split(key, 3)
+key, subkey = random.split(key, 2)
 
-p_raw = LinearGaussianHMM.get_random_model(key=subkeys[0], state_dim=state_dim, obs_dim=obs_dim)
-q_raw = LinearGaussianHMM.get_random_model(key=subkeys[1], state_dim=state_dim, obs_dim=obs_dim)
+p_raw, p_aux_info = GaussianHMM.get_random_params(subkey, state_dim, obs_dim, 
+                                                transition_mapping_type='linear', 
+                                                emission_mapping_type='linear')
 
-p = format_p(p_raw)
+hmm = GaussianHMM.build_from_dict(p_raw, p_aux_info)
 
-linear_gaussian_sampler = vmap(AdditiveGaussianHMM.sample_joint_sequence, in_axes=(0, None, None))
-likelihood_via_kalman = lambda observations, model: kalman_filter(observations, model)[-1]
+key, *subkeys = random.split(key, num_sequences+1)
+state_samples, obs_samples = vmap(hmm.sample, in_axes=(0, None))(jnp.array(subkeys), sequences_length)
 
-evidence_sequences = vmap(likelihood_via_kalman, in_axes=(0, None))
-elbo_sequences = jit(vmap(linear_gaussian_elbo, in_axes=(None, None, 0)))
+evidence_sequences = vmap(lambda observations, hmm: kalman_filter(observations, hmm)[-1], in_axes=(0, None))(obs_samples, hmm)
+elbo_sequences = vmap(linear_gaussian_elbo, in_axes=(0, None, None, None, None))(obs_samples, p_raw, p_raw, p_aux_info, p_aux_info)
 
-key, *subkeys = random.split(key, 1+num_sequences)
-state_sequences, obs_sequences = linear_gaussian_sampler(jnp.array(subkeys), p, length)
-average_evidence_dataset = jnp.mean(evidence_sequences(obs_sequences, p))
+mean_evidence = jnp.mean(evidence_sequences)
+print('Sanity check ELBO computation:',jnp.abs(jnp.sum(evidence_sequences) - jnp.sum(elbo_sequences)))
 
-#%% Sanity check 
-print('Difference elbo evidence when q=p:', jnp.mean(evidence_sequences(obs_sequences, p)) - \
-            jnp.mean(elbo_sequences(p_raw, p_raw, obs_sequences)))
+#%% Optimization
+key, subkey = random.split(key, 2)
+q_raw, q_aux_info = GaussianHMM.get_random_params(subkey, state_dim, obs_dim, 
+                                                transition_mapping_type='linear', emission_mapping_type='linear')
 
-#%% Optimization 
+loss = partial(linear_gaussian_elbo, p_aux_info=p_aux_info, q_aux_info=q_aux_info)
 optimizer = optax.adam(learning_rate=-1e-3)
 
 @jit
 def step(p_raw, q_raw, opt_state, batch):
-    loss_value, grads = value_and_grad(linear_gaussian_elbo, argnums=1)(p_raw, q_raw, batch)
+    loss_value, grads = value_and_grad(loss, argnums=2)(batch, p_raw, q_raw)
     updates, opt_state = optimizer.update(grads, opt_state, q_raw)
     q_raw = optax.apply_updates(q_raw, updates)
     return p_raw, q_raw, opt_state, -loss_value
@@ -56,20 +56,20 @@ def fit(p_raw, q_raw, optimizer: optax.GradientTransformation) -> optax.Params:
     opt_state = optimizer.init(q_raw)
 
     eps = jnp.inf
-    old_mean_epoch_elbo = -jnp.mean(elbo_sequences(p_raw, q_raw, obs_sequences))
+    old_mean_epoch_elbo = - jnp.mean(vmap(loss, in_axes=(0,None,None))(obs_samples, p_raw, q_raw))
     epoch_nb = 0
-    mean_elbos = [old_mean_epoch_elbo - average_evidence_dataset]
+    mean_elbos = [old_mean_epoch_elbo - mean_evidence]
     while eps > 1e-2:
     # for _ in range(10):
         epoch_elbo = 0.0
-        for batch in obs_sequences: 
+        for batch in obs_samples: 
             p_raw, q_raw, opt_state, elbo_value = step(p_raw, q_raw, opt_state, batch)
             epoch_elbo += elbo_value
-        mean_epoch_elbo = epoch_elbo/len(obs_sequences)
+        mean_epoch_elbo = epoch_elbo/len(obs_samples)
         
         eps = jnp.abs(mean_epoch_elbo - old_mean_epoch_elbo)
         epoch_nb+=1
-        mean_elbos.append(mean_epoch_elbo - average_evidence_dataset)
+        mean_elbos.append(mean_epoch_elbo - mean_evidence)
         old_mean_epoch_elbo = mean_epoch_elbo
     return q_raw, mean_elbos
 
@@ -80,7 +80,7 @@ plt.xlabel('Epoch nb'),
 plt.ylabel('$|\mathcal{L}(\\theta,\\phi)- \log p_\\theta(x)|$')
 plt.show()
 
-fitted_q = format_p(fitted_q_raw)
+q_hmm = GaussianHMM.build_from_dict(fitted_q_raw, q_aux_info)
 
 def squared_error_expectation_against_true_states(states, observations, approximate_linear_gaussian_model, additive_functional):
     smoothed_states, _ = kalman_smooth(observations, approximate_linear_gaussian_model)
@@ -88,8 +88,7 @@ def squared_error_expectation_against_true_states(states, observations, approxim
 
 additive_functional = partial(jnp.sum, axis=0)
 mse_in_expectations = vmap(squared_error_expectation_against_true_states, in_axes=(0,0, None, None))
-print('Smoothed with q:', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, fitted_q, additive_functional), axis=0))
-print('Smoothed with p:', jnp.mean(mse_in_expectations(state_sequences, obs_sequences, p, additive_functional), axis=0))
-
+print('Smoothed with q:', jnp.mean(mse_in_expectations(state_samples, obs_samples, q_hmm, additive_functional), axis=0))
+print('Smoothed with p:', jnp.mean(mse_in_expectations(state_samples, obs_samples, hmm, additive_functional), axis=0))
 #%% Trying the nonlinear case 
 

@@ -1,120 +1,102 @@
-from sqlite3 import NotSupportedError
-from jax import lax, numpy as jnp, random, tree_util, vmap
-from jax.nn import relu
-from .misc import * 
-
-
-def linear_map(matrix, offset, input):
-    return matrix @ input + offset
-
-def nonlinear_map(params, input):
-    return relu(params['weight'] @ input + params['bias'])
-
-mappings = {'linear':('linear', tree_util.Partial(linear_map)), 
-            'nonlinear': ('nonlinear', tree_util.Partial(nonlinear_map))}
-
-@tree_util.register_pytree_node_class
-class GaussianKernel:
-
-    def __init__(self, mapping, mapping_params, cov, mapping_type=None):
-        self.mapping = mapping
-        self.mapping_params = mapping_params
-        self.cov = cov
-        self.mapping_type = mapping_type
-        if mapping_type == "linear":
-            self.weight = self.mapping_params['weight']
-            self.bias = self.mapping_params['bias']
-            
-    def map(self, x):
-        return self.mapping(self.mapping_params, x)
-
-    def sample(self, keys, condition):
-        def sample_step(key, condition, mapping, mapping_params, cov):
-            return random.multivariate_normal(key=key, mean=mapping(mapping_params, condition), cov=cov)
-
-        return vmap(sample_step, in_axes=(0, 0, None, None, None))(keys, condition, self.mapping, self.mapping_params, self.cov)
-
-    def tree_flatten(self):
-        return ((self.mapping, self.mapping_params, self.cov), self.mapping_type)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children, aux_data)
-
-    def sample_chain(self, keys, init_sample):
-        def chain_step(carry, x):
-            previous_sample, mapping, mapping_params, cov = carry 
-            key = x 
-            sample = random.multivariate_normal(key=key, mean=mapping(mapping_params, previous_sample), cov=cov)
-            return (sample, mapping, mapping_params, cov), sample
-        return lax.scan(f=chain_step, init=(init_sample, self.mapping, self.mapping_params, self.cov), xs=keys)[1]
-
-@tree_util.register_pytree_node_class
-class GaussianPrior:
-    def __init__(self, mean, cov):
-        self.mean = mean
-        self.cov = cov
-    
-    def sample(self, keys):
-        def sample_step(key, mean, cov):
-            return random.multivariate_normal(key=key, mean=mean, cov=cov)
-        return vmap(sample_step, in_axes=(0, None, None))(keys, self.mean, self.cov)
-
-    def tree_flatten(self):
-        return ((self.mean, self.cov), None)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
+from jax import numpy as jnp, random, tree_util
+from .utils import _conditionnings, _mappings, Gaussian, GaussianKernel, hmm_samples
+import copy 
 
 @tree_util.register_pytree_node_class
 class GaussianHMM:
-    def __init__(self, prior:GaussianPrior, transition:GaussianKernel, emission:GaussianKernel):
+    def __init__(self, prior:Gaussian, transition:GaussianKernel, emission:GaussianKernel):
         self.prior = prior
         self.transition = transition
         self.emission = emission
         
     def tree_flatten(self):
-        return ((self.prior, self.transition, self.emission))
+        return ((self.prior, self.transition, self.emission), None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
+        return cls(*children)   
 
     def sample(self, key, length):
+        state_key, obs_key = random.split(key, 2)
+        state_keys = random.split(state_key, length)
+        obs_keys = random.split(obs_key, length)
+        return hmm_samples(state_keys, obs_keys, self.prior.get_sampler(), self.transition.get_sampler(), self.emission.get_sampler())
 
-        keys = random.split(key, 2*length)
-        keys.reshape((length,2))
-        init_state = self.prior.sample(keys=keys[0,0])
-        state_samples = jnp.concatenate((init_state[None,:], self.transition.sample_chain(keys[0,1:], init_state)))
-        obs_samples = self.emission.sample(keys[1,:], condition=state_samples)
+    @staticmethod
+    def build_from_dict(raw_params, aux_info):
+        params = copy.deepcopy(raw_params)
+        for model_part in raw_params.keys():
+            conditionnings = aux_info[model_part]['conditionnings']
+            for component_name, conditionning in conditionnings.items():
+                for param_name, conditionning_type in conditionning.items():
+                    params[model_part][component_name][param_name] = _conditionnings[conditionning_type](params[model_part][component_name][param_name])
 
-        return state_samples, obs_samples        
+        mean = params['prior']['mean_params']
+        cov = params['prior']['cov_params']['cov']
+        prior = Gaussian(mean=mean, 
+                        cov=cov)
+        
+        mapping_type = aux_info['transition']['mapping_type']
+        mapping = _mappings[mapping_type]
+        mapping_params = params['transition']['mapping_params']
+        cov = params['transition']['cov_params']['cov']
 
+        transition = GaussianKernel(mapping, mapping_params, cov, mapping_type)
 
-def get_raw_linear_gaussian_model(key, state_dim=2, obs_dim=2):
-    default_state_cov = 1e-2*jnp.ones(state_dim)
-    default_emission_cov = 1e-2*jnp.ones(obs_dim)
+        mapping_type = aux_info['emission']['mapping_type']
+        mapping = _mappings[mapping_type]
+        mapping_params = params['emission']['mapping_params']
+        cov = params['emission']['cov_params']['cov']
 
-    key, *subkeys = random.split(key, 2)
-    prior_mean = random.uniform(subkeys[0], shape=(state_dim,))
-    prior_cov = default_state_cov
+        emission = GaussianKernel(mapping, mapping_params, cov, mapping_type)
 
-    key, *subkeys = random.split(key, 3)
-    transition_weight = random.uniform(subkeys[0], shape=(state_dim,))
-    transition_bias = random.uniform(subkeys[1], shape=(state_dim,))
-    transition_cov = default_state_cov
+            
+        return GaussianHMM(prior, transition, emission)
 
-    key, *subkeys = random.split(key, 3)
-    emission_weight = random.uniform(subkeys[0], shape=(obs_dim,state_dim))
-    emission_bias = random.uniform(subkeys[1], shape=(obs_dim,))
-    emission_cov = default_emission_cov
+    @staticmethod
+    def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='linear', emission_mapping_type='linear'):
+        default_state_cov = 1e-2*jnp.ones(state_dim)
+        default_emission_cov = 1e-2*jnp.ones(obs_dim)
 
-    return {'prior':{'mean':prior_mean, 'cov':prior_cov}, 
-            'transition': {'mapping':mappings['linear'], 'mapping_params': {'weight':transition_weight, 'bias': transition_bias},'cov':transition_cov},
-            'emission': {'mapping':mappings['linear'], 'mapping_params':{'weight':emission_weight, 'bias': emission_bias},'cov':emission_cov}}
+        key, *subkeys = random.split(key, 2)
+        prior_mean = random.uniform(subkeys[0], shape=(state_dim,))
+        prior_cov = default_state_cov
+        prior = {'mean_params':prior_mean, 
+                'cov_params':{'cov':prior_cov}}
+        prior_aux_info = {'conditionnings':{'cov_params':{'cov':'diagonal_nonnegative'}}}
 
+        key, *subkeys = random.split(key, 3)
+        if transition_mapping_type == 'linear':
+            transition_weight = random.uniform(subkeys[0], shape=(state_dim,))
+            transition_bias = random.uniform(subkeys[1], shape=(state_dim,))
+            transition_cov = default_state_cov
+            transition = {'mapping_params': {'weight':transition_weight, 'bias': transition_bias},
+                        'cov_params':{'cov':transition_cov}}
+            conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'},
+                            'mapping_params':{'weight':'diagonal'}}
+            transition_aux_info = {'conditionnings':conditionnings, 
+                                'mapping_type':transition_mapping_type}
 
+        key, *subkeys = random.split(key, 3)
+        if emission_mapping_type == 'linear':
+            emission_weight = random.uniform(subkeys[0], shape=(obs_dim, state_dim))
+            emission_bias = random.uniform(subkeys[1], shape=(obs_dim,))
+            emission_cov = default_emission_cov
+            emission = {'mapping_params':{'weight':emission_weight, 'bias': emission_bias},
+                        'cov_params':{'cov':emission_cov}}
+            conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'}}
 
+            emission_aux_info = {'conditionnings':conditionnings, 
+                                'mapping_type':emission_mapping_type}
+
+        raw_params = {'prior':prior, 
+                'transition': transition,
+                'emission':emission}
+
+        aux_info = {'prior':prior_aux_info, 
+                'transition':transition_aux_info, 
+                'emission':emission_aux_info}
+
+        return raw_params, aux_info
         
 
