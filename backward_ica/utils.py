@@ -23,7 +23,6 @@ class GaussianKernel:
         self.mapping_params = mapping_params
         self.weight = None 
         self.bias = None 
-
         if mapping_type == "linear":
             self.weight = self.mapping_params['weight']
             self.bias = self.mapping_params['bias']
@@ -54,8 +53,7 @@ class GaussianKernel:
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         new_instance = cls(*children, None, False)
-        new_instance.weight, new_instance.bias = aux_data[:2]
-        new_instance.prec, new_instance.det_cov = aux_data[2:]
+        new_instance.weight, new_instance.bias, new_instance.prec, new_instance.det_cov = aux_data
         return new_instance
 
 @tree_util.register_pytree_node_class

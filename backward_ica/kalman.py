@@ -112,7 +112,7 @@ def filter_pykalman(observations, hmm:GaussianHMM):
 
     return engine.filter(observations)
 
-def smooth_pykalman(observations, hmm):
+def smooth_pykalman(observations, hmm:GaussianHMM):
     engine = KalmanFilter(transition_matrices=hmm.transition.weight, 
                         observation_matrices=hmm.emission.weight,
                         transition_covariance=hmm.transition.cov,
