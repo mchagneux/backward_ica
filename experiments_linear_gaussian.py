@@ -21,8 +21,8 @@ sequences_length = 16
 key, subkey = random.split(key, 2)
 
 p_params, p_aux = hmm.get_random_params(subkey, state_dim, obs_dim, 
-                                                transition_mapping_type='linear', 
-                                                emission_mapping_type='linear')
+                                        transition_mapping_type='linear', 
+                                        emission_mapping_type='linear')
 
 p = hmm.GaussianHMM.build_from_dict(p_params, p_aux)
 
@@ -30,7 +30,7 @@ key, *subkeys = random.split(key, num_sequences+1)
 state_samples, obs_samples = vmap(p.sample, in_axes=(0, None))(jnp.array(subkeys), sequences_length)
 
 evidence_sequences = vmap(lambda observations, p: kalman_filter(observations, p)[-1], in_axes=(0, None))(obs_samples, p)
-elbo_sequences = vmap(get_elbo(p_aux), in_axes=(0, None, None, None, None))(obs_samples, p_params, p_params)
+elbo_sequences = vmap(get_elbo(p_aux, p_aux), in_axes=(0, None, None))(obs_samples, p_params, p_params)
 
 mean_evidence = jnp.mean(evidence_sequences)
 print('Sanity check ELBO computation:',jnp.abs(jnp.sum(evidence_sequences) - jnp.sum(elbo_sequences)))
@@ -40,7 +40,7 @@ key, subkey = random.split(key, 2)
 q_params, q_aux = hmm.get_random_params(subkey, state_dim, obs_dim, 
                                                 transition_mapping_type='linear', emission_mapping_type='linear')
 
-loss = partial(get_elbo(p_aux, q_aux), p_aux=p_aux, q_aux=q_aux)
+loss = get_elbo(p_aux, q_aux)
 optimizer = optax.adam(learning_rate=-1e-3)
 
 @jit

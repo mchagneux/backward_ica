@@ -325,7 +325,7 @@ class LinearELBO(BackwardELBO):
         return expect_quad_form_under_backward(obs_term, q_backward)
 
     @classmethod
-    def _expect_obs_term_under_filtering(obs_term, q_filtering:FilteringParams):
+    def _expect_obs_term_under_filtering(cls, obs_term, q_filtering:FilteringParams):
         return expect_quad_form_under_filtering(obs_term, q_filtering)
     
     @classmethod
