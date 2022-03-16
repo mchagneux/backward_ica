@@ -9,18 +9,19 @@ class GaussianHMM:
         self.transition = transition
         self.emission = emission
         
-    def tree_flatten(self):
-        return ((self.prior, self.transition, self.emission), None)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)   
 
     def sample(self, key, length):
         state_key, obs_key = random.split(key, 2)
         state_keys = random.split(state_key, length)
         obs_keys = random.split(obs_key, length)
         return hmm_samples(state_keys, obs_keys, self.prior.get_sampler(), self.transition.get_sampler(), self.emission.get_sampler())
+
+    def tree_flatten(self):
+        return ((self.prior, self.transition, self.emission), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)   
 
     @staticmethod
     def build_from_dict(raw_params, aux_info):
@@ -40,14 +41,12 @@ class GaussianHMM:
         mapping = _mappings[mapping_type]
         mapping_params = params['transition']['mapping_params']
         cov = params['transition']['cov_params']['cov']
-
         transition = GaussianKernel(mapping, mapping_params, cov, mapping_type)
 
         mapping_type = aux_info['emission']['mapping_type']
         mapping = _mappings[mapping_type]
         mapping_params = params['emission']['mapping_params']
         cov = params['emission']['cov_params']['cov']
-
         emission = GaussianKernel(mapping, mapping_params, cov, mapping_type)
 
             

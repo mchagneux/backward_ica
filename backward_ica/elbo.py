@@ -142,7 +142,6 @@ def _integrate_previous_terms(integrate_up_to:int, quadratic_terms:Collection[Qu
 
     return jnp.sum(constants0) + jnp.sum(constants1) + constants2, quad_forms_transition, quad_forms_emission
 
-
 def _init_V(observation, p:GaussianHMM):
 
     constants_V = _constant_terms_from_log_gaussian(p.transition.cov.shape[0], jnp.linalg.det(p.prior.cov)) + \

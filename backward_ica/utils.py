@@ -1,12 +1,13 @@
 from jax import vmap, tree_util, nn, numpy as jnp, lax, random
 from functools import partial 
 
-# common stateful mappings to define models 
+## Common stateful mappings to define models, wrapped as Pytrees so that they're allowed in all jax transformations
+
 _mappings = {'linear':(tree_util.Partial(lambda params, input: params['weight'] @ input + params['bias'])), 
             'nonlinear': (tree_util.Partial(lambda params, input: nn.relu(params['weight'] @ input + params['bias'])))}
 
 
-# factory of parametrizations, e.g. for conditionned matrices  
+## Factory of parametrizations, e.g. for conditionned matrices  
 _conditionnings = {'diagonal_nonnegative':lambda raw_param: jnp.diag(raw_param) ** 2,
                 'diagonal': lambda raw_param: jnp.diag(raw_param)}
 
@@ -92,6 +93,8 @@ def iid_samples(keys, sampler):
 def conditional_samples(keys, conditional_sampler, conditionings):
     return vmap(conditional_sampler, in_axes=(0,0))(keys, conditionings) 
 
+def conditional_samples_from_single_condition(keys, conditional_sampler, conditioning):
+    return vmap(conditional_sampler, in_axes=(0,None))(keys, conditioning) 
 
 def autoregressive_samples(keys, conditional_sampler, init_conditioning):
     def _autoregressive_sample(conditional_sampler, carry, x):
