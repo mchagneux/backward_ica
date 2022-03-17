@@ -20,27 +20,27 @@ sequences_length = 16
 
 key, subkey = random.split(key, 2)
 
-p_params, p_aux = hmm.get_random_params(subkey, state_dim, obs_dim, 
+p_params, p_def = hmm.get_random_params(subkey, state_dim, obs_dim, 
                                         transition_mapping_type='linear', 
                                         emission_mapping_type='linear')
 
-p = hmm.GaussianHMM.build_from_dict(p_params, p_aux)
+p = hmm.GaussianHMM.build_from_dict(p_params, p_def)
 
 key, *subkeys = random.split(key, num_sequences+1)
 state_samples, obs_samples = vmap(p.sample, in_axes=(0, None))(jnp.array(subkeys), sequences_length)
 
 evidence_sequences = vmap(lambda observations, p: kalman_filter(observations, p)[-1], in_axes=(0, None))(obs_samples, p)
-elbo_sequences = vmap(get_elbo(p_aux, p_aux), in_axes=(0, None, None))(obs_samples, p_params, p_params)
+elbo_sequences = vmap(get_elbo(p_def, p_def), in_axes=(0, None, None))(obs_samples, p_params, p_params)
 
 mean_evidence = jnp.mean(evidence_sequences)
 print('Sanity check ELBO computation:',jnp.abs(jnp.sum(evidence_sequences) - jnp.sum(elbo_sequences)))
 
 #%% Optimization
 key, subkey = random.split(key, 2)
-q_params, q_aux = hmm.get_random_params(subkey, state_dim, obs_dim, 
+q_params, q_def = hmm.get_random_params(subkey, state_dim, obs_dim, 
                                                 transition_mapping_type='linear', emission_mapping_type='linear')
 
-loss = get_elbo(p_aux, q_aux)
+loss = get_elbo(p_def, q_def)
 optimizer = optax.adam(learning_rate=-1e-3)
 
 @jit
@@ -80,7 +80,7 @@ plt.xlabel('Epoch nb'),
 plt.ylabel('$|\mathcal{L}(\\theta,\\phi)- \log p_\\theta(x)|$')
 plt.show()
 
-q = hmm.GaussianHMM.build_from_dict(fitted_q_params, q_aux)
+q = hmm.GaussianHMM.build_from_dict(fitted_q_params, q_def)
 
 def squared_error_expectation_against_true_states(states, observations, approximate_linear_gaussian_model, additive_functional):
     smoothed_states, _ = kalman_smooth(observations, approximate_linear_gaussian_model)

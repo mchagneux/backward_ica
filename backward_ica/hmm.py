@@ -13,7 +13,7 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
     prior_cov = jnp.log(default_state_cov)
     prior = {'mean_params':prior_mean, 
             'cov_params':{'cov':prior_cov}}
-    prior_aux = {'conditionnings':{'cov_params':{'cov':'diagonal_nonnegative'}}}
+    prior_def = {'conditionnings':{'cov_params':{'cov':'diagonal_nonnegative'}}}
 
     key, *subkeys = random.split(key, 3)
     if transition_mapping_type == 'linear':
@@ -24,7 +24,7 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
                     'cov_params':{'cov':transition_cov}}
         conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'},
                         'mapping_params':{'weight':'diagonal'}}
-        transition_aux = {'conditionnings':conditionnings, 
+        transition_def = {'conditionnings':conditionnings, 
                             'mapping_type':transition_mapping_type}
     else: 
         raise NotImplementedError
@@ -37,7 +37,7 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
                     'cov_params':{'cov':emission_cov}}
         conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'}}
 
-        emission_aux = {'conditionnings':conditionnings, 
+        emission_def = {'conditionnings':conditionnings, 
                             'mapping_type':emission_mapping_type}
     else: 
         emission_weight = random.uniform(subkeys[0], shape=(obs_dim, state_dim))
@@ -47,18 +47,18 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
                     'cov_params':{'cov':emission_cov}}
         conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'}}
 
-        emission_aux = {'conditionnings':conditionnings, 
+        emission_def = {'conditionnings':conditionnings, 
                             'mapping_type':emission_mapping_type}
 
-    raw_params = {'prior':prior, 
+    hmm_raw_params = {'prior':prior, 
             'transition': transition,
             'emission':emission}
 
-    aux = {'prior':prior_aux, 
-            'transition':transition_aux, 
-            'emission':emission_aux}
+    hmm_def = {'prior':prior_def, 
+            'transition':transition_def, 
+            'emission':emission_def}
 
-    return raw_params, aux
+    return hmm_raw_params, hmm_def
 
 @dataclass
 @tree_util.register_pytree_node_class
@@ -82,10 +82,10 @@ class GaussianHMM:
         return cls(*children)   
 
     @staticmethod
-    def build_from_dict(raw_params, aux):
-        params = copy.deepcopy(raw_params)
-        for model_part in raw_params.keys():
-            conditionnings = aux[model_part]['conditionnings']
+    def build_from_dict(hmm_raw_params, hmm_def):
+        params = copy.deepcopy(hmm_raw_params)
+        for model_part in hmm_raw_params.keys():
+            conditionnings = hmm_def[model_part]['conditionnings']
             for component_name, conditionning in conditionnings.items():
                 for param_name, conditionning_type in conditionning.items():
                     params[model_part][component_name][param_name] = _conditionnings[conditionning_type](params[model_part][component_name][param_name])
@@ -93,11 +93,11 @@ class GaussianHMM:
         prior = Gaussian(mean=params['prior']['mean_params'], 
                         cov=params['prior']['cov_params']['cov'])
 
-        transition = GaussianKernel(mapping=_mappings[aux['transition']['mapping_type']],
+        transition = GaussianKernel(mapping=_mappings[hmm_def['transition']['mapping_type']],
                                     mapping_params=params['transition']['mapping_params'], 
                                     cov=params['transition']['cov_params']['cov'])
                                     
-        emission = GaussianKernel(mapping=_mappings[aux['transition']['mapping_type']],
+        emission = GaussianKernel(mapping=_mappings[hmm_def['transition']['mapping_type']],
                                 mapping_params=params['emission']['mapping_params'],
                                 cov=params['emission']['cov_params']['cov'])            
         return GaussianHMM(prior, transition, emission)

@@ -1,10 +1,10 @@
-from jax import vmap, tree_util, nn, numpy as jnp, lax, random
+from jax import vmap, tree_util, numpy as jnp, lax, random
 from functools import partial 
 
 ## Common stateful mappings to define models, wrapped as Pytrees so that they're allowed in all jax transformations
 
 _mappings = {'linear':(tree_util.Partial(lambda params, input: params['weight'] @ input + params['bias']), 'linear'), 
-            'nonlinear': (tree_util.Partial(lambda params, input: nn.relu(params['weight'] @ input + params['bias'])), 'nonlinear')}
+            'nonlinear': (tree_util.Partial(lambda params, input: params['weight'] @ input ** 2 + params['bias']) , 'nonlinear')}
 
 
 ## Factory of parametrizations, e.g. for conditionned matrices  
