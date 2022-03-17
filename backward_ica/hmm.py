@@ -5,12 +5,12 @@ import copy
 
 
 def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='linear', emission_mapping_type='linear'):
-    default_state_cov = 1e-2*jnp.ones(state_dim)
-    default_emission_cov = 1e-2*jnp.ones(obs_dim)
+    default_state_cov = 1e-3*jnp.ones(state_dim)
+    default_emission_cov = 1e-3*jnp.ones(obs_dim)
 
     key, *subkeys = random.split(key, 2)
     prior_mean = random.uniform(subkeys[0], shape=(state_dim,))
-    prior_cov = default_state_cov
+    prior_cov = jnp.log(default_state_cov)
     prior = {'mean_params':prior_mean, 
             'cov_params':{'cov':prior_cov}}
     prior_aux = {'conditionnings':{'cov_params':{'cov':'diagonal_nonnegative'}}}
@@ -19,7 +19,7 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
     if transition_mapping_type == 'linear':
         transition_weight = random.uniform(subkeys[0], shape=(state_dim,))
         transition_bias = random.uniform(subkeys[1], shape=(state_dim,))
-        transition_cov = default_state_cov
+        transition_cov = jnp.log(default_state_cov)
         transition = {'mapping_params': {'weight':transition_weight, 'bias': transition_bias},
                     'cov_params':{'cov':transition_cov}}
         conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'},
@@ -32,7 +32,7 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
     if emission_mapping_type == 'linear':
         emission_weight = random.uniform(subkeys[0], shape=(obs_dim, state_dim))
         emission_bias = random.uniform(subkeys[1], shape=(obs_dim,))
-        emission_cov = default_emission_cov
+        emission_cov = jnp.log(default_emission_cov)
         emission = {'mapping_params':{'weight':emission_weight, 'bias': emission_bias},
                     'cov_params':{'cov':emission_cov}}
         conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'}}
@@ -42,7 +42,7 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
     else: 
         emission_weight = random.uniform(subkeys[0], shape=(obs_dim, state_dim))
         emission_bias = random.uniform(subkeys[1], shape=(obs_dim,))
-        emission_cov = default_emission_cov
+        emission_cov = jnp.log(default_emission_cov)
         emission = {'mapping_params':{'weight':emission_weight, 'bias': emission_bias},
                     'cov_params':{'cov':emission_cov}}
         conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'}}
@@ -90,24 +90,16 @@ class GaussianHMM:
                 for param_name, conditionning_type in conditionning.items():
                     params[model_part][component_name][param_name] = _conditionnings[conditionning_type](params[model_part][component_name][param_name])
 
-        mean = params['prior']['mean_params']
-        cov = params['prior']['cov_params']['cov']
-        prior = Gaussian(mean=mean, 
-                        cov=cov)
-        
-        mapping_type = aux['transition']['mapping_type']
-        mapping = _mappings[mapping_type]
-        mapping_params = params['transition']['mapping_params']
-        cov = params['transition']['cov_params']['cov']
-        transition = GaussianKernel(mapping, mapping_params, cov, mapping_type)
+        prior = Gaussian(mean=params['prior']['mean_params'], 
+                        cov=params['prior']['cov_params']['cov'])
 
-        mapping_type = aux['emission']['mapping_type']
-        mapping = _mappings[mapping_type]
-        mapping_params = params['emission']['mapping_params']
-        cov = params['emission']['cov_params']['cov']
-        emission = GaussianKernel(mapping, mapping_params, cov, mapping_type)
-
-            
+        transition = GaussianKernel(mapping=_mappings[aux['transition']['mapping_type']],
+                                    mapping_params=params['transition']['mapping_params'], 
+                                    cov=params['transition']['cov_params']['cov'])
+                                    
+        emission = GaussianKernel(mapping=_mappings[aux['transition']['mapping_type']],
+                                mapping_params=params['emission']['mapping_params'],
+                                cov=params['emission']['cov_params']['cov'])            
         return GaussianHMM(prior, transition, emission)
 
 

@@ -3,12 +3,12 @@ from functools import partial
 
 ## Common stateful mappings to define models, wrapped as Pytrees so that they're allowed in all jax transformations
 
-_mappings = {'linear':(tree_util.Partial(lambda params, input: params['weight'] @ input + params['bias'])), 
-            'nonlinear': (tree_util.Partial(lambda params, input: nn.relu(params['weight'] @ input + params['bias'])))}
+_mappings = {'linear':(tree_util.Partial(lambda params, input: params['weight'] @ input + params['bias']), 'linear'), 
+            'nonlinear': (tree_util.Partial(lambda params, input: nn.relu(params['weight'] @ input + params['bias'])), 'nonlinear')}
 
 
 ## Factory of parametrizations, e.g. for conditionned matrices  
-_conditionnings = {'diagonal_nonnegative':lambda raw_param: jnp.diag(raw_param) ** 2,
+_conditionnings = {'diagonal_nonnegative':lambda raw_param: jnp.diag(jnp.exp(raw_param)),
                 'diagonal': lambda raw_param: jnp.diag(raw_param)}
 
 
@@ -17,9 +17,9 @@ _conditionnings = {'diagonal_nonnegative':lambda raw_param: jnp.diag(raw_param) 
 @tree_util.register_pytree_node_class
 class GaussianKernel:
 
-    def __init__(self, mapping, mapping_params, cov, mapping_type=None, compute_prec_and_det=True):
+    def __init__(self, mapping, mapping_params, cov, compute_prec_and_det=True):
 
-        self.mapping = mapping
+        self.mapping, mapping_type = mapping
         self.mapping_params = mapping_params
         self.weight = None 
         self.bias = None 
@@ -48,11 +48,11 @@ class GaussianKernel:
 
     def tree_flatten(self):
         aux_data = [self.weight, self.bias, self.prec, self.det_cov]
-        return ((self.mapping, self.mapping_params, self.cov), aux_data)
+        return (((self.mapping, None), self.mapping_params, self.cov), aux_data)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        new_instance = cls(*children, None, False)
+        new_instance = cls(*children, False)
         new_instance.weight, new_instance.bias, new_instance.prec, new_instance.det_cov = aux_data
         return new_instance
 
