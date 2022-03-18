@@ -169,28 +169,22 @@ class BackwardELBO(metaclass=ABCMeta):
         return None 
 
     @abstractmethod
-    def _get_obs_term(self, *args):
+    def _get_emission_term(self, *args):
         raise NotImplementedError 
 
     @abstractmethod
-    def _init_V(self, *args):
-        raise NotImplementedError
-    
-    @abstractmethod
-    def _update_V(self, *args):
+    def _expect_emission_term_under_backward(self, emission_term, q_backward, aux):
         raise NotImplementedError
 
-    def _expect_obs_term_under_backward(self, obs_term, q_backward):
-        return expect_quadratic_term_under_backward(obs_term, q_backward)
-
-    def _expect_obs_term_under_filtering(self, obs_term, q_filtering):
-        return expect_quadratic_term_under_filtering(obs_term, q_filtering)
+    @abstractmethod 
+    def _expect_emission_term_under_filtering(self, emission_term, q_filtering, aux):
+        raise NotImplementedError
 
     def _init_V(self, observation, p:GaussianHMM, aux):
         
         quadratic_term = quadratic_term_from_log_gaussian(p.prior)
                                         
-        nonlinear_term = self._get_obs_term(observation, p.emission, aux)
+        nonlinear_term = self._get_emission_term(observation, p.emission, aux)
 
         return quadratic_term, nonlinear_term 
 
@@ -199,7 +193,7 @@ class BackwardELBO(metaclass=ABCMeta):
         dim_z = p.transition.cov.shape[0]
 
         # integrating all previous terms up to current interation
-        integrated_terms = self._integrate_previous_terms(quadratic_term, nonlinear_term, q_backward)
+        integrated_terms = self._integrate_previous_terms(quadratic_term, nonlinear_term, q_backward, aux)
 
         # adding new transition term already integrated under current backward 
         quadratic_term = integrated_terms + transition_term_integrated_under_backward(q_backward, p.transition)
@@ -208,7 +202,7 @@ class BackwardELBO(metaclass=ABCMeta):
         quadratic_term.c += -constant_terms_from_log_gaussian(dim_z, jnp.linalg.det(q_backward.cov)) +  0.5 * dim_z
         
         # adding observation term that will be integrated at next step 
-        nonlinear_term = self._get_obs_term(observation, p.emission, aux) 
+        nonlinear_term = self._get_emission_term(observation, p.emission, aux) 
         
         return quadratic_term, nonlinear_term
 
@@ -271,20 +265,20 @@ class BackwardELBO(metaclass=ABCMeta):
                                     init=(quadratic_term, nonlinear_term, q_filtering, p, q, aux),
                                     xs=observations)
 
-        return self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering)
+        return self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering, aux)
     
-    def _integrate_previous_terms(self, quadratic_term:Collection[QuadForm], nonlinear_term, q_backward:BackwardParams):
+    def _integrate_previous_terms(self, quadratic_term:Collection[QuadForm], nonlinear_term, q_backward:BackwardParams, aux):
         
         result = expect_quadratic_term_under_backward(quadratic_term, q_backward) \
-            + self._expect_obs_term_under_backward(nonlinear_term, q_backward)
+            + self._expect_emission_term_under_backward(nonlinear_term, q_backward, aux)
 
         return result
 
-    def _expect_V_under_filtering(self, quadratic_term, nonlinear_term, q_filtering:FilteringParams):
+    def _expect_V_under_filtering(self, quadratic_term, nonlinear_term, q_filtering:FilteringParams, aux):
 
         # integrating all previous terms + the nonlinear term that is not integrated yet
         result = expect_quadratic_term_under_filtering(quadratic_term, q_filtering) \
-                + self._expect_obs_term_under_filtering(nonlinear_term, q_filtering) \
+                + self._expect_emission_term_under_filtering(nonlinear_term, q_filtering, aux) \
                 - constant_terms_from_log_gaussian(q_filtering.cov.shape[0], jnp.linalg.det(q_filtering.cov)) \
                 + 0.5*q_filtering.cov.shape[0]
 
@@ -296,7 +290,7 @@ class LinearELBO(BackwardELBO):
     def __init__(self, p_def, q_def):
         super().__init__(p_def, q_def)
         
-    def _get_obs_term(self, observation, p_emission:GaussianKernel, aux):
+    def _get_emission_term(self, observation, p_emission:GaussianKernel, aux):
         A = p_emission.weight
         b = p_emission.bias - observation
         Omega = p_emission.prec
@@ -307,6 +301,12 @@ class LinearELBO(BackwardELBO):
 
         return result 
 
+    def _expect_emission_term_under_backward(self, emission_term, q_backward, aux):
+        return expect_quadratic_term_under_backward(emission_term, q_backward)
+
+    def _expect_emission_term_under_filtering(self, emission_term, q_filtering, aux):
+        return expect_quadratic_term_under_filtering(emission_term, q_filtering)
+
 class NonLinearELBO(BackwardELBO):
 
     def __init__(self, p_def, q_def, aux_defs):
@@ -314,11 +314,24 @@ class NonLinearELBO(BackwardELBO):
         self.aux_defs = aux_defs
 
     def set_aux(self, aux_params):
-        return {name: Partial(self.aux_defs[name], params=params) for name, params in aux_params.items()}
+        rec_net_apply = lambda x: self.aux_defs['rec_net'](x=x, params=aux_params['rec_net'])
+        return {'rec_net':Partial(rec_net_apply)}
 
-    def _get_obs_term(self, observation, p_emission, aux):
-        v, W =  aux['rec_net'](x=observation)
-        return QuadForm(W=W, v=v, c=0.)
+    def _get_emission_term(self, observation, p_emission, aux):
+        v, W = aux['rec_net'](observation)
+        result = -0.5 * QuadForm(W=W, 
+                        v=v, 
+                        c=0.)
+        # result.c += constant_terms_from_log_gaussian(p_emission.cov.shape[0], p_emission.det_cov)
+        return result 
+
+
+    def _expect_emission_term_under_backward(self, emission_term, q_backward, aux):
+        return expect_quadratic_term_under_backward(emission_term, q_backward)
+
+    def _expect_emission_term_under_filtering(self, emission_term, q_filtering, aux):
+        return expect_quadratic_term_under_filtering(emission_term, q_filtering)
+
 
 def get_elbo(p_def, q_def, aux_defs=None):
 

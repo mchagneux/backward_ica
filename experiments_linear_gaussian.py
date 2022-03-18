@@ -15,8 +15,8 @@ config.update("jax_enable_x64", True)
 
 #%% Generate dataset
 state_dim, obs_dim = 2, 3
-num_sequences = 30
-sequences_length = 16
+num_sequences = 16
+sequences_length = 30
 
 key, subkey = random.split(key, 2)
 
@@ -49,7 +49,7 @@ def step(p_params, q_params, opt_state, batch):
     loss_value, grads = value_and_grad(loss, argnums=2)(batch, p_params, q_params)
     updates, opt_state = optimizer.update(grads, opt_state, q_params)
     q_params = optax.apply_updates(q_params, updates)
-    return p_params, q_params, opt_state, -loss_value
+    return p_params, q_params, opt_state, loss_value
 
 
 
@@ -57,7 +57,7 @@ def fit(p_params, q_params, optimizer: optax.GradientTransformation) -> optax.Pa
     opt_state = optimizer.init(q_params)
 
     eps = jnp.inf
-    old_mean_elbo = - jnp.mean(vmap(loss, in_axes=(0,None,None))(obs_samples, p_params, q_params))
+    old_mean_elbo = jnp.mean(vmap(loss, in_axes=(0,None,None))(obs_samples, p_params, q_params))
     epoch_nb = 0
     eps = jnp.inf
     dist_to_evidence = [old_mean_elbo - mean_evidence]
