@@ -186,6 +186,31 @@ class BackwardELBO(metaclass=ABCMeta):
     def _expect_obs_term_under_filtering(self, obs_term, q_filtering):
         return expect_quadratic_term_under_filtering(obs_term, q_filtering)
 
+    def _init_V(self, observation, p:GaussianHMM, aux):
+        
+        quadratic_term = quadratic_term_from_log_gaussian(p.prior)
+                                        
+        nonlinear_term = self._get_obs_term(observation, p.emission, aux)
+
+        return quadratic_term, nonlinear_term 
+
+    def _update_V(self, observation, quadratic_term, nonlinear_term, q_backward:BackwardParams, p:GaussianHMM, aux):
+
+        dim_z = p.transition.cov.shape[0]
+
+        # integrating all previous terms up to current interation
+        integrated_terms = self._integrate_previous_terms(quadratic_term, nonlinear_term, q_backward)
+
+        # adding new transition term already integrated under current backward 
+        quadratic_term = integrated_terms + transition_term_integrated_under_backward(q_backward, p.transition)
+        
+        # integrating the backward under iself only results in constant terms 
+        quadratic_term.c += -constant_terms_from_log_gaussian(dim_z, jnp.linalg.det(q_backward.cov)) +  0.5 * dim_z
+        
+        # adding observation term that will be integrated at next step 
+        nonlinear_term = self._get_obs_term(observation, p.emission, aux) 
+        
+        return quadratic_term, nonlinear_term
 
     def init(self, first_obs, p:GaussianHMM, q:GaussianHMM, aux):
 
@@ -271,33 +296,7 @@ class LinearELBO(BackwardELBO):
     def __init__(self, p_def, q_def):
         super().__init__(p_def, q_def)
         
-    def _init_V(self, observation, p:GaussianHMM, aux):
-        
-        quadratic_term = quadratic_term_from_log_gaussian(p.prior)
-                                        
-        nonlinear_term = self._get_obs_term(observation, p.emission)
-
-        return quadratic_term, nonlinear_term 
-
-    def _update_V(self, observation, quadratic_term, nonlinear_term, q_backward:BackwardParams, p:GaussianHMM, aux):
-
-        dim_z = p.transition.cov.shape[0]
-
-        # integrating all previous terms up to current interation
-        integrated_terms = self._integrate_previous_terms(quadratic_term, nonlinear_term, q_backward)
-
-        # adding new transition term already integrated under current backward 
-        quadratic_term = integrated_terms + transition_term_integrated_under_backward(q_backward, p.transition)
-        
-        # integrating the backward under iself only results in constant terms 
-        quadratic_term.c += -constant_terms_from_log_gaussian(dim_z, jnp.linalg.det(q_backward.cov)) +  0.5 * dim_z
-        
-        # adding observation term that will be integrated at next step 
-        nonlinear_term = self._get_obs_term(observation, p.emission) 
-        
-        return quadratic_term, nonlinear_term
-
-    def _get_obs_term(self, observation, p_emission:GaussianKernel):
+    def _get_obs_term(self, observation, p_emission:GaussianKernel, aux):
         A = p_emission.weight
         b = p_emission.bias - observation
         Omega = p_emission.prec
@@ -308,58 +307,27 @@ class LinearELBO(BackwardELBO):
 
         return result 
 
-# class NonLinearELBO(BackwardELBO):
+class NonLinearELBO(BackwardELBO):
 
-#     def __init__(self, p_def, q_def, aux_defs):
-#         super().__init__(p_def, q_def)
-#         self.aux_defs = aux_defs
+    def __init__(self, p_def, q_def, aux_defs):
+        super().__init__(p_def, q_def)
+        self.aux_defs = aux_defs
 
-#     def set_aux(self, aux_params):
-#         return {name: Partial(self.aux_defs[name], params=params) for name, params in aux_params.items()}
+    def set_aux(self, aux_params):
+        return {name: Partial(self.aux_defs[name], params=params) for name, params in aux_params.items()}
 
-#     def _init_V(self, observation, p:GaussianHMM, aux):
-#         constants_V = constant_terms_from_log_gaussian(p.transition.cov.shape[0], jnp.linalg.det(p.prior.cov))
-        
-#         init_transition_term = QuadForm(A=jnp.eye(p.transition.cov.shape[0]),
-#                                         b=-p.prior.mean, 
-#                                         Omega=-0.5 * jnp.linalg.inv(p.prior.cov))
-
-#         nonlinear_term = self._get_obs_term(observation, p.emission, aux)
-
-#         return constants_V, init_transition_term, nonlinear_term
-
-#     def _update_V(self, observation, integrate_up_to, quadratic_term, nonlinear_term, q_backward:BackwardParams, p:GaussianHMM, aux):
-
-#         dim_z = p.transition.cov.shape[0]
-
-#         # integrating all previous terms up to current interation
-#         constants, quad_forms_transition, quad_forms_emission = self._integrate_previous_terms(quadratic_term, nonlinear_term, q_backward)
-
-#         # the backward term integrated under itself integrates to constant terms 
-#         constants +=  - constant_terms_from_log_gaussian(dim_z, jnp.linalg.det(q_backward.cov)) \
-#                     +  0.5 * dim_z - 0.5 * jnp.trace(p.transition.prec @ p.transition.weight @ q_backward.cov @ p.transition.weight.T) 
-
-#         # integrating new transition term under new backward
-#         constants += constant_terms_from_log_gaussian(dim_z, p.transition.det_cov) 
-#         new_quad_form_transition = expect_transition_quad_form_under_backward(q_backward, p.transition)
-#         quad_forms_transition.set(new_quad_form_transition, index=integrate_up_to+1) 
-
-#         # adding observation term that will be integrated at next step 
-#         nonlinear_term = self._get_obs_term(observation, p.emission, aux) 
-
-#         return constants, [quad_forms_transition, quad_forms_emission], nonlinear_term
-
-#     def _get_obs_term(self, observation, p_emission, aux):
-#         return aux['rec_net'](x=observation)
+    def _get_obs_term(self, observation, p_emission, aux):
+        v, W =  aux['rec_net'](x=observation)
+        return QuadForm(W=W, v=v, c=0.)
 
 def get_elbo(p_def, q_def, aux_defs=None):
 
     if p_def['transition']['mapping_type'] == 'linear':
         if p_def['emission']['mapping_type'] == 'linear':
             return LinearELBO(p_def, q_def).compute
-        # elif p_def['emission']['mapping_type'] == 'nonlinear': 
-        #     if aux_defs is None: raise NotImplementedError
-        #     return NonLinearELBO(p_def, q_def, aux_defs).compute
+        elif p_def['emission']['mapping_type'] == 'nonlinear': 
+            if aux_defs is None: raise NotImplementedError
+            return NonLinearELBO(p_def, q_def, aux_defs).compute
     else: 
         raise NotImplementedError
  
