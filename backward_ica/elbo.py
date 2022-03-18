@@ -9,7 +9,7 @@ from .utils import *
 from typing import * 
 from abc import ABCMeta, abstractmethod
 from functools import partial
-
+config.update("jax_enable_x64", True)
 
 ### Some abstractions for frequently used objects when computing elbo via backwards decomposition
 
@@ -45,12 +45,18 @@ class QuadForm:
         return QuadForm(W = A.T @ Omega @ A, 
                         v = A.T @ (Omega + Omega.T) @ b, 
                         c = b.T @ Omega @ b)
+    @staticmethod 
+    def evaluate_from_A_b_Omega(A, b, Omega, x):
+        common_term = A @ x + b 
+        return common_term.T @ Omega @ common_term
+
+
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
-        
+    
 @dataclass(init=True)
 @register_pytree_node_class
 class FilteringParams:
@@ -99,7 +105,6 @@ def constant_terms_from_log_gaussian(dim:int, det_cov:float)->float:
 
     return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
 
-
 def init_filtering(observation, q_prior:Gaussian, q_emission:GaussianKernel):
     return FilteringParams(*kalman_init(observation, q_prior, q_emission)[2:])
 
@@ -128,7 +133,8 @@ def transition_term_integrated_under_backward(q_backward:BackwardParams, p_trans
     Omega = p_transition.prec
     
     result = -0.5 * QuadForm.from_A_b_Omega(A, b, Omega)
-    result.c += jnp.trace(result.W @ q_backward.cov) + constant_terms_from_log_gaussian(p_transition.cov.shape[0], p_transition.det_cov)
+    result.c += -0.5 * jnp.trace(p_transition.prec @ p_transition.weight @ q_backward.cov @ p_transition.weight.T) \
+                + constant_terms_from_log_gaussian(p_transition.cov.shape[0], p_transition.det_cov)
     return result 
 
 def expect_quadratic_term_under_backward(quad_form:QuadForm, q_backward:BackwardParams):

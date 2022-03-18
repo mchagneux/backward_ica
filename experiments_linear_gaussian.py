@@ -11,11 +11,12 @@ key = random.PRNGKey(0)
 
 from backward_ica.kalman import filter as kalman_filter, smooth as kalman_smooth
 from backward_ica.elbo import get_elbo
+config.update("jax_enable_x64", True)
 
 #%% Generate dataset
 state_dim, obs_dim = 2, 3
 num_sequences = 30
-sequences_length = 2
+sequences_length = 16
 
 key, subkey = random.split(key, 2)
 
@@ -28,12 +29,23 @@ p = hmm.GaussianHMM.build_from_dict(p_params, p_def)
 key, *subkeys = random.split(key, num_sequences+1)
 state_samples, obs_samples = vmap(p.sample, in_axes=(0, None))(jnp.array(subkeys), sequences_length)
 
-evidence_sequences = kalman_filter(obs_samples[0], p)[-1]
-elbo = get_elbo(p_def, p_def)
-elbo_sequences = elbo(obs_samples[0], p_params, p_params)
 
-mean_evidence = jnp.mean(evidence_sequences)
-print('Sanity check ELBO computation:',jnp.abs(jnp.sum(evidence_sequences) - jnp.sum(elbo_sequences)))
+elbo = get_elbo(p_def, p_def)
+evidence = lambda sequence, p: kalman_filter(sequence, p)[-1]
+
+# print(jnp.abs(elbo(obs_samples[0], p_params, p_params) - evidence(obs_samples[0], p)))
+results = []
+
+for i in range(2, len(obs_samples[0])):
+    sequence = obs_samples[0][:i]
+    evidence_sequences = kalman_filter(sequence, p)[-1]
+    elbo_sequences = elbo(sequence, p_params, p_params)
+    results.append(jnp.abs(evidence_sequences - elbo_sequences))
+
+plt.plot(results)
+plt.show()
+
+# print('Sanity check ELBO computation:',jnp.abs(jnp.sum(evidence_sequences) - jnp.sum(elbo_sequences)))
 
 # #%% Optimization
 # key, subkey = random.split(key, 2)

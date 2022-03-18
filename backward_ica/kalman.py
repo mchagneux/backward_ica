@@ -6,6 +6,7 @@ from backward_ica.hmm import GaussianHMM
 
 from .utils import * 
 
+config.update("jax_enable_x64", True)
 
 def predict(current_state_mean, current_state_cov, transition:GaussianKernel):
     predictive_mean = transition.map(current_state_mean)
