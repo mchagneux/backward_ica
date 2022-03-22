@@ -1,21 +1,24 @@
 from dataclasses import dataclass
+from turtle import back, backward
 from typing import * 
 from jax import vmap, lax, config, numpy as jnp
 from jax.tree_util import register_pytree_node_class, Partial
 from .hmm import GaussianHMM
 
 from .kalman import filter_step as kalman_filter_step, init as kalman_init
-from .utils import *
+from .utils import GaussianKernel, _mappings, LinearGaussianKernel, Gaussian, prec_and_det, LinearGaussianKernel
 from typing import * 
 from abc import ABCMeta, abstractmethod
 from functools import partial
 config.update("jax_enable_x64", True)
+import numpy as np 
+# config.update("jax_check_tracer_leaks", True)
 
 ### Some abstractions for frequently used objects when computing elbo via backwards decomposition
 
 @dataclass(init=True)
 @register_pytree_node_class
-class QuadForm:
+class QuadTerm:
 
     W: jnp.ndarray
     v: jnp.ndarray
@@ -25,12 +28,12 @@ class QuadForm:
         return iter((self.W, self.v, self.c))
 
     def __add__(self, other):
-        return QuadForm(W = self.W + other.W, 
+        return QuadTerm(W = self.W + other.W, 
                         v = self.v + other.v, 
                         c = self.c + other.c)
 
     def __rmul__(self, other):
-        return QuadForm(W=other*self.W, 
+        return QuadTerm(W=other*self.W, 
                         v=other*self.v, 
                         c=other*self.c) 
 
@@ -42,7 +45,7 @@ class QuadForm:
 
     @staticmethod
     def from_A_b_Omega(A, b, Omega):
-        return QuadForm(W = A.T @ Omega @ A, 
+        return QuadTerm(W = A.T @ Omega @ A, 
                         v = A.T @ (Omega + Omega.T) @ b, 
                         c = b.T @ Omega @ b)
     @staticmethod 
@@ -55,43 +58,7 @@ class QuadForm:
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
-
     
-@dataclass(init=True)
-@register_pytree_node_class
-class FilteringParams:
-
-    mean:jnp.ndarray
-    cov:jnp.ndarray
-
-    def __iter__(self):
-        return iter((self.mean, self.cov))
-    
-    def tree_flatten(self):
-        return ((self.mean, self.cov), None) 
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-
-@dataclass(init=True)
-@register_pytree_node_class
-class BackwardParams:
-
-    A:jnp.ndarray
-    a:jnp.ndarray
-    cov:jnp.ndarray
-
-    def __iter__(self):
-        return iter((self.A, self.a, self.cov))
-    
-    def tree_flatten(self):
-        return ((self.A, self.a, self.cov), None) 
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-
 def constant_terms_from_log_gaussian(dim:int, det_cov:float)->float:
     """Utility function to compute the log of the term that is against the exponential for a multivariate Normal
 
@@ -105,53 +72,56 @@ def constant_terms_from_log_gaussian(dim:int, det_cov:float)->float:
 
     return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
 
-def init_filtering(observation, q_prior:Gaussian, q_emission:GaussianKernel):
-    return FilteringParams(*kalman_init(observation, q_prior, q_emission)[2:])
+def init_filtering(observation, q_prior:Gaussian, q_emission:LinearGaussianKernel):
+    mean, cov = kalman_init(observation, q_prior, q_emission)[2:]
+    return Gaussian(mean, cov, *prec_and_det(cov))
 
-def update_filtering(observation, q_filtering:FilteringParams, q_transition:GaussianKernel, q_emission:GaussianKernel):
-    return FilteringParams(*kalman_filter_step(*q_filtering, observation, q_transition, q_emission)[2:])
+def update_filtering(observation, q_filtering:Gaussian, q_transition:LinearGaussianKernel, q_emission:LinearGaussianKernel):
+    mean, cov = kalman_filter_step(q_filtering.mean, q_filtering.cov, observation, q_transition, q_emission)[2:]
+    return Gaussian(mean, cov, *prec_and_det(cov))
 
-def update_backward(q_filtering:FilteringParams, q_transition:GaussianKernel):
+def update_backward(q_filtering:Gaussian, q_transition:LinearGaussianKernel):
 
-    filtering_prec = jnp.linalg.inv(q_filtering.cov)
-
-    backward_prec = q_transition.weight.T @ q_transition.prec @ q_transition.weight + filtering_prec
-
-    cov = jnp.linalg.inv(backward_prec)
+    prec = q_transition.weight.T @ q_transition.prec @ q_transition.weight + q_filtering.prec
+    cov = jnp.linalg.inv(prec)
 
     common_term = q_transition.weight.T @ q_transition.prec
     A = cov @ common_term
-    a = cov @ (filtering_prec @ q_filtering.mean - common_term @  q_transition.bias)
+    a = cov @ (q_filtering.prec @ q_filtering.mean - common_term @  q_transition.bias)
 
-    return BackwardParams(A,a,cov)
+    return LinearGaussianKernel(mapping=_mappings['linear'], 
+                          mapping_params={'weight':A, 'bias':a},
+                          cov=cov,
+                          prec=prec, 
+                          det_cov=jnp.linalg.det(cov))
 
-def transition_term_integrated_under_backward(q_backward:BackwardParams, p_transition:GaussianKernel):
+def transition_term_integrated_under_backward(q_backward:LinearGaussianKernel, p_transition:LinearGaussianKernel):
     # expectation of the quadratic form that appears in the log of the state transition density
 
-    A = p_transition.weight @ q_backward.A - jnp.eye(p_transition.cov.shape[0])
-    b = p_transition.weight @ q_backward.a + p_transition.bias
+    A = p_transition.weight @ q_backward.weight - jnp.eye(p_transition.cov.shape[0])
+    b = p_transition.weight @ q_backward.bias + p_transition.bias
     Omega = p_transition.prec
     
-    result = -0.5 * QuadForm.from_A_b_Omega(A, b, Omega)
+    result = -0.5 * QuadTerm.from_A_b_Omega(A, b, Omega)
     result.c += -0.5 * jnp.trace(p_transition.prec @ p_transition.weight @ q_backward.cov @ p_transition.weight.T) \
                 + constant_terms_from_log_gaussian(p_transition.cov.shape[0], p_transition.det_cov)
     return result 
 
-def expect_quadratic_term_under_backward(quad_form:QuadForm, q_backward:BackwardParams):
+def expect_quadratic_term_under_backward(quad_form:QuadTerm, q_backward:LinearGaussianKernel):
     # the result is still a quadratic forms with new parameters, following the formula for expected values of quadratic forms  
 
-    W = q_backward.A.T @ quad_form.W @ q_backward.A
-    v = q_backward.A.T @ (quad_form.v + (quad_form.W + quad_form.W.T) @ q_backward.a)
-    c = quad_form.c + jnp.trace(quad_form.W @ q_backward.cov) + q_backward.a.T @ quad_form.W @ q_backward.a + quad_form.v.T @ q_backward.a 
+    W = q_backward.weight.T @ quad_form.W @ q_backward.weight
+    v = q_backward.weight.T @ (quad_form.v + (quad_form.W + quad_form.W.T) @ q_backward.bias)
+    c = quad_form.c + jnp.trace(quad_form.W @ q_backward.cov) + q_backward.bias.T @ quad_form.W @ q_backward.bias + quad_form.v.T @ q_backward.bias 
 
-    return QuadForm(W=W, v=v, c=c)
+    return QuadTerm(W=W, v=v, c=c)
 
-def expect_quadratic_term_under_filtering(quad_form:QuadForm, q_filtering:FilteringParams):
+def expect_quadratic_term_under_filtering(quad_form:QuadTerm, q_filtering:Gaussian):
     return jnp.trace(quad_form.W @ q_filtering.cov) + quad_form.evaluate(q_filtering.mean)
 
 def quadratic_term_from_log_gaussian(gaussian:Gaussian):
 
-    result = - 0.5 * QuadForm(W=gaussian.prec, 
+    result = - 0.5 * QuadTerm(W=gaussian.prec, 
                     v=-(gaussian.prec + gaussian.prec.T) @ gaussian.mean, 
                     c=gaussian.mean.T @ gaussian.prec @ gaussian.mean)
 
@@ -188,7 +158,7 @@ class BackwardELBO(metaclass=ABCMeta):
 
         return quadratic_term, nonlinear_term 
 
-    def _update_V(self, observation, quadratic_term, nonlinear_term, q_backward:BackwardParams, p:GaussianHMM, aux):
+    def _update_V(self, observation, quadratic_term, nonlinear_term, q_backward:LinearGaussianKernel, p:GaussianHMM, aux):
 
         dim_z = p.transition.cov.shape[0]
 
@@ -213,7 +183,7 @@ class BackwardELBO(metaclass=ABCMeta):
 
         return quadratic_term, nonlinear_term, q_filtering
 
-    def update(self, observation, quadratic_term, nonlinear_term, q_filtering:FilteringParams, p:GaussianHMM, q:GaussianHMM, aux):
+    def update(self, observation, quadratic_term, nonlinear_term, q_filtering:Gaussian, p:GaussianHMM, q:GaussianHMM, aux):
         q_backward = update_backward(q_filtering, q.transition)
         quadratic_term, nonlinear_term = self._update_V(observation, 
                                                 quadratic_term, 
@@ -267,19 +237,19 @@ class BackwardELBO(metaclass=ABCMeta):
 
         return self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering, aux)
     
-    def _integrate_previous_terms(self, quadratic_term:Collection[QuadForm], nonlinear_term, q_backward:BackwardParams, aux):
+    def _integrate_previous_terms(self, quadratic_term:Collection[QuadTerm], nonlinear_term, q_backward:LinearGaussianKernel, aux):
         
         result = expect_quadratic_term_under_backward(quadratic_term, q_backward) \
             + self._expect_emission_term_under_backward(nonlinear_term, q_backward, aux)
 
         return result
 
-    def _expect_V_under_filtering(self, quadratic_term, nonlinear_term, q_filtering:FilteringParams, aux):
+    def _expect_V_under_filtering(self, quadratic_term, nonlinear_term, q_filtering:Gaussian, aux):
 
         # integrating all previous terms + the nonlinear term that is not integrated yet
         result = expect_quadratic_term_under_filtering(quadratic_term, q_filtering) \
                 + self._expect_emission_term_under_filtering(nonlinear_term, q_filtering, aux) \
-                - constant_terms_from_log_gaussian(q_filtering.cov.shape[0], jnp.linalg.det(q_filtering.cov)) \
+                - constant_terms_from_log_gaussian(q_filtering.cov.shape[0], q_filtering.det_cov) \
                 + 0.5*q_filtering.cov.shape[0]
 
         return result
@@ -290,12 +260,12 @@ class LinearELBO(BackwardELBO):
     def __init__(self, p_def, q_def):
         super().__init__(p_def, q_def)
         
-    def _get_emission_term(self, observation, p_emission:GaussianKernel, aux):
+    def _get_emission_term(self, observation, p_emission:LinearGaussianKernel, aux):
         A = p_emission.weight
         b = p_emission.bias - observation
         Omega = p_emission.prec
 
-        result = -0.5*QuadForm.from_A_b_Omega(A, b, Omega)
+        result = -0.5*QuadTerm.from_A_b_Omega(A, b, Omega)
 
         result.c += constant_terms_from_log_gaussian(p_emission.cov.shape[0], p_emission.det_cov)
 
@@ -317,14 +287,14 @@ class NonLinearELBO(BackwardELBO):
         rec_net_apply = lambda x: self.aux_defs['rec_net'](x=x, params=aux_params['rec_net'])
         return {'rec_net':Partial(rec_net_apply)}
 
-    def _get_emission_term(self, observation, p_emission, aux):
-        v, W = aux['rec_net'](observation)
-        result = -0.5 * QuadForm(W=W, 
-                        v=v, 
-                        c=0.)
+    def _get_emission_term(self, observation, p_emission:GaussianKernel, aux):
+        eta1, eta2 = aux['rec_net'](observation)
+        const = -0.25 * eta1.T @ jnp.linalg.solve(eta2, eta1) - 0.5 * jnp.log(jnp.linalg.det(-2*eta2)) - eta1.shape[0] * jnp.log(jnp.pi)
+        result = QuadTerm(W=eta2, 
+                        v=eta1, 
+                        c=const)
         # result.c += constant_terms_from_log_gaussian(p_emission.cov.shape[0], p_emission.det_cov)
         return result 
-
 
     def _expect_emission_term_under_backward(self, emission_term, q_backward, aux):
         return expect_quadratic_term_under_backward(emission_term, q_backward)

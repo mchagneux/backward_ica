@@ -41,8 +41,9 @@ key, subkey = random.split(key, 2)
 q_params, q_def = hmm.get_random_params(subkey, state_dim, obs_dim, 
                                                 transition_mapping_type='linear', emission_mapping_type='linear')
 
-loss = get_elbo(p_def, q_def)
-optimizer = optax.adam(learning_rate=-1e-3)
+loss = lambda obs, p_params, q_params: -get_elbo(p_def, q_def)(obs, p_params, q_params)
+
+optimizer = optax.adam(learning_rate=1e-3)
 
 @jit
 def step(p_params, q_params, opt_state, batch):

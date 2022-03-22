@@ -8,12 +8,12 @@ from .utils import *
 
 config.update("jax_enable_x64", True)
 
-def predict(current_state_mean, current_state_cov, transition:GaussianKernel):
+def predict(current_state_mean, current_state_cov, transition:LinearGaussianKernel):
     predictive_mean = transition.map(current_state_mean)
     predictive_cov = transition.weight @ current_state_cov @ transition.weight.T + transition.cov
     return predictive_mean, predictive_cov
 
-def update(predictive_mean, predictive_cov, observation, emission:GaussianKernel):
+def update(predictive_mean, predictive_cov, observation, emission:LinearGaussianKernel):
     predicted_observation_mean = emission.map(predictive_mean)
     predicted_observation_cov = emission.weight @ predictive_cov @ emission.weight.T + emission.cov
     kalman_gain = predictive_cov @ emission.weight.T @ jnp.linalg.inv(predicted_observation_cov)
@@ -23,16 +23,16 @@ def update(predictive_mean, predictive_cov, observation, emission:GaussianKernel
 
     return corrected_state_mean, corrected_state_cov
 
-def filter_step(current_state_mean, current_state_cov, observation, transition:GaussianKernel, emission:GaussianKernel):
+def filter_step(current_state_mean, current_state_cov, observation, transition:LinearGaussianKernel, emission:LinearGaussianKernel):
     predicted_mean, predicted_cov = predict(current_state_mean, current_state_cov, transition)
     filtered_mean, filtered_cov = update(predicted_mean, predicted_cov, observation, emission)
     return predicted_mean, predicted_cov, filtered_mean, filtered_cov
 
-def init(observation, prior:Gaussian, emission:GaussianKernel):
+def init(observation, prior:Gaussian, emission:LinearGaussianKernel):
     init_filtering_mean, init_filtering_cov = update(prior.mean, prior.cov, observation, emission)
     return prior.mean, prior.cov, init_filtering_mean, init_filtering_cov
 
-def log_likelihood_term(predictive_mean, predictive_cov, observation, emission:GaussianKernel):
+def log_likelihood_term(predictive_mean, predictive_cov, observation, emission:LinearGaussianKernel):
     return jax_gaussian_logpdf(x=observation, 
                         mean=emission.map(predictive_mean), 
                         cov=emission.weight @ predictive_cov @ emission.weight.T + emission.cov)

@@ -1,10 +1,12 @@
 from jax import vmap, tree_util, numpy as jnp, lax, random
-from functools import partial 
+from functools import partial
+
+import tree 
 
 ## Common stateful mappings to define models, wrapped as Pytrees so that they're allowed in all jax transformations
 
-_mappings = {'linear':(tree_util.Partial(lambda params, input: params['weight'] @ input + params['bias']), 'linear'), 
-            'nonlinear': (tree_util.Partial(lambda params, input: params['weight'] @ input ** 2 + params['bias']) , 'nonlinear')}
+_mappings = {'linear':tree_util.Partial(lambda params, input: params['weight'] @ input + params['bias']), 
+            'nonlinear': tree_util.Partial(lambda params, input: params['weight'] @ input ** 2 + params['bias'])}
 
 
 ## Factory of parametrizations, e.g. for conditionned matrices  
@@ -12,27 +14,24 @@ _conditionnings = {'diagonal_nonnegative':lambda raw_param: jnp.diag(jnp.exp(raw
                 'diagonal': lambda raw_param: jnp.diag(raw_param)}
 
 
+def prec_and_det(cov):
+    return jnp.linalg.inv(cov), jnp.linalg.det(cov)
+
+
 ### Useful abstractions for common stateful distributions 
+
+
 
 @tree_util.register_pytree_node_class
 class GaussianKernel:
 
-    def __init__(self, mapping, mapping_params, cov, compute_prec_and_det=True):
+    def __init__(self, mapping, mapping_params, cov, prec=None, det_cov=None):
 
-        self.mapping, mapping_type = mapping
+        self.mapping = mapping
         self.mapping_params = mapping_params
-        self.weight = None 
-        self.bias = None 
-        if mapping_type == "linear":
-            self.weight = self.mapping_params['weight']
-            self.bias = self.mapping_params['bias']
-
         self.cov = cov
-        self.prec = None
-        self.det_cov = None 
-        if compute_prec_and_det: 
-            self.prec = jnp.linalg.inv(cov) 
-            self.det_cov = jnp.linalg.det(cov)
+        self.prec = prec
+        self.det_cov = det_cov
 
     def map(self, input):
         return self.mapping(params=self.mapping_params, input=input)
@@ -47,25 +46,29 @@ class GaussianKernel:
         return lambda key, conditioning: self.sample(key, conditioning)
 
     def tree_flatten(self):
-        aux_data = [self.weight, self.bias, self.prec, self.det_cov]
-        return (((self.mapping, None), self.mapping_params, self.cov), aux_data)
+        return ((self.mapping, self.mapping_params, self.cov, self.prec, self.det_cov), None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        new_instance = cls(*children, False)
-        new_instance.weight, new_instance.bias, new_instance.prec, new_instance.det_cov = aux_data
-        return new_instance
+        return cls(*children)
+
+
+@tree_util.register_pytree_node_class
+class LinearGaussianKernel(GaussianKernel):
+
+    def __init__(self, mapping, mapping_params, cov, prec=None, det_cov=None):
+        super().__init__(mapping, mapping_params, cov, prec, det_cov)
+        self.weight = self.mapping_params['weight']
+        self.bias = self.mapping_params['bias']
+
 
 @tree_util.register_pytree_node_class
 class Gaussian:
-    def __init__(self, mean, cov, compute_prec_and_det=True):
+    def __init__(self, mean, cov, prec=None, det_cov=None):
         self.mean = mean
         self.cov = cov
-        self.prec = None
-        self.det_cov = None
-        if compute_prec_and_det:
-            self.prec = jnp.linalg.inv(cov) 
-            self.det_cov = jnp.linalg.det(cov)
+        self.prec = prec
+        self.det_cov = det_cov
     
     def sample(self, key):
         return random.multivariate_normal(key=key, mean=self.mean, cov=self.cov)
@@ -74,14 +77,11 @@ class Gaussian:
         return lambda key: random.multivariate_normal(key=key, mean=self.mean, cov=self.cov)
 
     def tree_flatten(self):
-        aux_data = [self.prec, self.det_cov]
-        return ((self.mean, self.cov), aux_data)
+        return ((self.mean, self.cov, self.prec, self.det_cov), None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        new_instance = cls(*children, False)
-        new_instance.prec, new_instance.det_cov = aux_data
-        return new_instance
+        return cls(*children)
 
 ### Common sampling routines 
 

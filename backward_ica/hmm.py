@@ -1,5 +1,5 @@
 from jax import numpy as jnp, random, tree_util
-from .utils import _conditionnings, _mappings, Gaussian, GaussianKernel, hmm_samples
+from .utils import _conditionnings, _mappings, Gaussian, GaussianKernel, LinearGaussianKernel, hmm_samples, prec_and_det
 from dataclasses import dataclass
 import copy 
 
@@ -82,24 +82,38 @@ class GaussianHMM:
         return cls(*children)   
 
     @staticmethod
-    def build_from_dict(hmm_raw_params, hmm_def):
-        params = copy.deepcopy(hmm_raw_params)
-        for model_part in hmm_raw_params.keys():
+    def build_from_dict(hmm_params, hmm_def):
+        params = copy.deepcopy(hmm_params)
+        for model_part in hmm_params.keys():
             conditionnings = hmm_def[model_part]['conditionnings']
             for component_name, conditionning in conditionnings.items():
                 for param_name, conditionning_type in conditionning.items():
                     params[model_part][component_name][param_name] = _conditionnings[conditionning_type](params[model_part][component_name][param_name])
 
-        prior = Gaussian(mean=params['prior']['mean_params'], 
-                        cov=params['prior']['cov_params']['cov'])
+        prior = Gaussian(params['prior']['mean_params'], 
+                        params['prior']['cov_params']['cov'], 
+                        *prec_and_det(params['prior']['cov_params']['cov']))
 
-        transition = GaussianKernel(mapping=_mappings[hmm_def['transition']['mapping_type']],
-                                    mapping_params=params['transition']['mapping_params'], 
-                                    cov=params['transition']['cov_params']['cov'])
-                                    
-        emission = GaussianKernel(mapping=_mappings[hmm_def['transition']['mapping_type']],
-                                mapping_params=params['emission']['mapping_params'],
-                                cov=params['emission']['cov_params']['cov'])            
+        transition_mapping_type = hmm_def['transition']['mapping_type']
+        transition_mapping = _mappings[transition_mapping_type]
+        transition_kernel = LinearGaussianKernel if transition_mapping_type == 'linear' else GaussianKernel
+        transition_mapping_params = params['transition']['mapping_params']
+        transition_cov = params['transition']['cov_params']['cov']
+        transition = transition_kernel(transition_mapping,
+                                transition_mapping_params, 
+                                transition_cov,
+                                *prec_and_det(transition_cov))
+
+        emission_mapping_type = hmm_def['emission']['mapping_type']
+        emission_mapping = _mappings[emission_mapping_type]
+        emission_kernel = LinearGaussianKernel if emission_mapping_type == 'linear' else GaussianKernel
+        emission_mapping_params = params['emission']['mapping_params']
+        emission_cov = params['emission']['cov_params']['cov']
+        emission = emission_kernel(emission_mapping,
+                                emission_mapping_params, 
+                                emission_cov,
+                                *prec_and_det(emission_cov))  
+
         return GaussianHMM(prior, transition, emission)
 
 
