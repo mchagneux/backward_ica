@@ -235,7 +235,7 @@ class BackwardELBO(metaclass=ABCMeta):
                                     init=(quadratic_term, nonlinear_term, q_filtering, p, q, aux),
                                     xs=observations)
 
-        return self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering, aux)
+        return -self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering, aux)
     
     def _integrate_previous_terms(self, quadratic_term:Collection[QuadTerm], nonlinear_term, q_backward:LinearGaussianKernel, aux):
         
@@ -303,7 +303,7 @@ class NonLinearELBO(BackwardELBO):
         return expect_quadratic_term_under_filtering(emission_term, q_filtering)
 
 
-def get_elbo(p_def, q_def, aux_defs=None):
+def get_neg_elbo(p_def, q_def, aux_defs=None):
 
     if p_def['transition']['mapping_type'] == 'linear':
         if p_def['emission']['mapping_type'] == 'linear':
