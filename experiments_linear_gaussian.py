@@ -11,7 +11,7 @@ key = random.PRNGKey(0)
 
 
 from backward_ica.kalman import filter as kalman_filter, smooth as kalman_smooth
-from backward_ica.elbo import get_neg_elbo
+from backward_ica.elbo import LinearELBO
 config.update("jax_enable_x64", True)
 
 #%% Generate dataset
@@ -31,7 +31,7 @@ p = hmm.GaussianHMM.build_from_dict(p_params, p_def)
 key, *subkeys = random.split(key, num_sequences+1)
 state_samples, obs_samples = vmap(p.sample, in_axes=(0, None))(jnp.array(subkeys), sequences_length)
 
-elbo = get_neg_elbo(p_def, p_def)
+elbo = LinearELBO(p_def, p_def).compute
 elbo_sequences = vmap(elbo, in_axes=(0, None, None))(obs_samples, p_params, p_params)
 evidence_sequences = vmap(lambda sequence, p: kalman_filter(sequence, p)[-1], in_axes=(0, None))(obs_samples, p)
 mean_evidence = jnp.mean(evidence_sequences)
@@ -44,9 +44,10 @@ q_params, q_def = hmm.get_random_params(subkey, state_dim, obs_dim,
                                         transition_mapping_type='linear',
                                         emission_mapping_type='linear')
 
-loss = lambda obs, q_params: get_neg_elbo(p_def, q_def)(obs, p_params, q_params)
+elbo = LinearELBO(p_def, q_def).compute
+loss = lambda obs, q_params: elbo(obs, p_params, q_params)
 
-optimizer = optax.adam(learning_rate=1e-1)
+optimizer = optax.adam(learning_rate=1e-2)
 
 @jit
 def q_step(q_params, opt_state, batch):
@@ -66,7 +67,7 @@ def fit(q_params, optimizer: optax.GradientTransformation) -> optax.Params:
     opt_state = optimizer.init(q_params)
     epoch_avg_neg_elbos = [0,1]
     num_batches = num_sequences // batch_size
-    for _ in range(5000):
+    for _ in range(100):
         avg_neg_elbo_epoch = 0.0
         for batch in loader(obs_samples):
             q_params, opt_state, avg_neg_elbo_batch = q_step(q_params, opt_state, batch)
