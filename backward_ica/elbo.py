@@ -72,8 +72,6 @@ def constant_terms_from_log_gaussian(dim:int, det_cov:float)->float:
 
     return -0.5*(dim * jnp.log(2*jnp.pi) + jnp.log(det_cov))
 
-
-
 def transition_term_integrated_under_backward(q_backward:LinearGaussianKernel, p_transition:LinearGaussianKernel):
     # expectation of the quadratic form that appears in the log of the state transition density
 
@@ -220,9 +218,6 @@ class LinearELBO(ELBO):
         quadratic_term, nonlinear_term = self._init_V(observations[0], p, rec_net_params)
         q_filtering = self.init_filtering(observations[0], q.prior, q.emission)
 
-        q_filtering_means = [q_filtering.mean.copy()]
-        q_filtering_covs = [q_filtering.cov.copy()]
-
         observations = observations[1:]
 
         def step(carry, x):
@@ -239,21 +234,15 @@ class LinearELBO(ELBO):
                                                     rec_net_params)
             q_filtering = self.update_filtering(observation, q_filtering, q.transition, q.emission)
 
-            return (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params), (q_backward, q_filtering)
+            return (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params), None
 
-        (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params), (q_backwards, q_filterings)  = lax.scan(f=step, 
+        (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params), _  = lax.scan(f=step, 
                                     init=(quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params),
                                     xs=observations)
-        
-        # q_filtering_means.extend([mean for mean in q_filterings.mean])
-        # q_filtering_covs.extend([cov for cov in q_filterings.cov])
-        # q_backward_As = [A for A in q_backwards.weight]
-        # q_backward_as = [a for a in q_backwards.bias]
-        # q_backward_covs = [cov for cov in q_backwards.cov]
 
-        return -self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering)#, (q_filtering_means, q_filtering_covs, q_backward_As, q_backward_as, q_backward_covs)
+        return -self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering)
 
-class LinearELBOWithRecNet(ELBO):
+class LinearELBOJohnson(ELBO):
 
 
     def __init__(self, p_def, q_def):
@@ -316,15 +305,16 @@ class LinearELBOWithRecNet(ELBO):
                                                     rec_net_params)
             q_filtering = self.update_filtering(observation, q_filtering, q.transition, q.emission)
 
-            return (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params), None
+            return (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params)
 
-        (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params), _  = lax.scan(f=step, 
+        (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params)  = lax.scan(f=step, 
                                     init=(quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params),
                                     xs=observations)
 
+
         return -self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering)
 
-class NonLinearELBO(ELBO):
+class NonLinearELBOJohnson(ELBO):
 
     def __init__(self, p_def, q_def, rec_net_def):
         super().__init__(p_def, q_def)
