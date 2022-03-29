@@ -12,6 +12,7 @@ from abc import ABCMeta, abstractmethod
 from functools import partial
 config.update("jax_enable_x64", True)
 import numpy as np 
+from jax.random import normal
 # config.update("jax_check_tracer_leaks", True)
 
 ### Some abstractions for frequently used objects when computing elbo via backwards decomposition
@@ -391,6 +392,113 @@ class NonLinearELBOJohnson(ELBO):
                                     xs=observations)
 
         return -self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering)
+    
+
+class NonLinearELBO:
+
+    def __init__(self, p_def, q_def):
+        self.p_def = p_def
+        self.q_def = q_def 
+
+
+    def init_filtering(self, obs, filtering_init_params):
+        
+        mean, cov = self.q_def['filtering']['init'](obs=obs, 
+                                                params=filtering_init_params)
+
+        return Gaussian(mean, cov, *prec_and_det(cov))
+
+    def update_filtering(self, obs, q_filtering:Gaussian, filtering_update_params):
+        mean, cov = self.q_def['filtering']['update'](obs=obs, 
+                                                    filt_mean=q_filtering.mean, 
+                                                    filt_cov=q_filtering.cov, 
+                                                    params=filtering_update_params)
+
+        return Gaussian(mean, cov, *prec_and_det(cov))
+
+    def update_backward(self, q_filtering:Gaussian, backward_params):
+
+        A, a, cov = self.q_def['backward'](filt_mean=q_filtering.mean, 
+                                        filt_cov=q_filtering.cov, 
+                                        params=backward_params)
+
+        return LinearGaussianKernel(_mappings['linear'], 
+                                    {'weight':A, 'bias':a},
+                                    cov,
+                                    *prec_and_det(cov))
+
+    def V_step(self, state, obs):
+        q_filtering, tractable_term, p, q_params = state
+        q_backward = self.update_backward(q_filtering, q_params['backward'])
+        tractable_term = expect_quadratic_term_under_backward(tractable_term, q_backward) \
+                + transition_term_integrated_under_backward(q_backward, p.transition)
+
+        dim_z = p.transition.cov.shape[0]
+        tractable_term.c += -constant_terms_from_log_gaussian(dim_z, jnp.linalg.det(q_backward.cov)) +  0.5 * dim_z
+        q_filtering = self.update_filtering(obs, q_filtering, q_params['filtering']['update'])
+        return (q_filtering, tractable_term, p, q_params), q_backward
+
+
+    def get_q_marginals(self, q_filtering, q_backward_seq):
+        def step(next_filt_mean_cov, q_backward):
+            next_filt_mean, next_filt_cov = next_filt_mean_cov
+            backwd_A, backwd_a, backwd_cov = q_backward.weight, q_backward.bias, q_backward.cov
+            mean = backwd_A @ next_filt_mean + backwd_a
+            cov = backwd_A @ next_filt_cov @ backwd_A.T + backwd_cov
+            return (mean, cov), (mean, cov)
+
+        _, (means, covs) = lax.scan(step, init=(q_filtering.mean, q_filtering.cov), xs=q_backward_seq, reverse=True)
+
+        means = jnp.concatenate([means, q_filtering.mean[None,:]])
+        covs = jnp.concatenate([covs, q_filtering.cov[None,:]])
+        return means, covs 
+        
+
+
+    def compute(self, key, obs_seq, p_params, q_params):
+
+        p = GaussianHMM.build_from_dict(p_params, self.p_def)
+        tractable_term = quadratic_term_from_log_gaussian(p.prior)
+        q_filtering = self.init_filtering(obs_seq[0], q_params['filtering']['init'])
+
+        (q_filtering, tractable_term, p, q_params), q_backward_seq = lax.scan(self.V_step, 
+                                                        init=(q_filtering, tractable_term, p, q_params), 
+                                                        xs=obs_seq[1:])
+
+        tractable_term = expect_quadratic_term_under_filtering(tractable_term, q_filtering)
+
+        marginal_means, marginal_covs = self.get_q_marginals(q_filtering, q_backward_seq)
+
+        normal_samples = normal(key, shape=marginal_means.shape)
+        
+        def monte_carlo_sample(normal_sample, marginal_mean, marginal_cov, obs, p):
+            common_term = obs - p.emission.map(marginal_mean + jnp.sqrt(marginal_cov) @ normal_sample)
+            return -0.5 * (common_term.T @ p.emission.prec @ common_term)
+        
+        monte_carlo_term = obs_seq.shape[0] * constant_terms_from_log_gaussian(p.emission.cov.shape[0], p.emission.det_cov) \
+                        + jnp.sum(vmap(monte_carlo_sample, in_axes=(0,0,0,0,None))(normal_samples, marginal_means, marginal_covs, obs_seq, p))
+                        
+        return -(monte_carlo_term + tractable_term)
+        
+
+
+
+
+
+
+         
+
+
+
+
+
+        
+        
+
+            
+
+
+
     
 
 

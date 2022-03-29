@@ -60,6 +60,17 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
 
     return hmm_raw_params, hmm_def
 
+
+def conditioned_params(hmm_params, hmm_def):
+    params = copy.deepcopy(hmm_params)
+    for model_part in hmm_params.keys():
+        conditionnings = hmm_def[model_part]['conditionnings']
+        for component_name, conditionning in conditionnings.items():
+            for param_name, conditionning_type in conditionning.items():
+                params[model_part][component_name][param_name] = _conditionnings[conditionning_type](params[model_part][component_name][param_name])
+    return params 
+
+
 @dataclass
 @tree_util.register_pytree_node_class
 class GaussianHMM:
@@ -83,12 +94,7 @@ class GaussianHMM:
 
     @staticmethod
     def build_from_dict(hmm_params, hmm_def):
-        params = copy.deepcopy(hmm_params)
-        for model_part in hmm_params.keys():
-            conditionnings = hmm_def[model_part]['conditionnings']
-            for component_name, conditionning in conditionnings.items():
-                for param_name, conditionning_type in conditionning.items():
-                    params[model_part][component_name][param_name] = _conditionnings[conditionning_type](params[model_part][component_name][param_name])
+        params = conditioned_params(hmm_params, hmm_def)
 
         prior = Gaussian(params['prior']['mean_params'], 
                         params['prior']['cov_params']['cov'], 
