@@ -35,85 +35,80 @@ def backwd(filt_mean, filt_cov):
     log_cov_diag = out[2*state_dim:]
     return A, a, jnp.diag(jnp.exp(log_cov_diag))
 
-def filt_init(obs):
-    net = hk.nets.MLP((32, 2*state_dim))
-    out = net(obs)
-    mean = out[:state_dim]
-    log_cov_diag = out[state_dim:]
-    return mean, jnp.diag(jnp.exp(log_cov_diag))
 
-def filt_update(obs, filt_mean, filt_cov):
+def filt(obs, filt_mean, filt_cov):
     net = hk.nets.MLP((32, 2*state_dim))
     out = net(jnp.concatenate((obs, filt_mean, jnp.diagonal(filt_cov))))
     mean = out[:state_dim]
     log_cov_diag = out[state_dim:]
     return mean, jnp.diag(jnp.exp(log_cov_diag))
 
-key, *subkeys = jax.random.split(key, 4)
+key, *subkeys = jax.random.split(key, 3)
 
-filt_init_params_init, filtering_init_apply = hk.without_apply_rng(hk.transform(filt_init))
-filt_update_params_init, filt_update_apply = hk.without_apply_rng(hk.transform(filt_update))
-backward_params_init, backward_apply = hk.without_apply_rng(hk.transform(backwd))
+filt_init, filt_apply = hk.without_apply_rng(hk.transform(filt))
+backward_init, backward_apply = hk.without_apply_rng(hk.transform(backwd))
 
 dummy_obs = obs_seqs[0][0]
 dummy_mean = jnp.empty((state_dim,))
 dummy_cov = jnp.empty((state_dim, state_dim))
 
-filt_init_params = filt_init_params_init(subkeys[0], dummy_obs)
-filt_update_params = filt_update_params_init(subkeys[1], dummy_obs, dummy_mean, dummy_cov)
-backward_params = backward_params_init(subkeys[2], dummy_mean, dummy_cov)
+filt_params = filt_init(subkeys[0], dummy_obs, dummy_mean, dummy_cov)
+backward_params = backward_init(subkeys[1], dummy_mean, dummy_cov)
 
 
-q_def = {'filtering':{'init':filtering_init_apply,'update':filt_update_apply}, 
+q_def = {'filtering':filt_apply, 
         'backward':backward_apply}
 
-q_params = {'filtering':{'init':filt_init_params,'update':filt_update_params},
+q_params = {'filtering':filt_params,
             'backward':backward_params}
 #%% 
 
 elbo = NonLinearELBO(p_def, q_def).compute
-num_steps = 100
-key, *subkeys = jax.random.split(key, num_steps+1)
+loss = lambda obs_seq, key, q_params: -elbo(obs_seq, key, p_params, q_params)[0]
 
-loss = lambda key, obs_seq, q_params: elbo(key, obs_seq, p_params, q_params)
+optimizer = optax.adam(learning_rate=1e-3)
 
-optimizer = optax.adam(learning_rate=1e-7)
-
-batch_size = 4
+batch_size = 8
 num_batches = num_seqs // batch_size
      
 @jax.jit
-def q_step(q_params, opt_state, keys, batch):
-    loss_values, grads = jax.vmap(jax.value_and_grad(loss, argnums=2), in_axes=(0,0,None))(keys, batch, q_params)
+def q_step(q_params, opt_state, batch, keys):
+    loss_values, grads = jax.vmap(jax.value_and_grad(loss, argnums=2), in_axes=(0,0,None))(batch, keys, q_params)
     avg_loss_value = jnp.mean(loss_values)
     avg_grads = jax.tree_util.tree_map(jnp.mean, grads)
     updates, opt_state = optimizer.update(avg_grads, opt_state, q_params)
     q_params = optax.apply_updates(q_params, updates)
     return q_params, opt_state, avg_loss_value
 
-num_epochs = 10
+num_epochs = 1000
+key, *subkeys = jax.random.split(key, num_seqs * num_epochs + 1)
+subkeys = jnp.array(subkeys)
 def fit(q_params):
     opt_state = optimizer.init(q_params)
     avg_neg_elbos = []
 
-    def loader(key, obs_seqs):
+    def loader(obs_seqs, keys):
         for index in range(0, seq_length, batch_size):
-            key, *subkeys = jax.random.split(key, batch_size + 1)
-            yield jnp.array(subkeys), obs_seqs[index:index + batch_size]
-    subkeys = jax.random.split(key, num_epochs)
-    for epoch_nb in range(num_epochs):
+            yield obs_seqs[index:index + batch_size], keys[num_seqs*loader.epoch_cnt + index:num_seqs*loader.epoch_cnt + index + batch_size]
+        loader.epoch_cnt +=1
+    loader.epoch_cnt = 0
+
+    for _ in range(num_epochs):
         avg_neg_elbo_epoch = 0.0
-        for (keys, batch) in loader(subkeys[epoch_nb], obs_seqs):
-            q_params, opt_state, avg_neg_elbo = q_step(q_params, opt_state, keys, batch)
-            print(avg_neg_elbo)
+        for (batch, keys) in loader(obs_seqs, subkeys):
+            q_params, opt_state, avg_neg_elbo = q_step(q_params, opt_state, batch, keys)
             avg_neg_elbo_epoch += avg_neg_elbo / num_batches
         avg_neg_elbos.append(avg_neg_elbo_epoch)
 
     return q_params, avg_neg_elbos
 
 fitted_q_params, avg_neg_elbos = fit(q_params)
+key, *subkeys = jax.random.split(key, num_seqs+1)
+elbos, (marginal_means, marginal_covs) = jax.vmap(elbo, in_axes=(0,0,None,None))(obs_seqs, jnp.array(subkeys), p_params, fitted_q_params)
+
+print('Expectation under q_phi against true states:',jnp.mean((marginal_means - state_seqs)**2))
 
 plt.plot(avg_neg_elbos)
 plt.xlabel('Epoch nb') 
 plt.ylabel('$-\mathcal{L}(\\theta,\\phi)$')
-plt.show()
+plt.savefig('train')

@@ -400,19 +400,11 @@ class NonLinearELBO:
         self.p_def = p_def
         self.q_def = q_def 
 
-
-    def init_filtering(self, obs, filtering_init_params):
-        
-        mean, cov = self.q_def['filtering']['init'](obs=obs, 
-                                                params=filtering_init_params)
-
-        return Gaussian(mean, cov, *prec_and_det(cov))
-
     def update_filtering(self, obs, q_filtering:Gaussian, filtering_update_params):
-        mean, cov = self.q_def['filtering']['update'](obs=obs, 
-                                                    filt_mean=q_filtering.mean, 
-                                                    filt_cov=q_filtering.cov, 
-                                                    params=filtering_update_params)
+        mean, cov = self.q_def['filtering'](obs=obs, 
+                                    filt_mean=q_filtering.mean, 
+                                    filt_cov=q_filtering.cov, 
+                                    params=filtering_update_params)
 
         return Gaussian(mean, cov, *prec_and_det(cov))
 
@@ -435,9 +427,8 @@ class NonLinearELBO:
 
         dim_z = p.transition.cov.shape[0]
         tractable_term.c += -constant_terms_from_log_gaussian(dim_z, jnp.linalg.det(q_backward.cov)) +  0.5 * dim_z
-        q_filtering = self.update_filtering(obs, q_filtering, q_params['filtering']['update'])
+        q_filtering = self.update_filtering(obs, q_filtering, q_params['filtering'])
         return (q_filtering, tractable_term, p, q_params), q_backward
-
 
     def get_q_marginals(self, q_filtering, q_backward_seq):
         def step(next_filt_mean_cov, q_backward):
@@ -453,13 +444,11 @@ class NonLinearELBO:
         covs = jnp.concatenate([covs, q_filtering.cov[None,:]])
         return means, covs 
         
-
-
-    def compute(self, key, obs_seq, p_params, q_params):
+    def compute(self, obs_seq, key, p_params, q_params):
 
         p = GaussianHMM.build_from_dict(p_params, self.p_def)
         tractable_term = quadratic_term_from_log_gaussian(p.prior)
-        q_filtering = self.init_filtering(obs_seq[0], q_params['filtering']['init'])
+        q_filtering = self.update_filtering(obs_seq[0], p.prior, q_params['filtering'])
 
         (q_filtering, tractable_term, p, q_params), q_backward_seq = lax.scan(self.V_step, 
                                                         init=(q_filtering, tractable_term, p, q_params), 
@@ -472,13 +461,13 @@ class NonLinearELBO:
         normal_samples = normal(key, shape=marginal_means.shape)
         
         def monte_carlo_sample(normal_sample, marginal_mean, marginal_cov, obs, p):
-            common_term = obs - p.emission.map(marginal_mean + jnp.sqrt(marginal_cov) @ normal_sample)
+            common_term = obs - p.emission.map(marginal_mean + jnp.linalg.cholesky(marginal_cov) @ normal_sample)
             return -0.5 * (common_term.T @ p.emission.prec @ common_term)
         
         monte_carlo_term = obs_seq.shape[0] * constant_terms_from_log_gaussian(p.emission.cov.shape[0], p.emission.det_cov) \
                         + jnp.sum(vmap(monte_carlo_sample, in_axes=(0,0,0,0,None))(normal_samples, marginal_means, marginal_covs, obs_seq, p))
                         
-        return -(monte_carlo_term + tractable_term)
+        return monte_carlo_term + tractable_term, (marginal_means, marginal_covs)
         
 
 

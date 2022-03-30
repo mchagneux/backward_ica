@@ -6,7 +6,7 @@ import tree
 ## Common stateful mappings to define models, wrapped as Pytrees so that they're allowed in all jax transformations
 
 _mappings = {'linear':tree_util.Partial(lambda params, input: params['weight'] @ input + params['bias']), 
-            'nonlinear': tree_util.Partial(lambda params, input: jnp.sin(params['weight'] @ input) + params['bias'])}
+            'nonlinear': tree_util.Partial(lambda params, input: jnp.sin(params['weight'] @ input + params['bias']))}
 
 
 ## Factory of parametrizations, e.g. for conditionned matrices  
