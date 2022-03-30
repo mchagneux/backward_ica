@@ -210,6 +210,20 @@ class LinearELBO(ELBO):
                             prec=prec, 
                             det_cov=jnp.linalg.det(cov))
 
+    def get_q_marginals(self, q_filtering, q_backward_seq):
+        def step(next_filt_mean_cov, q_backward):
+            next_filt_mean, next_filt_cov = next_filt_mean_cov
+            backwd_A, backwd_a, backwd_cov = q_backward.weight, q_backward.bias, q_backward.cov
+            mean = backwd_A @ next_filt_mean + backwd_a
+            cov = backwd_A @ next_filt_cov @ backwd_A.T + backwd_cov
+            return (mean, cov), (mean, cov)
+
+        _, (means, covs) = lax.scan(step, init=(q_filtering.mean, q_filtering.cov), xs=q_backward_seq, reverse=True)
+
+        means = jnp.concatenate([means, q_filtering.mean[None,:]])
+        covs = jnp.concatenate([covs, q_filtering.cov[None,:]])
+        return means, covs 
+
     def compute(self, observations, p_params, q_params, rec_net_params=None):
 
 
@@ -235,13 +249,16 @@ class LinearELBO(ELBO):
                                                     rec_net_params)
             q_filtering = self.update_filtering(observation, q_filtering, q.transition, q.emission)
 
-            return (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params), None
+            return (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params), q_backward
 
-        (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params), _  = lax.scan(f=step, 
+        (quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params), q_backward_seq = lax.scan(f=step, 
                                     init=(quadratic_term, nonlinear_term, q_filtering, p, q, rec_net_params),
                                     xs=observations)
 
-        return -self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering)
+
+        marginal_means, marginal_covs = self.get_q_marginals(q_filtering, q_backward_seq)
+
+        return -self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering), (marginal_means, marginal_covs)
 
 class LinearELBOJohnson(ELBO):
 
@@ -396,9 +413,10 @@ class NonLinearELBOJohnson(ELBO):
 
 class NonLinearELBO:
 
-    def __init__(self, p_def, q_def):
+    def __init__(self, p_def, q_def, num_samples=10):
         self.p_def = p_def
         self.q_def = q_def 
+        self.num_samples = num_samples
 
     def update_filtering(self, obs, q_filtering:Gaussian, filtering_update_params):
         mean, cov = self.q_def['filtering'](obs=obs, 
@@ -443,10 +461,8 @@ class NonLinearELBO:
         means = jnp.concatenate([means, q_filtering.mean[None,:]])
         covs = jnp.concatenate([covs, q_filtering.cov[None,:]])
         return means, covs 
-        
-    def compute(self, obs_seq, key, p_params, q_params):
 
-        p = GaussianHMM.build_from_dict(p_params, self.p_def)
+    def compute_tractable_terms(self, obs_seq, p, q_params):
         tractable_term = quadratic_term_from_log_gaussian(p.prior)
         q_filtering = self.update_filtering(obs_seq[0], p.prior, q_params['filtering'])
 
@@ -458,16 +474,26 @@ class NonLinearELBO:
 
         marginal_means, marginal_covs = self.get_q_marginals(q_filtering, q_backward_seq)
 
-        normal_samples = normal(key, shape=marginal_means.shape)
+        return tractable_term, (marginal_means, marginal_covs)
+
+    def compute(self, obs_seq, key, p_params, q_params):
+
+        p = GaussianHMM.build_from_dict(p_params, self.p_def)
+
+        tractable_term, (marginal_means, marginal_covs) = self.compute_tractable_terms(obs_seq, p, q_params)
+
+        normal_samples = normal(key, shape=(self.num_samples, *marginal_means.shape))
         
-        def monte_carlo_sample(normal_sample, marginal_mean, marginal_cov, obs, p):
-            common_term = obs - p.emission.map(marginal_mean + jnp.linalg.cholesky(marginal_cov) @ normal_sample)
+        marginal_covs_chol = jnp.linalg.cholesky(marginal_covs)
+        def monte_carlo_sample(normal_sample, marginal_mean, marginal_cov_chol, obs, p):
+            common_term = obs - p.emission.map(marginal_mean + marginal_cov_chol @ normal_sample)
             return -0.5 * (common_term.T @ p.emission.prec @ common_term)
         
+        monte_carlo_samples = vmap(vmap(monte_carlo_sample, in_axes=(0,0,0,0,None)), in_axes=(0,None,None,None,None))(normal_samples, marginal_means, marginal_covs_chol, obs_seq, p)
         monte_carlo_term = obs_seq.shape[0] * constant_terms_from_log_gaussian(p.emission.cov.shape[0], p.emission.det_cov) \
-                        + jnp.sum(vmap(monte_carlo_sample, in_axes=(0,0,0,0,None))(normal_samples, marginal_means, marginal_covs, obs_seq, p))
+                        + jnp.sum(jnp.mean(monte_carlo_samples, axis=0))
                         
-        return monte_carlo_term + tractable_term, (marginal_means, marginal_covs)
+        return -(monte_carlo_term + tractable_term)
         
 
 
