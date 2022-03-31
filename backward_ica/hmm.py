@@ -25,7 +25,7 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
         conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'},
                         'mapping_params':{'weight':'diagonal'}}
         transition_def = {'conditionnings':conditionnings, 
-                            'mapping_type':transition_mapping_type}
+                        'mapping_type':transition_mapping_type}
     else: 
         raise NotImplementedError
     key, *subkeys = random.split(key, 3)
@@ -38,7 +38,7 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
         conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'}}
 
         emission_def = {'conditionnings':conditionnings, 
-                            'mapping_type':emission_mapping_type}
+                        'mapping_type':emission_mapping_type}
     else: 
         emission_weight = random.uniform(subkeys[0], shape=(obs_dim, state_dim))
         emission_bias = random.uniform(subkeys[1], shape=(obs_dim,))
@@ -48,7 +48,7 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
         conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'}}
 
         emission_def = {'conditionnings':conditionnings, 
-                            'mapping_type':emission_mapping_type}
+                        'mapping_type':emission_mapping_type}
 
     hmm_raw_params = {'prior':prior, 
             'transition': transition,

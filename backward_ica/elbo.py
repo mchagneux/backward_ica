@@ -109,16 +109,16 @@ def quadratic_term_from_log_gaussian(gaussian:Gaussian):
 
 class ELBO(metaclass=ABCMeta): 
 
-    def __init__(self, p_def, q_def):
-        self.p_def = p_def 
-        self.q_def = q_def 
+    def __init__(self, p_model, q_model):
+        self.p_model = p_model 
+        self.q_model = q_model 
 
     @abstractmethod
     def _get_emission_term(self, *args):
         raise NotImplementedError 
 
     @abstractmethod
-    def compute(self, observations, p_params, q_params, rec_net_params=None):
+    def compute(self, obss, p_params, q_params, rec_net_params=None):
         raise NotImplementedError
     
     def _expect_emission_term_under_backward(self, emission_term, q_backward):
@@ -173,8 +173,8 @@ class ELBO(metaclass=ABCMeta):
 class LinearELBO(ELBO):
 
 
-    def __init__(self, p_def, q_def):
-        super().__init__(p_def, q_def)
+    def __init__(self, p_model, q_model):
+        super().__init__(p_model, q_model)
         
     def _get_emission_term(self, observation, p_emission:LinearGaussianKernel, rec_net):
         A = p_emission.weight
@@ -227,8 +227,8 @@ class LinearELBO(ELBO):
     def compute(self, observations, p_params, q_params, rec_net_params=None):
 
 
-        p = GaussianHMM.build_from_dict(p_params, self.p_def)
-        q = GaussianHMM.build_from_dict(q_params, self.q_def)
+        p = GaussianHMM.build_from_dict(p_params, self.p_model)
+        q = GaussianHMM.build_from_dict(q_params, self.q_model)
 
         quadratic_term, nonlinear_term = self._init_V(observations[0], p, rec_net_params)
         q_filtering = self.init_filtering(observations[0], q.prior, q.emission)
@@ -263,8 +263,8 @@ class LinearELBO(ELBO):
 class LinearELBOJohnson(ELBO):
 
 
-    def __init__(self, p_def, q_def):
-        super().__init__(p_def, q_def)
+    def __init__(self, p_model, q_model):
+        super().__init__(p_model, q_model)
         
     def _get_emission_term(self, observation, p_emission:GaussianKernel, rec_net_params):
         eta1, eta2 = self.rec_net_def(x=observation, params=rec_net_params)
@@ -300,8 +300,8 @@ class LinearELBOJohnson(ELBO):
     def compute(self, observations, p_params, q_params, rec_net_params):
 
 
-        p = GaussianHMM.build_from_dict(p_params, self.p_def)
-        q = GaussianHMM.build_from_dict(q_params, self.q_def)
+        p = GaussianHMM.build_from_dict(p_params, self.p_model)
+        q = GaussianHMM.build_from_dict(q_params, self.q_model)
 
         quadratic_term, nonlinear_term = self._init_V(observations[0], p, rec_net_params)
         q_filtering = self.init_filtering(observations[0], q.prior, q.emission)
@@ -334,8 +334,8 @@ class LinearELBOJohnson(ELBO):
 
 class NonLinearELBOJohnson(ELBO):
 
-    def __init__(self, p_def, q_def, rec_net_def):
-        super().__init__(p_def, q_def)
+    def __init__(self, p_model, q_model, rec_net_def):
+        super().__init__(p_model, q_model)
         self.rec_net_def = rec_net_def
 
 
@@ -355,13 +355,13 @@ class NonLinearELBOJohnson(ELBO):
 
     def init_filtering(self, observation, filtering_init_params):
         
-        mean, cov = self.q_def['filtering']['init'](observation=observation, 
+        mean, cov = self.q_model['filtering']['init'](observation=observation, 
                                                 params=filtering_init_params)
 
         return Gaussian(mean, cov, *prec_and_det(cov))
 
     def update_filtering(self, observation, q_filtering:Gaussian, filtering_update_params):
-        mean, cov = self.q_def['filtering']['update'](observation=observation, 
+        mean, cov = self.q_model['filtering']['update'](observation=observation, 
                                                     filtering_mean=q_filtering.mean, 
                                                     filtering_cov=q_filtering.cov, 
                                                     params=filtering_update_params)
@@ -370,7 +370,7 @@ class NonLinearELBOJohnson(ELBO):
 
     def update_backward(self, q_filtering:Gaussian, backward_params):
 
-        A, a, cov = self.q_def['backward'](filtering_mean=q_filtering.mean, 
+        A, a, cov = self.q_model['backward'](filtering_mean=q_filtering.mean, 
                                         filtering_cov=q_filtering.cov, 
                                         params=backward_params)
 
@@ -381,7 +381,7 @@ class NonLinearELBOJohnson(ELBO):
 
     def compute(self, observations, p_params, q_params, rec_net_params):
 
-        p = GaussianHMM.build_from_dict(p_params, self.p_def)
+        p = GaussianHMM.build_from_dict(p_params, self.p_model)
 
         quadratic_term, nonlinear_term = self._init_V(observations[0], p, rec_net_params)
         q_filtering = self.init_filtering(observations[0], q_params['filtering']['init'])
@@ -409,46 +409,15 @@ class NonLinearELBOJohnson(ELBO):
                                     xs=observations)
 
         return -self._expect_V_under_filtering(quadratic_term, nonlinear_term, q_filtering)
-    
 
-class NonLinearELBO:
+class Q(metaclass=ABCMeta):
+    def __init__(self, q_model):
+        self.model = q_model  
 
-    def __init__(self, p_def, q_def, num_samples=10):
-        self.p_def = p_def
-        self.q_def = q_def 
-        self.num_samples = num_samples
+    def format_params(self, params):
+        return params  
 
-    def update_filtering(self, obs, q_filtering:Gaussian, filtering_update_params):
-        mean, cov = self.q_def['filtering'](obs=obs, 
-                                    filt_mean=q_filtering.mean, 
-                                    filt_cov=q_filtering.cov, 
-                                    params=filtering_update_params)
-
-        return Gaussian(mean, cov, *prec_and_det(cov))
-
-    def update_backward(self, q_filtering:Gaussian, backward_params):
-
-        A, a, cov = self.q_def['backward'](filt_mean=q_filtering.mean, 
-                                        filt_cov=q_filtering.cov, 
-                                        params=backward_params)
-
-        return LinearGaussianKernel(_mappings['linear'], 
-                                    {'weight':A, 'bias':a},
-                                    cov,
-                                    *prec_and_det(cov))
-
-    def V_step(self, state, obs):
-        q_filtering, tractable_term, p, q_params = state
-        q_backward = self.update_backward(q_filtering, q_params['backward'])
-        tractable_term = expect_quadratic_term_under_backward(tractable_term, q_backward) \
-                + transition_term_integrated_under_backward(q_backward, p.transition)
-
-        dim_z = p.transition.cov.shape[0]
-        tractable_term.c += -constant_terms_from_log_gaussian(dim_z, jnp.linalg.det(q_backward.cov)) +  0.5 * dim_z
-        q_filtering = self.update_filtering(obs, q_filtering, q_params['filtering'])
-        return (q_filtering, tractable_term, p, q_params), q_backward
-
-    def get_q_marginals(self, q_filtering, q_backward_seq):
+    def get_marginals(self, q_filtering, q_backward_seq):
         def step(next_filt_mean_cov, q_backward):
             next_filt_mean, next_filt_cov = next_filt_mean_cov
             backwd_A, backwd_a, backwd_cov = q_backward.weight, q_backward.bias, q_backward.cov
@@ -462,36 +431,149 @@ class NonLinearELBO:
         covs = jnp.concatenate([covs, q_filtering.cov[None,:]])
         return means, covs 
 
+    @abstractmethod
+    def init_filtering(self, *args):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def update_filtering(self, *args):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def update_backward(self, *args):
+        raise NotImplementedError
+    
+class QFromForward(Q):
+    def __init__(self, q_model):
+        self.model = q_model 
+        super().__init__(q_model)
+
+    def format_params(self, params):
+        return GaussianHMM.build_from_dict(params, self.model)
+
+    def init_filtering(self, obs, prior, q_params):
+        mean, cov = kalman_init(obs, prior, q_params.emission)[2:]
+        return Gaussian(mean, cov, *prec_and_det(cov))
+
+    def update_filtering(self, obs, q_filtering, q_params):
+        mean, cov = kalman_filter_step(q_filtering.mean, q_filtering.cov, obs, q_params.transition, q_params.emission)[2:]
+        return Gaussian(mean, cov, *prec_and_det(cov))
+
+    def update_backward(self, q_filtering, q_params):
+        q_transition = q_params.transition
+        prec = q_transition.weight.T @ q_transition.prec @ q_transition.weight + q_filtering.prec
+        cov = jnp.linalg.inv(prec)
+
+        common_term = q_transition.weight.T @ q_transition.prec
+        A = cov @ common_term
+        a = cov @ (q_filtering.prec @ q_filtering.mean - common_term @  q_transition.bias)
+
+        return LinearGaussianKernel(mapping=_mappings['linear'], 
+                            mapping_params={'weight':A, 'bias':a},
+                            cov=cov,
+                            prec=prec, 
+                            det_cov=jnp.linalg.det(cov))
+
+class QFromBackward(Q):
+    def __init__(self, q_model):
+        super().__init__(q_model)
+
+    def init_filtering(self, obs, prior, q_params):
+        mean, cov = self.model['filtering']['update'](obs=obs,
+                                                    pred_mean=prior.mean,
+                                                    pred_cov=prior.cov,
+                                                    params=q_params['filtering']['update'])
+        return Gaussian(mean, cov, *prec_and_det(cov))
+
+    def update_filtering(self, obs, q_filtering:Gaussian, q_params):
+
+        pred_mean, pred_cov = self.model['filtering']['predict'](filt_mean=q_filtering.mean, 
+                                                            filt_cov=q_filtering.cov, 
+                                                            params=q_params['filtering']['predict'])
+
+
+        mean, cov = self.model['filtering']['update'](obs=obs,
+                                                    pred_mean=pred_mean,
+                                                    pred_cov=pred_cov,
+                                                    params=q_params['filtering']['update'])
+
+        return Gaussian(mean, cov, *prec_and_det(cov))
+
+    def update_backward(self, q_filtering:Gaussian, q_params):
+
+        A, a, cov = self.model['backward'](filt_mean=q_filtering.mean, 
+                                        filt_cov=q_filtering.cov, 
+                                        params=q_params['backward'])
+
+        return LinearGaussianKernel(_mappings['linear'], 
+                                    {'weight':A, 'bias':a},
+                                    cov,
+                                    *prec_and_det(cov))
+
+class NonLinearELBO:
+
+    def __init__(self, p_model, q:Q, num_samples=1):
+        self.p_model = p_model
+        self.q = q
+        self.num_samples = num_samples
+
+    def V_step(self, state, obs):
+        q_filtering, tractable_term, p, q_params = state
+        q_backward = self.q.update_backward(q_filtering, q_params)
+        tractable_term = expect_quadratic_term_under_backward(tractable_term, q_backward) \
+                + transition_term_integrated_under_backward(q_backward, p.transition)
+
+
+        dim_z = p.transition.cov.shape[0]
+        tractable_term.c += -constant_terms_from_log_gaussian(dim_z, jnp.linalg.det(q_backward.cov)) +  0.5 * dim_z
+        q_filtering = self.q.update_filtering(obs, q_filtering, q_params)
+        return (q_filtering, tractable_term, p, q_params), q_backward
+
     def compute_tractable_terms(self, obs_seq, p, q_params):
         tractable_term = quadratic_term_from_log_gaussian(p.prior)
-        q_filtering = self.update_filtering(obs_seq[0], p.prior, q_params['filtering'])
+
+        q_filtering = self.q.init_filtering(obs_seq[0], p.prior, q_params)
 
         (q_filtering, tractable_term, p, q_params), q_backward_seq = lax.scan(self.V_step, 
                                                         init=(q_filtering, tractable_term, p, q_params), 
                                                         xs=obs_seq[1:])
 
-        tractable_term = expect_quadratic_term_under_filtering(tractable_term, q_filtering)
+        tractable_term = expect_quadratic_term_under_filtering(tractable_term, q_filtering) \
+                    - constant_terms_from_log_gaussian(q_filtering.cov.shape[0], q_filtering.det_cov) \
+                    + 0.5*q_filtering.cov.shape[0]
 
-        marginal_means, marginal_covs = self.get_q_marginals(q_filtering, q_backward_seq)
 
-        return tractable_term, (marginal_means, marginal_covs)
-
+        return tractable_term, (q_filtering, q_backward_seq)
+        
     def compute(self, obs_seq, key, p_params, q_params):
 
-        p = GaussianHMM.build_from_dict(p_params, self.p_def)
+        p = GaussianHMM.build_from_dict(p_params, self.p_model)
+        q_params = self.q.format_params(q_params)
 
-        tractable_term, (marginal_means, marginal_covs) = self.compute_tractable_terms(obs_seq, p, q_params)
+        tractable_term, (q_filtering, q_backward_seq) = self.compute_tractable_terms(obs_seq, p, q_params)
+        marginal_means, marginal_covs = self.q.get_marginals(q_filtering, q_backward_seq)
 
-        normal_samples = normal(key, shape=(self.num_samples, *marginal_means.shape))
         
-        marginal_covs_chol = jnp.linalg.cholesky(marginal_covs)
+        def exact_expectation(marginal_mean, marginal_cov, obs, p):
+            p_emission = p.emission
+            A = p_emission.weight
+            b = p_emission.bias - obs
+            Omega = p_emission.prec
+            return expect_quadratic_term_under_filtering(-0.5*QuadTerm.from_A_b_Omega(A, b, Omega), Gaussian(marginal_mean, marginal_cov, *prec_and_det(marginal_cov)))
+
         def monte_carlo_sample(normal_sample, marginal_mean, marginal_cov_chol, obs, p):
             common_term = obs - p.emission.map(marginal_mean + marginal_cov_chol @ normal_sample)
             return -0.5 * (common_term.T @ p.emission.prec @ common_term)
+
+        # normal_samples = normal(key, shape=(self.num_samples, *marginal_means.shape))
+        # marginal_covs_chol = jnp.linalg.cholesky(marginal_covs)
+        # monte_carlo_samples = vmap(vmap(monte_carlo_sample, in_axes=(0,0,0,0,None)), in_axes=(0,None,None,None,None))(normal_samples, marginal_means, marginal_covs_chol, obs_seq, p)
+        # monte_carlo_term = jnp.sum(jnp.mean(monte_carlo_samples, axis=0))
         
-        monte_carlo_samples = vmap(vmap(monte_carlo_sample, in_axes=(0,0,0,0,None)), in_axes=(0,None,None,None,None))(normal_samples, marginal_means, marginal_covs_chol, obs_seq, p)
-        monte_carlo_term = obs_seq.shape[0] * constant_terms_from_log_gaussian(p.emission.cov.shape[0], p.emission.det_cov) \
-                        + jnp.sum(jnp.mean(monte_carlo_samples, axis=0))
+        monte_carlo_term = jnp.sum(vmap(exact_expectation, in_axes=(0,0,0,None))(marginal_means, marginal_covs, obs_seq, p))
+        
+        monte_carlo_term += obs_seq.shape[0] * constant_terms_from_log_gaussian(p.emission.cov.shape[0], p.emission.det_cov)
+
                         
         return -(monte_carlo_term + tractable_term)
         
@@ -517,14 +599,14 @@ class NonLinearELBO:
     
 
 
-# def get_neg_elbo(p_def, q_def, aux_defs=None):
+# def get_neg_elbo(p_model, q_model, aux_defs=None):
 
-#     if p_def['transition']['mapping_type'] == 'linear':
-#         if p_def['emission']['mapping_type'] == 'linear':
-#             return LinearELBO(p_def, q_def).compute
-#         elif p_def['emission']['mapping_type'] == 'nonlinear': 
+#     if p_model['transition']['mapping_type'] == 'linear':
+#         if p_model['emission']['mapping_type'] == 'linear':
+#             return LinearELBO(p_model, q_model).compute
+#         elif p_model['emission']['mapping_type'] == 'nonlinear': 
 #             if aux_defs is None: raise NotImplementedError
-#             return NonLinearELBO(p_def, q_def, aux_defs).compute
+#             return NonLinearELBO(p_model, q_model, aux_defs).compute
     # else: 
     #     raise NotImplementedError
  
