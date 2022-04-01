@@ -3,9 +3,9 @@ from turtle import back, backward
 from typing import * 
 from jax import vmap, lax, config, numpy as jnp
 from jax.tree_util import register_pytree_node_class, Partial
-from .hmm import GaussianHMM
+from .hmm import GaussianHMM, update_backward as hmm_backward_update
 
-from .kalman import filter_step as kalman_filter_step, init as kalman_init
+from .kalman import filter_step as kalman_filter_step, init as kalman_init, predict as kalman_predict, update as kalman_update
 from .utils import GaussianKernel, _mappings, LinearGaussianKernel, Gaussian, prec_and_det, LinearGaussianKernel
 from typing import * 
 from abc import ABCMeta, abstractmethod
@@ -417,7 +417,19 @@ class Q(metaclass=ABCMeta):
     def format_params(self, params):
         return params  
 
-    def get_marginals(self, q_filtering, q_backward_seq):
+    @abstractmethod
+    def init_filtering(self, obs, prior, q_params):
+        raise NotImplementedError
+        
+    @abstractmethod
+    def update_filtering(self, obs, q_filtering, q_params):
+        raise NotImplementedError
+        
+    @abstractmethod
+    def update_backward(self, q_filtering, q_params):
+        raise NotImplementedError
+
+    def marginals_from_filtering_and_backward(self, q_filtering, q_backward_seq):
         def step(next_filt_mean_cov, q_backward):
             next_filt_mean, next_filt_cov = next_filt_mean_cov
             backwd_A, backwd_a, backwd_cov = q_backward.weight, q_backward.bias, q_backward.cov
@@ -431,21 +443,24 @@ class Q(metaclass=ABCMeta):
         covs = jnp.concatenate([covs, q_filtering.cov[None,:]])
         return means, covs 
 
-    @abstractmethod
-    def init_filtering(self, *args):
-        raise NotImplementedError
-    
-    @abstractmethod
-    def update_filtering(self, *args):
-        raise NotImplementedError
-    
-    @abstractmethod
-    def update_backward(self, *args):
-        raise NotImplementedError
-    
+    def marginals(self, obs_seq, q_params, prior):
+
+        q_filtering = self.init_filtering(obs_seq[0], prior, q_params)
+        
+        def forward_step(q_filtering, obs):
+            q_backward = self.update_backward(q_filtering, q_params)
+            q_filtering = self.update_filtering(obs, q_filtering, q_params)
+            return q_filtering, q_backward
+        
+
+        q_filtering, q_backward_seq = lax.scan(forward_step, 
+                                        init=q_filtering,
+                                        xs=obs_seq[1:])
+
+        return self.marginals_from_filtering_and_backward(q_filtering, q_backward_seq)
+
 class QFromForward(Q):
     def __init__(self, q_model):
-        self.model = q_model 
         super().__init__(q_model)
 
     def format_params(self, params):
@@ -460,19 +475,16 @@ class QFromForward(Q):
         return Gaussian(mean, cov, *prec_and_det(cov))
 
     def update_backward(self, q_filtering, q_params):
-        q_transition = q_params.transition
-        prec = q_transition.weight.T @ q_transition.prec @ q_transition.weight + q_filtering.prec
-        cov = jnp.linalg.inv(prec)
-
-        common_term = q_transition.weight.T @ q_transition.prec
-        A = cov @ common_term
-        a = cov @ (q_filtering.prec @ q_filtering.mean - common_term @  q_transition.bias)
+        A, a, cov, prec = hmm_backward_update(q_filtering, q_params)
 
         return LinearGaussianKernel(mapping=_mappings['linear'], 
                             mapping_params={'weight':A, 'bias':a},
                             cov=cov,
                             prec=prec, 
                             det_cov=jnp.linalg.det(cov))
+
+    def marginals(self, obs_seq, q_params, prior):
+        return super().marginals(obs_seq, self.format_params(q_params), prior)
 
 class QFromBackward(Q):
     def __init__(self, q_model):
@@ -488,9 +500,8 @@ class QFromBackward(Q):
     def update_filtering(self, obs, q_filtering:Gaussian, q_params):
 
         pred_mean, pred_cov = self.model['filtering']['predict'](filt_mean=q_filtering.mean, 
-                                                            filt_cov=q_filtering.cov, 
-                                                            params=q_params['filtering']['predict'])
-
+                                                    filt_cov=q_filtering.cov, 
+                                                    params=q_params['filtering']['predict'])
 
         mean, cov = self.model['filtering']['update'](obs=obs,
                                                     pred_mean=pred_mean,
@@ -551,7 +562,7 @@ class NonLinearELBO:
         q_params = self.q.format_params(q_params)
 
         tractable_term, (q_filtering, q_backward_seq) = self.compute_tractable_terms(obs_seq, p, q_params)
-        marginal_means, marginal_covs = self.q.get_marginals(q_filtering, q_backward_seq)
+        marginal_means, marginal_covs = self.q.marginals_from_filtering_and_backward(q_filtering, q_backward_seq)
 
         
         def exact_expectation(marginal_mean, marginal_cov, obs, p):

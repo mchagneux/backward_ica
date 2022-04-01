@@ -3,6 +3,15 @@ from .utils import _conditionnings, _mappings, Gaussian, GaussianKernel, LinearG
 from dataclasses import dataclass
 import copy 
 
+def update_backward(q_filtering, q_params):
+    q_transition = q_params.transition
+    prec = q_transition.weight.T @ q_transition.prec @ q_transition.weight + q_filtering.prec
+    cov = jnp.linalg.inv(prec)
+
+    common_term = q_transition.weight.T @ q_transition.prec
+    A = cov @ common_term
+    a = cov @ (q_filtering.prec @ q_filtering.mean - common_term @  q_transition.bias)
+    return A, a, cov, prec 
 
 def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='linear', emission_mapping_type='linear'):
     default_state_cov = 1e-3*jnp.ones(state_dim)
