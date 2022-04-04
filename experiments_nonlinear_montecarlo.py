@@ -15,7 +15,7 @@ from backward_ica.utils import LinearGaussianKernel, _mappings
 config.update("jax_enable_x64", True)
 import copy
 #%% Hyperparameters 
-seed = 909
+seed = 514
 
 state_dim, obs_dim = 1,2
 seq_length = 32
@@ -23,28 +23,22 @@ num_seqs = 512
 
 batch_size = 8
 learning_rate = 1e-3
-num_epochs = 150
+num_epochs = 500
 
 q_forward_linear_gaussian = False 
-use_true_predict = False 
-use_true_update = False 
 use_true_backward_update = True
 key = jax.random.PRNGKey(seed)
 #%% Define p 
 
-key, *subkeys = jax.random.split(key,3)
-p_params, p_model = hmm.get_random_params(subkeys[0], 
+key, subkey = jax.random.split(key, 1)
+p_params, p_model = hmm.get_random_params(subkey, 
                                     state_dim, 
                                     obs_dim,
                                     transition_mapping_type='linear',
                                     emission_mapping_type='linear')
 
+
 p = hmm.GaussianHMM.build_from_dict(p_params, p_model)
-q_params, q_model = hmm.get_random_params(subkeys[1], 
-                                    state_dim, 
-                                    obs_dim,
-                                    transition_mapping_type='linear',
-                                    emission_mapping_type='linear')
 
 key, *subkeys = jax.random.split(key, num_seqs+1)
 state_seqs, obs_seqs = jax.vmap(p.sample, in_axes=(0, None))(jnp.array(subkeys), seq_length)
@@ -58,91 +52,70 @@ d = state_dim
 
 if not q_forward_linear_gaussian: 
 
-    def backwd(filt_mean, filt_cov):
-        net = hk.nets.MLP((8, d**2 + d + d*(d+1) // 2))
-        out = net(jnp.concatenate((filt_mean, jnp.tril(filt_cov).flatten())))
+    def backwd_update(shared_param, filt_mean, filt_cov):
+        net = hk.nets.MLP((8,8, d**2 + d + d*(d+1) // 2))
+        out = net(jnp.concatenate((shared_param, filt_mean, jnp.tril(filt_cov).flatten())))
         A = out[:d**2].reshape((d,d))
         a = out[d**2:d**2+d]
         cov = jnp.zeros((d,d))
         cov = cov.at[jnp.tril_indices(d)].set(out[d**2+d:])
         return A, a, cov @ cov.T
 
-    def filt_predict(filt_mean, filt_cov):
-        net = hk.nets.MLP((8, d + d*(d+1) // 2))
-        out = net(jnp.concatenate((filt_mean, jnp.tril(filt_cov).flatten())))
+    def filt_update(shared_param, obs, filt_mean, filt_cov):
+        # filt_cov_filt_mean = filt_cov @ filt_mean
+        # inv_filt_cov_filt_mean = inv_filt_cov @ filt_mean
+        filt_scale_tril = jnp.linalg.cholesky(filt_cov)
+
+        net = hk.nets.MLP((8,8, d + d*(d+1) // 2))
+    
+        out = net(jnp.concatenate((shared_param, obs, filt_mean, jnp.tril(filt_scale_tril).flatten())))
         mean = out[:d]
         cov = jnp.zeros((d,d))
         cov = cov.at[jnp.tril_indices(d)].set(out[d:])
         return mean, cov @ cov.T
 
-    def filt_update(obs, pred_mean, pred_cov):
-        net = hk.nets.MLP((8, d + d*(d+1) // 2))
-        out = net(jnp.concatenate((obs, pred_mean, jnp.tril(pred_cov).flatten())))
-        mean = out[:d]
-        cov = jnp.zeros((d,d))
-        cov = cov.at[jnp.tril_indices(d)].set(out[d:])
-        return mean, cov @ cov.T
+    infer_key = jax.random.PRNGKey(1)
 
-    key, *subkeys = jax.random.split(key, 4)
-
-    filt_predict_init, filt_predict_apply = hk.without_apply_rng(hk.transform(filt_predict))
     filt_update_init, filt_update_apply = hk.without_apply_rng(hk.transform(filt_update))
-    backward_init, backward_apply = hk.without_apply_rng(hk.transform(backwd))
+    backward_init, backward_apply = hk.without_apply_rng(hk.transform(backwd_update))
 
     dummy_obs = obs_seqs[0][0]
     dummy_mean = jnp.empty((state_dim,))
     dummy_cov = jnp.empty((state_dim, state_dim))
+    infer_key, *subkeys = jax.random.split(4)
+    filt_update_params = filt_update_init(subkeys[0], dummy_obs, dummy_mean, dummy_cov)
+    backward_params = backward_init(subkeys[1], dummy_mean, dummy_cov)
+    shared_param = jax.random.uniform(subkeys[2],(1000,))
 
-    filt_predict_params = filt_predict_init(subkeys[0], dummy_mean, dummy_cov)
-    filt_update_params = filt_update_init(subkeys[1], dummy_obs, dummy_mean, dummy_cov)
-    backward_params = backward_init(subkeys[2], dummy_mean, dummy_cov)
-    
-    if use_true_predict: 
-        def filt_predict_apply(filt_mean, filt_cov, params):
-            weight = jnp.diag(params['mapping_params']['weight'])
-            bias = params['mapping_params']['bias']
-            cov = jnp.diag(jnp.exp(params['cov_params']['cov']))
-            params = LinearGaussianKernel(_mappings['linear'], 
-                                        {'weight':weight,'bias':bias},
-                                        cov,
-                                        *prec_and_det(cov))
-            return kalman_predict(filt_mean, filt_cov, params)
-        filt_predict_params = q_params['transition']
-
-    if use_true_update:
-        def filt_update_apply(obs, pred_mean, pred_cov, params):
-            cov = jnp.diag(jnp.exp(params['cov_params']['cov']))
-            params = LinearGaussianKernel(_mappings['linear'], 
-                                params['mapping_params'],
-                                cov,
-                                *prec_and_det(cov))
-            return kalman_update(pred_mean, pred_cov, obs, params)
-        filt_update_params = q_params['emission']
-    
     if use_true_backward_update:
-        dummy_namedtuple = namedtuple('dummy_named_tuple',['transition'])
-
+        dummy_namedtuple = namedtuple('dummy_namedtuple',['transition'])
         def backward_apply(filt_mean, filt_cov, params):
             weight = jnp.diag(params['mapping_params']['weight'])
             bias = params['mapping_params']['bias']
             cov = jnp.diag(jnp.exp(params['cov_params']['cov']))
-            params = LinearGaussianKernel(_mappings['linear'], 
+            params = LinearGaussianKernel(_mappings['linear'],
                                         {'weight':weight,'bias':bias},
                                         cov,
                                         *prec_and_det(cov))
             return hmm.update_backward(Gaussian(filt_mean, filt_cov, *prec_and_det(filt_cov)), dummy_namedtuple(transition=params))[:-1]
+        q_params, p_model = hmm.get_random_params(subkeys[1], 
+                                    state_dim, 
+                                    obs_dim,
+                                    transition_mapping_type='linear',
+                                    emission_mapping_type='linear')
         backward_params = q_params['transition']
-    
-    q_model = {'filtering':{'predict':filt_predict_apply, 'update':filt_update_apply},
+        
+    q_model = {'filtering':{'update':filt_update_apply},
             'backward':backward_apply}
 
-    q_params = {'filtering':{'predict':filt_predict_params, 'update':filt_update_params},
-                'backward':backward_params}
+    q_params = {'filtering':{'update':filt_update_params},
+                'backward':backward_params,
+                'shared_param':shared_param}
 
     Q = QFromBackward
 
 else: 
-    key, subkey = jax.random.split(key, 2)
+    infer_key, subkey = jax.random.split(key, 2)
     q_params, q_model = hmm.get_random_params(subkey, state_dim, obs_dim, 'linear','linear')
     Q = QFromForward
 
@@ -201,15 +174,13 @@ fitted_q_params, avg_elbos = fit(q_params)
 plt.plot(avg_elbos, label='$\mathcal{L}(\\theta,\\phi)$')
 plt.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$' )
 plt.xlabel('Epoch') 
-plt.tight_layout()
 plt.title(f'Epoch = {num_seqs} sequences of {seq_length} observations, $d_Z = {state_dim}, d_X = {obs_dim}$')
 plt.legend()
-plt.autoscale(True)
 plt.show()
 #%% Visualing result q against p 
 
 
-get_marginals = lambda obs_seq: Q(q_model).marginals(obs_seq, fitted_q_params, p.prior)
+get_marginals = lambda obs_seq: Q(q_model).marginals(obs_seq, fitted_q_params, p)
 smoothed_means, smoothed_covs = jax.vmap(get_marginals)(obs_seqs)
 
 smoothed_means_kalman, smoothed_covs_kalman = jax.vmap(kalman_smooth, in_axes=(0, None))(obs_seqs, p)

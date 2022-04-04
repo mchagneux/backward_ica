@@ -114,9 +114,9 @@ class Q(metaclass=ABCMeta):
     def format_params(self, params):
         return params  
 
-    @abstractmethod
-    def init_filtering(self, obs, prior, q_params):
-        raise NotImplementedError
+    def init_filtering(self, obs, p):
+        mean, cov = kalman_init(obs, p.prior, p.emission)[2:]
+        return Gaussian(mean, cov, *prec_and_det(cov))
         
     @abstractmethod
     def update_filtering(self, obs, q_filtering, q_params):
@@ -140,10 +140,10 @@ class Q(metaclass=ABCMeta):
         covs = jnp.concatenate([covs, q_filtering.cov[None,:]])
         return means, covs 
 
-    def marginals(self, obs_seq, q_params, prior):
+    def marginals(self, obs_seq, q_params, p):
 
-        q_filtering = self.init_filtering(obs_seq[0], prior, q_params)
-        
+        q_filtering = self.init_filtering(obs_seq[0], p)
+
         def forward_step(q_filtering, obs):
             q_backward = self.update_backward(q_filtering, q_params)
             q_filtering = self.update_filtering(obs, q_filtering, q_params)
@@ -163,9 +163,6 @@ class QFromForward(Q):
     def format_params(self, params):
         return GaussianHMM.build_from_dict(params, self.model)
 
-    def init_filtering(self, obs, prior, q_params):
-        mean, cov = kalman_init(obs, prior, q_params.emission)[2:]
-        return Gaussian(mean, cov, *prec_and_det(cov))
 
     def update_filtering(self, obs, q_filtering, q_params):
         mean, cov = kalman_filter_step(q_filtering.mean, q_filtering.cov, obs, q_params.transition, q_params.emission)[2:]
@@ -180,29 +177,18 @@ class QFromForward(Q):
                             prec=prec, 
                             det_cov=jnp.linalg.det(cov))
 
-    def marginals(self, obs_seq, q_params, prior):
-        return super().marginals(obs_seq, self.format_params(q_params), prior)
+    def marginals(self, obs_seq, q_params, p):
+        return super().marginals(obs_seq, self.format_params(q_params), p)
 
 class QFromBackward(Q):
     def __init__(self, q_model):
         super().__init__(q_model)
 
-    def init_filtering(self, obs, prior, q_params):
-        mean, cov = self.model['filtering']['update'](obs=obs,
-                                                    pred_mean=prior.mean,
-                                                    pred_cov=prior.cov,
-                                                    params=q_params['filtering']['update'])
-        return Gaussian(mean, cov, *prec_and_det(cov))
-
     def update_filtering(self, obs, q_filtering:Gaussian, q_params):
 
-        pred_mean, pred_cov = self.model['filtering']['predict'](filt_mean=q_filtering.mean, 
-                                                    filt_cov=q_filtering.cov, 
-                                                    params=q_params['filtering']['predict'])
-
         mean, cov = self.model['filtering']['update'](obs=obs,
-                                                    pred_mean=pred_mean,
-                                                    pred_cov=pred_cov,
+                                                    filt_mean=q_filtering.mean,
+                                                    filt_cov=q_filtering.cov,
                                                     params=q_params['filtering']['update'])
 
         return Gaussian(mean, cov, *prec_and_det(cov))
@@ -240,7 +226,8 @@ class NonLinearELBO:
     def compute_tractable_terms(self, obs_seq, p, q_params):
         tractable_term = quadratic_term_from_log_gaussian(p.prior)
 
-        q_filtering = self.q.init_filtering(obs_seq[0], p.prior, q_params)
+        q_filtering = self.q.init_filtering(obs_seq[0], p)
+        
 
         (q_filtering, tractable_term, p, q_params), q_backward_seq = lax.scan(self.V_step, 
                                                         init=(q_filtering, tractable_term, p, q_params), 
