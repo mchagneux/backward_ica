@@ -1,6 +1,6 @@
 #%%
 from collections import namedtuple
-from backward_ica.elbo import LinearELBO, NonLinearELBO, QFromBackward, QFromForward
+from backward_ica.elbo import NonLinearELBO, QFromBackward, QFromForward
 import backward_ica.hmm as hmm
 from backward_ica.kalman import filter as kalman_filter, smooth as kalman_smooth, predict as kalman_predict, update as kalman_update
 import jax 
@@ -11,12 +11,11 @@ import numpy as np
 from jax import config 
 import matplotlib.pyplot as plt
 from  backward_ica.utils import Gaussian, prec_and_det
-
-from backward_ica.utils import LinearGaussianKernel
+from backward_ica.utils import LinearGaussianKernel, _mappings
 config.update("jax_enable_x64", True)
-
+import copy
 #%% Hyperparameters 
-seed = 54
+seed = 909
 
 state_dim, obs_dim = 1,2
 seq_length = 32
@@ -24,24 +23,28 @@ num_seqs = 512
 
 batch_size = 8
 learning_rate = 1e-3
-num_epochs = 500
+num_epochs = 150
 
 q_forward_linear_gaussian = False 
 use_true_predict = False 
 use_true_update = False 
-use_true_backward_update = False 
+use_true_backward_update = True
 key = jax.random.PRNGKey(seed)
 #%% Define p 
 
-key, subkey = jax.random.split(key,2)
-p_params, p_model = hmm.get_random_params(subkey, 
+key, *subkeys = jax.random.split(key,3)
+p_params, p_model = hmm.get_random_params(subkeys[0], 
                                     state_dim, 
                                     obs_dim,
                                     transition_mapping_type='linear',
                                     emission_mapping_type='linear')
 
 p = hmm.GaussianHMM.build_from_dict(p_params, p_model)
-p_copy = hmm.GaussianHMM.build_from_dict(p_params, p_model)
+q_params, q_model = hmm.get_random_params(subkeys[1], 
+                                    state_dim, 
+                                    obs_dim,
+                                    transition_mapping_type='linear',
+                                    emission_mapping_type='linear')
 
 key, *subkeys = jax.random.split(key, num_seqs+1)
 state_seqs, obs_seqs = jax.vmap(p.sample, in_axes=(0, None))(jnp.array(subkeys), seq_length)
@@ -95,17 +98,40 @@ if not q_forward_linear_gaussian:
     backward_params = backward_init(subkeys[2], dummy_mean, dummy_cov)
     
     if use_true_predict: 
-        filt_predict_apply = lambda filt_mean, filt_cov, params:kalman_predict(filt_mean, filt_cov, params)
-        filt_predict_params = p_copy.transition
-    
+        def filt_predict_apply(filt_mean, filt_cov, params):
+            weight = jnp.diag(params['mapping_params']['weight'])
+            bias = params['mapping_params']['bias']
+            cov = jnp.diag(jnp.exp(params['cov_params']['cov']))
+            params = LinearGaussianKernel(_mappings['linear'], 
+                                        {'weight':weight,'bias':bias},
+                                        cov,
+                                        *prec_and_det(cov))
+            return kalman_predict(filt_mean, filt_cov, params)
+        filt_predict_params = q_params['transition']
+
     if use_true_update:
-        filt_update_apply = lambda obs, pred_mean, pred_cov, params: kalman_update(pred_mean, pred_cov, obs, params)
-        filt_update_params = p_copy.emission 
+        def filt_update_apply(obs, pred_mean, pred_cov, params):
+            cov = jnp.diag(jnp.exp(params['cov_params']['cov']))
+            params = LinearGaussianKernel(_mappings['linear'], 
+                                params['mapping_params'],
+                                cov,
+                                *prec_and_det(cov))
+            return kalman_update(pred_mean, pred_cov, obs, params)
+        filt_update_params = q_params['emission']
     
     if use_true_backward_update:
-        backward_apply = lambda filt_mean, filt_cov, params: hmm.update_backward(Gaussian(filt_mean, filt_cov, *prec_and_det(filt_cov)), params)[:-1]
         dummy_namedtuple = namedtuple('dummy_named_tuple',['transition'])
-        backward_params = dummy_namedtuple(p_copy.transition)
+
+        def backward_apply(filt_mean, filt_cov, params):
+            weight = jnp.diag(params['mapping_params']['weight'])
+            bias = params['mapping_params']['bias']
+            cov = jnp.diag(jnp.exp(params['cov_params']['cov']))
+            params = LinearGaussianKernel(_mappings['linear'], 
+                                        {'weight':weight,'bias':bias},
+                                        cov,
+                                        *prec_and_det(cov))
+            return hmm.update_backward(Gaussian(filt_mean, filt_cov, *prec_and_det(filt_cov)), dummy_namedtuple(transition=params))[:-1]
+        backward_params = q_params['transition']
     
     q_model = {'filtering':{'predict':filt_predict_apply, 'update':filt_update_apply},
             'backward':backward_apply}
@@ -210,7 +236,7 @@ def plot_relative_errors(seq_nb):
     plt.autoscale(True)
     plt.show()
 
-for seq_nb in range(2):
+for seq_nb in range(5):
     plot_relative_errors(seq_nb)
 #%%
 # import numpy as np
