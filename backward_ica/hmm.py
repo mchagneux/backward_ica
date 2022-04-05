@@ -2,6 +2,8 @@ from jax import numpy as jnp, random, tree_util
 from .utils import _conditionnings, _mappings, Gaussian, GaussianKernel, LinearGaussianKernel, hmm_samples, prec_and_det
 from dataclasses import dataclass
 import copy 
+from jax import config 
+config.update("jax_enable_x64", True)
 
 def update_backward(q_filtering, q_params):
     q_transition = q_params.transition
@@ -13,12 +15,11 @@ def update_backward(q_filtering, q_params):
     a = cov @ (q_filtering.prec @ q_filtering.mean - common_term @  q_transition.bias)
     return A, a, cov, prec 
 
-def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='linear', emission_mapping_type='linear'):
+def get_random_params(key, other_key, state_dim=2, obs_dim=2, transition_mapping_type='linear', emission_mapping_type='linear'):
     default_state_cov = 1e-3*jnp.ones(state_dim)
     default_emission_cov = 1e-3*jnp.ones(obs_dim)
-
     key, *subkeys = random.split(key, 2)
-    prior_mean = random.uniform(subkeys[0], shape=(state_dim,))
+    prior_mean = random.uniform(other_key, shape=(state_dim,))
     prior_cov = jnp.log(default_state_cov)
     prior = {'mean_params':prior_mean, 
             'cov_params':{'cov':prior_cov}}
@@ -26,8 +27,8 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
 
     key, *subkeys = random.split(key, 3)
     if transition_mapping_type == 'linear':
-        transition_weight = random.uniform(subkeys[0], shape=(state_dim,))
-        transition_bias = random.uniform(subkeys[1], shape=(state_dim,))
+        transition_weight = random.uniform(other_key, shape=(state_dim,))
+        transition_bias = random.uniform(other_key, shape=(state_dim,))
         transition_cov = jnp.log(default_state_cov)
         transition = {'mapping_params': {'weight':transition_weight, 'bias': transition_bias},
                     'cov_params':{'cov':transition_cov}}
@@ -40,7 +41,8 @@ def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='line
     key, *subkeys = random.split(key, 3)
     if emission_mapping_type == 'linear':
         emission_weight = random.uniform(subkeys[0], shape=(obs_dim, state_dim))
-        emission_bias = random.uniform(subkeys[1], shape=(obs_dim,))
+        print('Emission weight:',emission_weight)
+        emission_bias = random.uniform(other_key, shape=(obs_dim,))
         emission_cov = jnp.log(default_emission_cov)
         emission = {'mapping_params':{'weight':emission_weight, 'bias': emission_bias},
                     'cov_params':{'cov':emission_cov}}
