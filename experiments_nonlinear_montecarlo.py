@@ -27,7 +27,7 @@ learning_rate = 1e-3
 num_epochs = 50
 num_batches_per_epoch = num_seqs // batch_size
 
-q_forward_linear_gaussian = True 
+q_forward_linear_gaussian = False 
 use_true_backward_update = False
 key = jax.random.PRNGKey(seed_model_params)
 infer_key = jax.random.PRNGKey(seed_infer)
@@ -195,19 +195,11 @@ def plot_relative_errors(smoothed_means_kalman, smoothed_covs_kalman, smoothed_m
 
 def visualize_inferred_states(fitted_q_params):
 
-    get_marginals = lambda obs_seq: Q(q_model).marginals(obs_seq, fitted_q_params)
-    (smoothed_means, smoothed_covs), (A_backs, a_backs, cov_backs) = jax.vmap(get_marginals)(obs_seqs)
-    print('Backward parameters at first time:')
-    print(A_backs[3][0])
-    print(a_backs[3][0])
-    print(cov_backs[3][0])
-    print('Backward parameters at second time:')
-    print(A_backs[3][1])
-    print(a_backs[3][1])
-    print(cov_backs[3][1])
+    get_marginals = lambda obs_seq: Q(q_model).marginals(obs_seq, fitted_q_params, p)
+    smoothed_means, smoothed_covs = jax.vmap(get_marginals)(obs_seqs)
     smoothed_means_kalman, smoothed_covs_kalman = jax.vmap(kalman_smooth, in_axes=(0, None))(obs_seqs, p)
     
-    smoothed_means, smoothed_covs = jax.vmap(kalman_smooth, in_axes=(0, None))(obs_seqs, hmm.GaussianHMM.build_from_dict(fitted_q_params, q_model))
+    # smoothed_means, smoothed_covs = jax.vmap(kalman_smooth, in_axes=(0, None))(obs_seqs, hmm.GaussianHMM.build_from_dict(fitted_q_params, q_model))
     print('MSE smoothed with q_phi:',jnp.mean((smoothed_means - state_seqs)**2))
     print('MSE smoothed with Kalman:',jnp.mean((smoothed_means_kalman - state_seqs)**2))
 

@@ -113,10 +113,6 @@ class Q(metaclass=ABCMeta):
 
     def format_params(self, params):
         return params  
-
-    @abstractmethod
-    def init_filtering(self, obs, p):
-        raise NotImplementedError
         
     @abstractmethod
     def update_filtering(self, obs, q_filtering, q_params):
@@ -140,30 +136,16 @@ class Q(metaclass=ABCMeta):
         covs = jnp.concatenate([covs, q_filtering.cov[None,:]])
         return means, covs 
 
-    def marginals(self, obs_seq, q_params):
 
-        q_filtering = self.init_filtering(obs_seq[0], q_params)
-
-        def forward_step(q_filtering, obs):
-            q_backward = self.update_backward(q_filtering, q_params)
-            q_filtering = self.update_filtering(obs, q_filtering, q_params)
-            return q_filtering, q_backward
-        
-
-        q_filtering, q_backward_seq = lax.scan(forward_step, 
-                                        init=q_filtering,
-                                        xs=obs_seq[1:])
-
-        return self.marginals_from_filtering_and_backward(q_filtering, q_backward_seq), (q_backward_seq.weight, q_backward_seq.bias, q_backward_seq.cov)
 
 class QFromForward(Q):
     def __init__(self, q_model):
         super().__init__(q_model)
 
-    def init_filtering(self, obs, q_params):
+    def init_filtering(self, obs, q_params, p):
         mean, cov = kalman_init(obs, q_params.prior, q_params.emission)[2:]
         return Gaussian(mean, cov, *prec_and_det(cov))
-        
+
     def format_params(self, params):
         return GaussianHMM.build_from_dict(params, self.model)
 
@@ -180,15 +162,28 @@ class QFromForward(Q):
                             prec=prec, 
                             det_cov=jnp.linalg.det(cov))
 
-    def marginals(self, obs_seq, q_params):
-        return super().marginals(obs_seq, self.format_params(q_params))
+    def marginals(self, obs_seq, q_params, p):
+        q_params = GaussianHMM.build_from_dict(q_params, self.model)
+        q_filtering = self.init_filtering(obs_seq[0], q_params, p)
+
+        def forward_step(q_filtering, obs):
+            q_backward = self.update_backward(q_filtering, q_params)
+            q_filtering = self.update_filtering(obs, q_filtering, q_params)
+            return q_filtering, q_backward
+        
+
+        q_filtering, q_backward_seq = lax.scan(forward_step, 
+                                        init=q_filtering,
+                                        xs=obs_seq[1:])
+
+        return self.marginals_from_filtering_and_backward(q_filtering, q_backward_seq)
 
 class QFromBackward(Q):
     def __init__(self, q_model):
         super().__init__(q_model)
 
-    def init_filtering(self, obs, prior, emission):
-        mean, cov = kalman_init(obs, prior, emission)
+    def init_filtering(self, obs, q_params, p):
+        mean, cov = kalman_init(obs, p.prior, p.emission)[2:]
         return Gaussian(mean, cov, *prec_and_det(cov))
 
     def update_filtering(self, obs, q_filtering:Gaussian, q_params):
@@ -210,6 +205,20 @@ class QFromBackward(Q):
                                     {'weight':A, 'bias':a},
                                     cov,
                                     *prec_and_det(cov))
+    def marginals(self, obs_seq, q_params, p):
+        q_filtering = self.init_filtering(obs_seq[0], q_params, p)
+
+        def forward_step(q_filtering, obs):
+            q_backward = self.update_backward(q_filtering, q_params)
+            q_filtering = self.update_filtering(obs, q_filtering, q_params)
+            return q_filtering, q_backward
+        
+
+        q_filtering, q_backward_seq = lax.scan(forward_step, 
+                                        init=q_filtering,
+                                        xs=obs_seq[1:])
+
+        return self.marginals_from_filtering_and_backward(q_filtering, q_backward_seq)
 
 class NonLinearELBO:
 
@@ -231,9 +240,9 @@ class NonLinearELBO:
         return (q_filtering, tractable_term, p, q_params), q_backward
 
     def compute_tractable_terms(self, obs_seq, p, q_params):
-        tractable_term = quadratic_term_from_log_gaussian(q_params.prior)
+        tractable_term = quadratic_term_from_log_gaussian(p.prior)
 
-        q_filtering = self.q.init_filtering(obs_seq[0], q_params)
+        q_filtering = self.q.init_filtering(obs_seq[0], q_params, p)
         
 
         (q_filtering, tractable_term, p, q_params), q_backward_seq = lax.scan(self.V_step, 
