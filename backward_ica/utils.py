@@ -1,7 +1,6 @@
 from jax import vmap, tree_util, numpy as jnp, lax, random
 from functools import partial
 
-import tree 
 
 ## Common stateful mappings to define models, wrapped as Pytrees so that they're allowed in all jax transformations
 
@@ -10,7 +9,12 @@ _mappings = {'linear':tree_util.Partial(lambda params, input: params['weight'] @
 
 
 ## Factory of parametrizations, e.g. for conditionned matrices  
-_conditionnings = {'diagonal_nonnegative':lambda raw_param: jnp.diag(jnp.exp(raw_param)),
+
+def matrix_from_chol(X):
+    Y = jnp.diag(X)
+    return Y @ Y.T
+
+_conditionnings = {'symetric_dev_pos':lambda raw_param: matrix_from_chol(raw_param),
                 'diagonal': lambda raw_param: jnp.diag(raw_param)}
 
 

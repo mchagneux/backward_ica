@@ -2,8 +2,6 @@ from jax import numpy as jnp, random, tree_util
 from .utils import _conditionnings, _mappings, Gaussian, GaussianKernel, LinearGaussianKernel, hmm_samples, prec_and_det
 from dataclasses import dataclass
 import copy 
-from jax import config 
-config.update("jax_enable_x64", True)
 
 def update_backward(q_filtering, q_params):
     q_transition = q_params.transition
@@ -16,54 +14,53 @@ def update_backward(q_filtering, q_params):
     return A, a, cov, prec 
 
 def get_random_params(key, other_key, state_dim=2, obs_dim=2, transition_mapping_type='linear', emission_mapping_type='linear'):
-    default_state_cov = 1e-3*jnp.ones(state_dim)
-    default_emission_cov = 1e-3*jnp.ones(obs_dim)
-    key, *subkeys = random.split(key, 2)
-    prior_mean = random.uniform(other_key, shape=(state_dim,))
-    prior_cov = jnp.log(default_state_cov)
+    default_state_cov_chol = 5e-3*jnp.ones(state_dim)
+    default_emission_cov_chol = 8e-3*jnp.ones(obs_dim)
+    key, subkey = random.split(key, 2)
+    prior_mean = random.uniform(subkey, shape=(state_dim,))
+    prior_cov = default_state_cov_chol
     prior = {'mean_params':prior_mean, 
             'cov_params':{'cov':prior_cov}}
-    prior_def = {'conditionnings':{'cov_params':{'cov':'diagonal_nonnegative'}}}
+    prior_def = {'conditionnings':{'cov_params':{'cov':'symetric_dev_pos'}}}
 
     key, *subkeys = random.split(key, 3)
-    if transition_mapping_type == 'linear':
-        transition_weight = random.uniform(other_key, shape=(state_dim,))
-        transition_bias = random.uniform(other_key, shape=(state_dim,))
-        transition_cov = jnp.log(default_state_cov)
-        transition = {'mapping_params': {'weight':transition_weight, 'bias': transition_bias},
-                    'cov_params':{'cov':transition_cov}}
-        conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'},
-                        'mapping_params':{'weight':'diagonal'}}
-        transition_def = {'conditionnings':conditionnings, 
-                        'mapping_type':transition_mapping_type}
-    else: 
-        raise NotImplementedError
+    transition_weight = random.uniform(subkeys[0], shape=(state_dim,))
+    transition_bias = random.uniform(subkeys[1], shape=(state_dim,))
+    transition_cov = default_state_cov_chol
+    transition = {'mapping_params': {'weight':transition_weight, 'bias': transition_bias},
+                'cov_params':{'cov':transition_cov}}
+    conditionnings = {'cov_params':{'cov':'symetric_dev_pos'},
+                    'mapping_params':{'weight':'diagonal'}}
+    transition_def = {'conditionnings':conditionnings, 
+                    'mapping_type':transition_mapping_type}
+
     key, *subkeys = random.split(key, 3)
     if emission_mapping_type == 'linear':
-        emission_weight = random.uniform(subkeys[0], shape=(obs_dim, state_dim))
-        print('Emission weight:',emission_weight)
+        emission_weight = random.uniform(other_key, shape=(obs_dim, state_dim))
         emission_bias = random.uniform(other_key, shape=(obs_dim,))
-        emission_cov = jnp.log(default_emission_cov)
+        # emission_weight = jnp.ones((obs_dim,state_dim))
+        # emission_bias = jnp.zeros((obs_dim,))
+        emission_cov = default_emission_cov_chol
         emission = {'mapping_params':{'weight':emission_weight, 'bias': emission_bias},
                     'cov_params':{'cov':emission_cov}}
-        conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'}}
+        conditionnings = {'cov_params':{'cov':'symetric_dev_pos'}}
 
         emission_def = {'conditionnings':conditionnings, 
                         'mapping_type':emission_mapping_type}
     else: 
         emission_weight = random.uniform(subkeys[0], shape=(obs_dim, state_dim))
         emission_bias = random.uniform(subkeys[1], shape=(obs_dim,))
-        emission_cov = jnp.log(default_emission_cov)
+        emission_cov = default_emission_cov_chol
         emission = {'mapping_params':{'weight':emission_weight, 'bias': emission_bias},
                     'cov_params':{'cov':emission_cov}}
-        conditionnings = {'cov_params':{'cov':'diagonal_nonnegative'}}
+        conditionnings = {'cov_params':{'cov':'symetric_dev_pos'}}
 
         emission_def = {'conditionnings':conditionnings, 
                         'mapping_type':emission_mapping_type}
 
     hmm_raw_params = {'prior':prior, 
-            'transition': transition,
-            'emission':emission}
+                    'transition': transition,
+                    'emission':emission}
 
     hmm_def = {'prior':prior_def, 
             'transition':transition_def, 

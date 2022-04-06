@@ -12,25 +12,29 @@ from jax import config
 import matplotlib.pyplot as plt
 from  backward_ica.utils import Gaussian, prec_and_det
 from backward_ica.utils import LinearGaussianKernel, _mappings
+# config.update("jax_debug_nans", True)
 config.update("jax_enable_x64", True)
 import copy
+
 #%% Hyperparameters 
-seed_model_params = 43
-seed_infer = 56
+experiment_name = 'q_backward'
+seed_model_params = 1326
+seed_infer = 124
 num_starting_points = 10
 state_dim, obs_dim = 1,2
 seq_length = 32
-num_seqs = 4092
+num_seqs = 1024
 
 batch_size = 8
 learning_rate = 1e-3
-num_epochs = 50
+num_epochs = 100
 num_batches_per_epoch = num_seqs // batch_size
 
 q_forward_linear_gaussian = False 
 use_true_backward_update = False
 key = jax.random.PRNGKey(seed_model_params)
 infer_key = jax.random.PRNGKey(seed_infer)
+
 #%% Define p 
 
 key, *subkeys = jax.random.split(key, 3)
@@ -98,15 +102,16 @@ else:
     q_model = {'filtering':{'update':filt_update_apply},
         'backward':backward_apply}
 
-other_key = jax.random.PRNGKey(1)
+# other_key = jax.random.PRNGKey(1)
 
 def init_q(infer_subkey):
 
     if q_forward_linear_gaussian: 
+        infer_subkey, other_key = jax.random.split(infer_subkey, 2)
         q_params, _ = hmm.get_random_params(infer_subkey, other_key, state_dim, obs_dim, 'linear','linear')
         
     else:
-        subkeys = jax.random.split(infer_subkey, 3)
+        subkeys = jax.random.split(infer_subkey, 2)
         # shared_param = jax.random.uniform(subkeys[0],(1000,))
         filt_update_params = filt_update_init(subkeys[1], dummy_obs, dummy_mean, dummy_cov)
 
@@ -179,14 +184,13 @@ def plot_relative_errors(smoothed_means_kalman, smoothed_covs_kalman, smoothed_m
     time_axis = range(seq_length)
     means_kalman, covs_kalman = smoothed_means_kalman[seq_nb].squeeze(), smoothed_covs_kalman[seq_nb].squeeze()
     means, covs = smoothed_means[seq_nb].squeeze(), smoothed_covs[seq_nb].squeeze()
-    print('Marginal smoothing cov at time 0:',covs[0])
     true_states = state_seqs[seq_nb]
-    ax0 = plt.gcf().add_subplot(232)
+    ax0 = plt.gcf().add_subplot(131)
     ax0.errorbar(x=time_axis, fmt = '_', y=means_kalman, yerr=1.96 * np.sqrt(covs_kalman), label='Smoothed z, $1.96\\sigma$')
     ax0.scatter(x=time_axis, marker = '_', y=true_states, c='r', label='True z')
     ax0.set_title('Kalman')
     ax0.set_xlabel('t')
-    ax1 = plt.gcf().add_subplot(233, sharey=ax0)
+    ax1 = plt.gcf().add_subplot(133, sharey=ax0)
     ax1.errorbar(x=time_axis, fmt = '_', y=means, yerr=1.96 * np.sqrt(covs), label='Smoothed z, $1.96\\sigma$')
     ax1.scatter(x=time_axis, marker = '_', y=true_states, c='r', label='True z')
     ax1.set_title('Backward variational')
@@ -206,19 +210,20 @@ def visualize_inferred_states(fitted_q_params):
 
     plot_relative_errors(smoothed_means_kalman, smoothed_covs_kalman, smoothed_means, smoothed_covs, 3)
 
-for infer_subkey in jax.random.split(infer_key, num_starting_points):
+for sub_exp_nb, infer_subkey in enumerate(jax.random.split(infer_key, num_starting_points)):
     init_q_params = init_q(infer_subkey)
     fitted_q_params, avg_elbos = fit(init_q_params)
-    all_fitted_q_params.append(copy.deepcopy(fitted_q_params))
-    all_avg_elbos.append(copy.deepcopy(all_avg_elbos))
+    all_fitted_q_params.append(fitted_q_params)
+    all_avg_elbos.append(all_avg_elbos)
     fig = plt.figure(figsize=(20,10))
-    ax0 = fig.add_subplot(231)
+    ax0 = fig.add_subplot(132)
     ax0.plot(avg_elbos, label='$\mathcal{L}(\\theta,\\phi)$')
     ax0.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$' )
     ax0.set_xlabel('Epoch') 
-    ax0.set_title(f'{num_seqs} seqs of {seq_length} obs$')
+    ax0.set_title(f'{num_seqs} seqs of {seq_length} obs')
     visualize_inferred_states(fitted_q_params)
     plt.autoscale(True)
     plt.legend()
     plt.show()
+    # plt.savefig(f'{experiment_name}_{sub_exp_nb}')
 #%%
