@@ -19,10 +19,11 @@ GaussianParams = namedtuple('GaussianParams', ['mean', 'cov_base', 'cov', 'prec'
 
 HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
-_conditionnings = {'diagonal':lambda param: jnp.diag(param)}
+_conditionnings = {'diagonal':lambda param: jnp.diag(param),
+                'symetric_def_pos': lambda param: param @ param.T}
 
 def cov_prec_and_det_from_cov_chol(cov_chol):
-    cov = cov_chol @ cov_chol.T 
+    cov = _conditionnings['symetric_def_pos'](cov_chol)
     prec = jnp.linalg.inv(cov)
     det = jnp.linalg.det(cov)
     return cov, prec, det
