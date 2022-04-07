@@ -1,23 +1,14 @@
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple
+from .utils import *
 from jax import numpy as jnp, random
-import copy 
 from backward_ica.kalman import kalman_init, kalman_predict, kalman_smooth_seq, kalman_update
 import haiku as hk
 from jax import lax, vmap, config
 from functools import partial
 config.update('jax_enable_x64', True)
 
-GaussianKernelBaseParams = namedtuple('GaussianKernelParams', ['map_params', 'cov_base'])
-GaussianKernelParams = namedtuple('GaussianKernelParams', ['map_params', 'cov_base', 'cov', 'prec', 'det'])
 
-LinearGaussianKernelBaseParams = namedtuple('LinearGaussianKernelParams',['matrix', 'bias', 'cov_base'])
-LinearGaussianKernelParams = namedtuple('LinearGaussianKernelParams',['matrix', 'bias', 'cov_base', 'cov', 'prec', 'det'])
-
-GaussianBaseParams = namedtuple('GaussianParams', ['mean', 'cov_base'])
-GaussianParams = namedtuple('GaussianParams', ['mean', 'cov_base', 'cov', 'prec', 'det'])
-
-HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
 _conditionnings = {'diagonal':lambda param: jnp.diag(param),
                 'symetric_def_pos': lambda param: param @ param.T}
@@ -198,7 +189,7 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
         return HMMParams(prior=prior_params, transition=transition_params, emission=emission_params)
 
     def init_filt_state(self, obs, pred_state, params):
-        mean, cov =  kalman_init(obs, params.prior, params.emission)
+        mean, cov =  kalman_init(obs, params.prior.mean, params.prior.cov, params.emission)
         return GaussianParams(mean, None, cov, *prec_and_det_from_cov(cov))
 
     def new_filt_state(self, obs, filt_state, params):

@@ -1,13 +1,14 @@
 from jax import numpy as jnp, lax, config
 from jax.scipy.stats.multivariate_normal import logpdf as jax_gaussian_logpdf
 from pykalman.standard import KalmanFilter
+from .utils import *
 
 config.update("jax_enable_x64", True)
 config.update("jax_debug_nans", True)
 
 
-def kalman_init(obs, prior_params, emission_params):
-    filt_mean, filt_cov = kalman_update(prior_params.mean, prior_params.cov, obs, emission_params)
+def kalman_init(obs, prior_mean, prior_cov, emission_params:LinearGaussianKernelParams):
+    filt_mean, filt_cov = kalman_update(prior_mean, prior_cov, obs, emission_params)
     return filt_mean, filt_cov
 
 def kalman_predict(filt_mean, filt_cov, transition_params):
@@ -34,7 +35,7 @@ def kalman_filter_seq(obs_seq, hmm_params):
                             mean=B @ pred_mean + b , 
                             cov=B @ pred_cov @ B.T + R)
 
-    init_filt_mean, init_filt_cov = kalman_init(obs_seq[0], hmm_params.prior, hmm_params.emission)
+    init_filt_mean, init_filt_cov = kalman_init(obs_seq[0], hmm_params.prior.mean, hmm_params.prior.cov, hmm_params.emission)
     loglikelihood = log_l_term(hmm_params.prior.mean, hmm_params.prior.cov, obs_seq[0], hmm_params.emission)
 
     def _filter_step(carry, x):

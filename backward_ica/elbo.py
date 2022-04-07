@@ -11,49 +11,7 @@ config.update("jax_debug_nans", True)
 
 ### Some abstractions for frequently used objects when computing elbo via backwards decomposition
 
-@dataclass(init=True)
-@register_pytree_node_class
-class QuadTerm:
 
-    W: jnp.ndarray
-    v: jnp.ndarray
-    c: jnp.ndarray
-
-    def __iter__(self):
-        return iter((self.W, self.v, self.c))
-
-    def __add__(self, other):
-        return QuadTerm(W = self.W + other.W, 
-                        v = self.v + other.v, 
-                        c = self.c + other.c)
-
-    def __rmul__(self, other):
-        return QuadTerm(W=other*self.W, 
-                        v=other*self.v, 
-                        c=other*self.c) 
-
-    def evaluate(self, x):
-        return x.T @ self.W @ x + self.v.T @ x + self.c
-
-    def tree_flatten(self):
-        return ((self.W, self.v, self.c), None) 
-
-    @staticmethod
-    def from_A_b_Omega(A, b, Omega):
-        return QuadTerm(W = A.T @ Omega @ A, 
-                        v = A.T @ (Omega + Omega.T) @ b, 
-                        c = b.T @ Omega @ b)
-    @staticmethod 
-    def evaluate_from_A_b_Omega(A, b, Omega, x):
-        common_term = A @ x + b 
-        return common_term.T @ Omega @ common_term
-
-
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-    
 def constant_terms_from_log_gaussian(dim:int, det:float)->float:
     """Utility function to compute the log of the term that is against the exponential for a multivariate Normal
 
