@@ -2,74 +2,64 @@ from jax import numpy as jnp, lax, config
 from jax.scipy.stats.multivariate_normal import logpdf as jax_gaussian_logpdf
 from pykalman.standard import KalmanFilter
 
-from backward_ica.hmm import GaussianHMM
-
-from .utils import * 
-
 config.update("jax_enable_x64", True)
 config.update("jax_debug_nans", True)
 
-def predict(filt_mean, filt_cov, transition:LinearGaussianKernel):
-    pred_mean = transition.map(filt_mean)
-    pred_cov = transition.weight @ filt_cov @ transition.weight.T + transition.cov
+
+def kalman_init(obs, prior_params, emission_params):
+    filt_mean, filt_cov = kalman_update(prior_params.mean, prior_params.cov, obs, emission_params)
+    return filt_mean, filt_cov
+
+def kalman_predict(filt_mean, filt_cov, transition_params):
+    A, a, Q = transition_params.matrix, transition_params.bias, transition_params.cov
+    pred_mean = A @ filt_mean + a
+    pred_cov = A @ filt_cov @ A.T + Q
     return pred_mean, pred_cov
 
-def update(pred_mean, pred_cov, obs, emission:LinearGaussianKernel):
+def kalman_update(pred_mean, pred_cov, obs, emission_params):
 
-    kalman_gain = pred_cov @ emission.weight.T @ jnp.linalg.inv(emission.weight @ pred_cov @ emission.weight.T + emission.cov)
+    B, b, R = emission_params.matrix, emission_params.bias, emission_params.cov 
+    kalman_gain = pred_cov @ B.T @ jnp.linalg.inv(B @ pred_cov @ B.T + R)
 
-    filt_mean = pred_mean + kalman_gain @ (obs - emission.map(pred_mean))
-    filt_cov = pred_cov - kalman_gain @ emission.weight @ pred_cov
+    filt_mean = pred_mean + kalman_gain @ (obs - (B @ pred_mean + b))
+    filt_cov = pred_cov - kalman_gain @ B @ pred_cov
 
     return filt_mean, filt_cov
 
-def filter_step(filt_mean, filt_cov, obs, transition:LinearGaussianKernel, emission:LinearGaussianKernel):
-    pred_mean, pred_cov = predict(filt_mean, filt_cov, transition)
-    filt_mean, filt_cov = update(pred_mean, pred_cov, obs, emission)
-    return pred_mean, pred_cov, filt_mean, filt_cov
+def kalman_filter_seq(obs_seq, hmm_params):
 
-def init(obs, prior:Gaussian, emission:LinearGaussianKernel):
-    filt_mean, filt_cov = update(prior.mean, prior.cov, obs, emission)
-    return prior.mean, prior.cov, filt_mean, filt_cov
+    def log_l_term(pred_mean, pred_cov, obs, emission_params):
+        B, b, R = emission_params.matrix, emission_params.bias, emission_params.cov
+        return jax_gaussian_logpdf(x=obs, 
+                            mean=B @ pred_mean + b , 
+                            cov=B @ pred_cov @ B.T + R)
 
-def log_l_term(pred_mean, pred_cov, obs, emission:LinearGaussianKernel):
-    return jax_gaussian_logpdf(x=obs, 
-                        mean=emission.map(pred_mean), 
-                        cov=emission.weight @ pred_cov @ emission.weight.T + emission.cov)
-
-
-def filter(obs_seq, hmm:GaussianHMM):
-    init_pred_mean, init_pred_cov, init_filt_mean, init_filt_cov = init(obs_seq[0], hmm.prior, hmm.emission)
-    loglikelihood = log_l_term(init_pred_mean, init_pred_cov, obs_seq[0], hmm.emission)
+    init_filt_mean, init_filt_cov = kalman_init(obs_seq[0], hmm_params.prior, hmm_params.emission)
+    loglikelihood = log_l_term(hmm_params.prior.mean, hmm_params.prior.cov, obs_seq[0], hmm_params.emission)
 
     def _filter_step(carry, x):
-        loglikelihood, filt_mean, filt_cov, transition, emission  = carry
-        pred_mean, pred_cov, filt_mean, filt_cov = filter_step(filt_mean=filt_mean,
-                                                                        filt_cov=filt_cov,
-                                                                        obs=x,
-                                                                        transition=transition,
-                                                                        emission=emission)
+        loglikelihood, filt_mean, filt_cov, transition_params, emission_params  = carry
+        pred_mean, pred_cov = kalman_predict(filt_mean, filt_cov, transition_params)
+        filt_mean, filt_cov = kalman_update(pred_mean, pred_cov, x, emission_params)
 
-        loglikelihood += log_l_term(pred_mean, pred_cov, x, emission)
+        loglikelihood += log_l_term(pred_mean, pred_cov, x, emission_params)
 
-        return (loglikelihood, filt_mean, filt_cov, transition, emission), (pred_mean, pred_cov, filt_mean, filt_cov)
+        return (loglikelihood, filt_mean, filt_cov, transition_params, emission_params), (pred_mean, pred_cov, filt_mean, filt_cov)
 
     (loglikelihood, *_), (pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq) = lax.scan(f=_filter_step, 
-                                init=(loglikelihood, init_filt_mean, init_filt_cov, hmm.transition, hmm.emission), 
+                                init=(loglikelihood, init_filt_mean, init_filt_cov, hmm_params.transition, hmm_params.emission), 
                                 xs=obs_seq[1:])
 
-    pred_mean_seq = jnp.concatenate((init_pred_mean[None,:], pred_mean_seq))
-    pred_cov_seq = jnp.concatenate((init_pred_cov[None,:], pred_cov_seq))
+    pred_mean_seq = jnp.concatenate((hmm_params.prior.mean[None,:], pred_mean_seq))
+    pred_cov_seq = jnp.concatenate((hmm_params.prior.cov[None,:], pred_cov_seq))
     filt_mean_seq =  jnp.concatenate((init_filt_mean[None,:], filt_mean_seq))
     filt_cov_seq =  jnp.concatenate((init_filt_cov[None,:], filt_cov_seq))
 
     return pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq, loglikelihood
 
+def kalman_smooth_seq(obs_seq, hmm_params):
 
-
-def smooth(obs_seq, hmm:GaussianHMM):
-
-    pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq = filter(obs_seq, hmm)[:-1]
+    pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq = kalman_filter_seq(obs_seq, hmm_params)[:-1]
 
     last_smooth_mean, last_smooth_cov = filt_mean_seq[-1], filt_cov_seq[-1]
 
@@ -84,7 +74,7 @@ def smooth(obs_seq, hmm:GaussianHMM):
         return (smooth_mean, smooth_cov, transition_matrix), (smooth_mean, smooth_cov)
 
     _, (smooth_mean_seq, smooth_cov_seq) = lax.scan(f=_smooth_step,
-                                            init=(last_smooth_mean, last_smooth_cov, hmm.transition.weight),
+                                            init=(last_smooth_mean, last_smooth_cov, hmm_params.transition.matrix),
                                             xs=(filt_mean_seq[:-1], 
                                                 filt_cov_seq[:-1],
                                                 pred_mean_seq[1:],
@@ -98,26 +88,26 @@ def smooth(obs_seq, hmm:GaussianHMM):
 
 
 
-def filter_pykalman(obs_seq, hmm:GaussianHMM):
+def pykalman_filter_seq(obs_seq, hmm_params):
 
-    engine = KalmanFilter(transition_matrices=hmm.transition.weight, 
-                        observation_matrices=hmm.emission.weight,
-                        transition_covariance=hmm.transition.cov,
-                        observation_covariance=hmm.emission.cov,
-                        transition_offsets=hmm.transition.bias,
-                        observation_offsets=hmm.emission.bias,
-                        initial_state_mean=hmm.prior.mean,
-                        initial_state_covariance=hmm.prior.cov)
+    engine = KalmanFilter(transition_matrices=hmm_params.transition.matrix, 
+                        observation_matrices=hmm_params.emission.matrix,
+                        transition_covariance=hmm_params.transition.cov,
+                        observation_covariance=hmm_params.emission.cov,
+                        transition_offsets=hmm_params.transition.bias,
+                        observation_offsets=hmm_params.emission.bias,
+                        initial_state_mean=hmm_params.prior.mean,
+                        initial_state_covariance=hmm_params.prior.cov)
 
     return engine.filter(obs_seq)
 
-def smooth_pykalman(obs_seq, hmm:GaussianHMM):
-    engine = KalmanFilter(transition_matrices=hmm.transition.weight, 
-                        observation_matrices=hmm.emission.weight,
-                        transition_covariance=hmm.transition.cov,
-                        observation_covariance=hmm.emission.cov,
-                        transition_offsets=hmm.transition.bias,
-                        observation_offsets=hmm.emission.bias,
-                        initial_state_mean=hmm.prior.mean,
-                        initial_state_covariance=hmm.prior.cov)
+def pykalman_smooth_seq(obs_seq, hmm_params):
+    engine = KalmanFilter(transition_matrices=hmm_params.transition.matrix, 
+                        observation_matrices=hmm_params.emission.matrix,
+                        transition_covariance=hmm_params.transition.cov,
+                        observation_covariance=hmm_params.emission.cov,
+                        transition_offsets=hmm_params.transition.bias,
+                        observation_offsets=hmm_params.emission.bias,
+                        initial_state_mean=hmm_params.prior.mean,
+                        initial_state_covariance=hmm_params.prior.cov)
     return engine.smooth(obs_seq)
