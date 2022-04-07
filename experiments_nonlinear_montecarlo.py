@@ -12,33 +12,34 @@ from jax import config
 import matplotlib.pyplot as plt
 from  backward_ica.utils import Gaussian, prec_and_det
 from backward_ica.utils import LinearGaussianKernel, _mappings
-# config.update("jax_debug_nans", True)
+config.update("jax_debug_nans", True)
 config.update("jax_enable_x64", True)
 import copy
 
 #%% Hyperparameters 
 experiment_name = 'q_backward'
 seed_model_params = 1326
-seed_infer = 124
-num_starting_points = 10
+seed_infer = 4569
+num_starting_points = 20
 state_dim, obs_dim = 1,2
-seq_length = 32
-num_seqs = 1024
+seq_length = 64
+num_seqs = 2048
 
 batch_size = 8
-learning_rate = 1e-3
-num_epochs = 100
+learning_rate = 1e-1
+num_epochs = 200
 num_batches_per_epoch = num_seqs // batch_size
+optimizer = optax.sgd(learning_rate=learning_rate)
 
 q_forward_linear_gaussian = False 
 use_true_backward_update = False
 key = jax.random.PRNGKey(seed_model_params)
 infer_key = jax.random.PRNGKey(seed_infer)
 
-#%% Define p 
 
-key, *subkeys = jax.random.split(key, 3)
-p_params, p_model = hmm.get_random_params(subkeys[0], subkeys[1], 
+
+key, subkey = jax.random.split(key, 2)
+p_params, p_model = hmm.get_random_params(subkey, 
                                     state_dim, 
                                     obs_dim,
                                     transition_mapping_type='linear',
@@ -59,22 +60,31 @@ print('Average log-evidence:',avg_evidence)
 
 d = state_dim
 
-def backwd_update(filt_mean, filt_cov):
+def backwd_update(shared_param, filt_mean, filt_cov):
     net = hk.nets.MLP((8, d**2 + d + d*(d+1) // 2))
-    out = net(jnp.concatenate((filt_mean, jnp.tril(filt_cov).flatten())))
+    out = net(jnp.concatenate((shared_param, filt_mean, jnp.tril(filt_cov).flatten())))
     A = out[:d**2].reshape((d,d))
     a = out[d**2:d**2+d]
     cov = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d**2+d:])
     return A, a, cov @ cov.T
 
-def filt_update(obs, filt_mean, filt_cov):
+def filt_predict(shared_param, filt_mean, filt_cov):
 
     net = hk.nets.MLP((8, d + d*(d+1) // 2))
-    out = net(jnp.concatenate((obs, filt_mean, jnp.tril(filt_cov).flatten())))
+    out = net(jnp.concatenate((shared_param, filt_mean, jnp.tril(filt_cov).flatten())))
     mean = out[:d]
     cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
     return mean, cov_chol @ cov_chol.T
 
+def filt_update(obs, pred_mean, pred_cov):
+
+    net = hk.nets.MLP((8, d + d*(d+1) // 2))
+    out = net(jnp.concatenate((obs, pred_mean, jnp.tril(pred_cov).flatten())))
+    mean = out[:d]
+    cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
+    return mean, cov_chol @ cov_chol.T
+
+filt_predict_init, filt_predict_apply = hk.without_apply_rng(hk.transform(filt_predict))
 filt_update_init, filt_update_apply = hk.without_apply_rng(hk.transform(filt_update))
 backward_init, backward_apply = hk.without_apply_rng(hk.transform(backwd_update))
 
@@ -99,21 +109,20 @@ else:
                                         *prec_and_det(cov))
             return hmm.update_backward(Gaussian(filt_mean, filt_cov, *prec_and_det(filt_cov)), dummy_namedtuple(transition=params))[:-1]
     Q = QFromBackward
-    q_model = {'filtering':{'update':filt_update_apply},
+    q_model = {'filtering':{'predict':filt_predict_apply,'update':filt_update_apply},
         'backward':backward_apply}
-
-# other_key = jax.random.PRNGKey(1)
 
 def init_q(infer_subkey):
 
     if q_forward_linear_gaussian: 
-        infer_subkey, other_key = jax.random.split(infer_subkey, 2)
-        q_params, _ = hmm.get_random_params(infer_subkey, other_key, state_dim, obs_dim, 'linear','linear')
+        q_params, _ = hmm.get_random_params(infer_subkey, state_dim, obs_dim, 'linear','linear')
         
     else:
-        subkeys = jax.random.split(infer_subkey, 2)
-        # shared_param = jax.random.uniform(subkeys[0],(1000,))
-        filt_update_params = filt_update_init(subkeys[1], dummy_obs, dummy_mean, dummy_cov)
+        subkeys = jax.random.split(infer_subkey, 4)
+        shared_param = jax.random.uniform(subkeys[0],(4,))
+        filt_predict_params = filt_predict_init(subkeys[1], shared_param, dummy_mean, dummy_cov)
+        filt_update_params = filt_update_init(subkeys[2], dummy_obs, dummy_mean, dummy_cov)
+
 
         if use_true_backward_update:
             backward_params = hmm.get_random_params(subkeys[2], 
@@ -122,12 +131,13 @@ def init_q(infer_subkey):
                                         transition_mapping_type='linear',
                                         emission_mapping_type='linear')[0]['transition']
         else:
-            backward_params = backward_init(subkeys[2], dummy_mean, dummy_cov)
+            backward_params = backward_init(subkeys[3], shared_param, dummy_mean, dummy_cov)
 
 
 
-        q_params = {'filtering':{'update':filt_update_params},
-                    'backward':backward_params}
+        q_params = {'filtering':{'predict':filt_predict_params,'update':filt_update_params},
+                    'backward':backward_params,
+                    'shared_param':shared_param}
 
 
     return q_params
@@ -136,7 +146,6 @@ def init_q(infer_subkey):
 
 elbo = NonLinearELBO(p_model, Q(q_model)).compute
 loss = lambda obs_seq, key, q_params: elbo(obs_seq, key, p_params, q_params)
-optimizer = optax.adam(learning_rate=learning_rate)
 
 
 def fit(init_q_params, subkey_montecarlo=None):
@@ -146,8 +155,8 @@ def fit(init_q_params, subkey_montecarlo=None):
     # subkeys = jax.random.split(subkey_montecarlo, num_seqs * num_epochs)
     # subkeys = jnp.array(subkeys).reshape(num_epochs,num_seqs,-1)
 
-    @jax.jit
-    def batch_step(carry, xs):
+    # @jax.jit
+    def batch_step(carry, x):
 
         def q_step(q_params, opt_state, batch, keys):
             neg_elbo_values, grads = jax.vmap(jax.value_and_grad(loss, argnums=2), in_axes=(0,0,None))(batch, keys, q_params)
@@ -157,40 +166,55 @@ def fit(init_q_params, subkey_montecarlo=None):
             return q_params, opt_state, jnp.mean(-neg_elbo_values)
 
         q_params, opt_state, subkeys_epoch = carry
-        batch_start = xs
+        batch_start = x
         batch_obs_seq = jax.lax.dynamic_slice_in_dim(obs_seqs, batch_start, batch_size)
         batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, batch_size)
         q_params, opt_state, avg_elbo_batch = q_step(q_params, opt_state, batch_obs_seq, batch_keys)
         return (q_params, opt_state, subkeys_epoch), avg_elbo_batch
 
-    def epoch_step(carry, xs):
+    def epoch_step(carry, x):
         q_params, opt_state = carry
-        subkeys_epoch = xs
+        subkeys_epoch = x
         batch_start_indices = jnp.arange(0, num_seqs, batch_size)
-        (q_params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step, 
-                                                            init=(q_params, opt_state, subkeys_epoch), 
-                                                            xs = batch_start_indices)
+        
+        #--- debugging
+        avg_elbo_batches = []
+        for batch_start_index in batch_start_indices:
+            (q_params, opt_state, subkeys_epoch), avg_elbo_batch = batch_step((q_params, opt_state, subkeys_epoch), batch_start_index)
+            avg_elbo_batches.append(avg_elbo_batch)
+        #---
+
+        # (q_params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step, 
+        #                                                     init=(q_params, opt_state, subkeys_epoch), 
+        #                                                     xs = batch_start_indices)
         return (q_params, opt_state), jnp.mean(avg_elbo_batches)
 
-    (fitted_q_params, _), avg_elbos = jax.lax.scan(epoch_step, init=(init_q_params, opt_state), xs=subkeys)
-    print('Last avg elbo value',avg_elbos[-1])
+    #--- debugging
+    avg_elbos = []
+    for subkey in subkeys:
+        (q_params, opt_state), avg_elbo = epoch_step((init_q_params, opt_state), subkey)
+        avg_elbos.append(avg_elbo)
+    avg_elbos = jnp.array(avg_elbos)
+    #---
 
-    return fitted_q_params, avg_elbos
+    # (q_params, _), avg_elbos = jax.lax.scan(epoch_step, init=(init_q_params, opt_state), xs=subkeys)
+    
+    return q_params, avg_elbos
 
 all_fitted_q_params = []
 all_avg_elbos = []
 
-def plot_relative_errors(smoothed_means_kalman, smoothed_covs_kalman, smoothed_means, smoothed_covs, seq_nb):
+def plot_relative_errors(smoothed_means_kalman, smoothed_covs_kalman, smoothed_means, smoothed_covs, seq_nb, start_pos):
     time_axis = range(seq_length)
     means_kalman, covs_kalman = smoothed_means_kalman[seq_nb].squeeze(), smoothed_covs_kalman[seq_nb].squeeze()
     means, covs = smoothed_means[seq_nb].squeeze(), smoothed_covs[seq_nb].squeeze()
     true_states = state_seqs[seq_nb]
-    ax0 = plt.gcf().add_subplot(131)
+    ax0 = plt.gcf().add_subplot(2,3,start_pos)
     ax0.errorbar(x=time_axis, fmt = '_', y=means_kalman, yerr=1.96 * np.sqrt(covs_kalman), label='Smoothed z, $1.96\\sigma$')
     ax0.scatter(x=time_axis, marker = '_', y=true_states, c='r', label='True z')
     ax0.set_title('Kalman')
     ax0.set_xlabel('t')
-    ax1 = plt.gcf().add_subplot(133, sharey=ax0)
+    ax1 = plt.gcf().add_subplot(2,3,start_pos+1, sharey=ax0)
     ax1.errorbar(x=time_axis, fmt = '_', y=means, yerr=1.96 * np.sqrt(covs), label='Smoothed z, $1.96\\sigma$')
     ax1.scatter(x=time_axis, marker = '_', y=true_states, c='r', label='True z')
     ax1.set_title('Backward variational')
@@ -208,7 +232,8 @@ def visualize_inferred_states(fitted_q_params):
     print('MSE smoothed with Kalman:',jnp.mean((smoothed_means_kalman - state_seqs)**2))
 
 
-    plot_relative_errors(smoothed_means_kalman, smoothed_covs_kalman, smoothed_means, smoothed_covs, 3)
+    plot_relative_errors(smoothed_means_kalman, smoothed_covs_kalman, smoothed_means, smoothed_covs, 3, start_pos=2)
+    plot_relative_errors(smoothed_means_kalman, smoothed_covs_kalman, smoothed_means, smoothed_covs, 54, start_pos=5)
 
 for sub_exp_nb, infer_subkey in enumerate(jax.random.split(infer_key, num_starting_points)):
     init_q_params = init_q(infer_subkey)
@@ -216,7 +241,7 @@ for sub_exp_nb, infer_subkey in enumerate(jax.random.split(infer_key, num_starti
     all_fitted_q_params.append(fitted_q_params)
     all_avg_elbos.append(all_avg_elbos)
     fig = plt.figure(figsize=(20,10))
-    ax0 = fig.add_subplot(132)
+    ax0 = fig.add_subplot(231)
     ax0.plot(avg_elbos, label='$\mathcal{L}(\\theta,\\phi)$')
     ax0.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$' )
     ax0.set_xlabel('Epoch') 

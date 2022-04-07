@@ -13,8 +13,8 @@ def update_backward(q_filtering, q_params):
     a = cov @ (q_filtering.prec @ q_filtering.mean - common_term @  q_transition.bias)
     return A, a, cov, prec 
 
-def get_random_params(key, other_key, state_dim=2, obs_dim=2, transition_mapping_type='linear', emission_mapping_type='linear'):
-    default_state_cov_chol = 5e-3*jnp.ones(state_dim)
+def get_random_params(key, state_dim=2, obs_dim=2, transition_mapping_type='linear', emission_mapping_type='linear'):
+    default_state_cov_chol = 5e-2*jnp.ones(state_dim)
     default_emission_cov_chol = 8e-3*jnp.ones(obs_dim)
     key, subkey = random.split(key, 2)
     prior_mean = random.uniform(subkey, shape=(state_dim,))
@@ -34,10 +34,10 @@ def get_random_params(key, other_key, state_dim=2, obs_dim=2, transition_mapping
     transition_def = {'conditionnings':conditionnings, 
                     'mapping_type':transition_mapping_type}
 
-    key, *subkeys = random.split(key, 3)
+    subkeys = random.split(key, 2)
     if emission_mapping_type == 'linear':
-        emission_weight = random.uniform(other_key, shape=(obs_dim, state_dim))
-        emission_bias = random.uniform(other_key, shape=(obs_dim,))
+        emission_weight = random.uniform(subkeys[0], shape=(obs_dim, state_dim))
+        emission_bias = random.uniform(subkeys[1], shape=(obs_dim,))
         # emission_weight = jnp.ones((obs_dim,state_dim))
         # emission_bias = jnp.zeros((obs_dim,))
         emission_cov = default_emission_cov_chol

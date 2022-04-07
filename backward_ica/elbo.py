@@ -14,6 +14,7 @@ config.update("jax_enable_x64", True)
 import numpy as np 
 from jax.random import normal
 # config.update("jax_check_tracer_leaks", True)
+config.update("jax_debug_nans", True)
 
 ### Some abstractions for frequently used objects when computing elbo via backwards decomposition
 
@@ -183,21 +184,29 @@ class QFromBackward(Q):
         super().__init__(q_model)
 
     def init_filtering(self, obs, q_params, p):
-        mean, cov = kalman_init(obs, p.prior, p.emission)[2:]
+        mean, cov = self.model['filtering']['update'](obs=obs, 
+                                                    params=q_params['filtering']['update'], 
+                                                    pred_mean=p.prior.mean, 
+                                                    pred_cov=p.prior.cov)
         return Gaussian(mean, cov, *prec_and_det(cov))
 
     def update_filtering(self, obs, q_filtering:Gaussian, q_params):
 
+        pred_mean, pred_cov = self.model['filtering']['predict'](shared_param=q_params['shared_param'], 
+                                                                filt_mean=q_filtering.mean, 
+                                                                filt_cov=q_filtering.cov,
+                                                                params=q_params['filtering']['predict'])
         mean, cov = self.model['filtering']['update'](obs=obs,
-                                                    filt_mean=q_filtering.mean,
-                                                    filt_cov=q_filtering.cov,
+                                                    pred_mean=pred_mean,
+                                                    pred_cov=pred_cov,
                                                     params=q_params['filtering']['update'])
 
         return Gaussian(mean, cov, *prec_and_det(cov))
 
     def update_backward(self, q_filtering:Gaussian, q_params):
 
-        A, a, cov = self.model['backward'](filt_mean=q_filtering.mean, 
+        A, a, cov = self.model['backward'](shared_param=q_params['shared_param'],
+                                        filt_mean=q_filtering.mean, 
                                         filt_cov=q_filtering.cov, 
                                         params=q_params['backward'])
 
@@ -245,9 +254,24 @@ class NonLinearELBO:
         q_filtering = self.q.init_filtering(obs_seq[0], q_params, p)
         
 
-        (q_filtering, tractable_term, p, q_params), q_backward_seq = lax.scan(self.V_step, 
-                                                        init=(q_filtering, tractable_term, p, q_params), 
-                                                        xs=obs_seq[1:])
+        #--- debugging
+        q_backward_seq = []
+        for obs in obs_seq[1:]:
+            (q_filtering, tractable_term, p, q_params), q_backward = self.V_step((q_filtering, tractable_term, p, q_params), obs)
+            q_backward_seq.append(q_backward)
+        weights = jnp.stack(tuple(q_backward.weight for q_backward in q_backward_seq))
+        biases = jnp.stack(tuple(q_backward.bias for q_backward in q_backward_seq))
+        covs = jnp.stack(tuple(q_backward.cov for q_backward in q_backward_seq))
+        q_backward_seq = LinearGaussianKernel(_mappings['linear'],
+                                            {'weight':weights,'bias':biases},
+                                            covs)
+
+
+        # (q_filtering, tractable_term, p, q_params), q_backward_seq = lax.scan(self.V_step, 
+        #                                                 init=(q_filtering, tractable_term, p, q_params), 
+        #                                                 xs=obs_seq[1:])
+
+
 
         tractable_term = expect_quadratic_term_under_filtering(tractable_term, q_filtering) \
                     - constant_terms_from_log_gaussian(q_filtering.cov.shape[0], q_filtering.det_cov) \
