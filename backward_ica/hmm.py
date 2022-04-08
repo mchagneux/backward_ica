@@ -17,7 +17,6 @@ class GaussianHMM(metaclass=ABCMeta):
     default_transition_cov_base = 5e-2
     default_emission_cov_base = 2e-2
 
-
     def __init__(self, 
                 state_dim, 
                 obs_dim):
@@ -160,9 +159,7 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
                                     bias=random.uniform(subkeys[1], shape=(self.obs_dim,)),
                                     cov_base=GaussianHMM.default_emission_cov_base * jnp.ones((self.obs_dim,)))
 
-
         return HMMParams(prior=prior_params, transition=transition_params, emission=emission_params)
-
 
     def format_params(self, params):
     
@@ -174,6 +171,7 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
         return HMMParams(prior=formatted_prior_params, transition=formatted_transition_params, emission=formatted_emission_params)
 
     def init_filt_state(self, obs, pred_state, params):
+
         mean, cov =  kalman_init(obs, params.prior.mean, params.prior.cov, params.emission)
 
         return GaussianParams(mean, *cov_params_from_cov(cov))
@@ -190,7 +188,7 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
         mu, Sigma = filt_state.mean, filt_state.cov
         I = jnp.eye(self.state_dim)
 
-        k_chol_inv = jnp.linalg.inv(jnp.linalg.cholesky(A @ Sigma @ A.T))
+        k_chol_inv = inv_of_chol(A @ Sigma @ A.T)
         K = Sigma @ A.T @ k_chol_inv @ jnp.linalg.inv(k_chol_inv @ Q @ k_chol_inv + I) @ k_chol_inv
 
         C = I - K @ A

@@ -20,7 +20,7 @@ def kalman_predict(filt_mean, filt_cov, transition_params):
 def kalman_update(pred_mean, pred_cov, obs, emission_params):
 
     B, b, R = emission_params.matrix, emission_params.bias, emission_params.cov 
-    kalman_gain = pred_cov @ B.T @ jnp.linalg.inv(B @ pred_cov @ B.T + R)
+    kalman_gain = pred_cov @ B.T @ inv(B @ pred_cov @ B.T + R)
 
     filt_mean = pred_mean + kalman_gain @ (obs - (B @ pred_mean + b))
     filt_cov = pred_cov - kalman_gain @ B @ pred_cov
@@ -68,7 +68,7 @@ def kalman_smooth_seq(obs_seq, hmm_params):
         smooth_mean, smooth_cov, transition_matrix = carry 
         filt_mean, filt_cov, next_pred_mean, next_pred_cov = x  
         
-        C = filt_cov @ transition_matrix @ jnp.linalg.inv(next_pred_cov)
+        C = filt_cov @ transition_matrix @ inv(next_pred_cov)
         smooth_mean = filt_mean + C @ (smooth_mean - next_pred_mean)
         smooth_cov = filt_cov + C @ (smooth_cov - next_pred_cov) @ C.T
 

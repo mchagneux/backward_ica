@@ -57,8 +57,9 @@ svi = SVI(p, q, optimizer, num_epochs, batch_size)
 
 q_params, avg_elbos = svi.multi_fit(obs_seqs, p_params, infer_key, num_fits=num_fits)
 
+
+#%% Plotting results 
 utils.plot_fit_results_1D(p, q, p_params, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence)
 
 print('Smoothing with true params:', utils.mse_smoothed_means_against_true_states(state_seqs, obs_seqs, p, p_params))
 print('Smoothing with fitted params:', utils.mse_smoothed_means_against_true_states(state_seqs, obs_seqs, q, q_params))
-#%% 
