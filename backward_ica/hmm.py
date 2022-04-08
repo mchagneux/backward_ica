@@ -228,6 +228,9 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
         (last_filt_state, _), backwd_state_seq = lax.scan(_forward_pass, init=(filt_state, formatted_params), xs=obs_seq[1:])
 
         return self.backwd_pass(last_filt_state, backwd_state_seq)
+    
+    # def smooth_seq(self, obs_seq, params):
+    #     return kalman_smooth_seq(obs_seq, self.format_params(params))
 
 # def backwd_update(shared_param, filt_mean, filt_cov):
 #     net = hk.nets.MLP((8, d**2 + d + d*(d+1) // 2))
