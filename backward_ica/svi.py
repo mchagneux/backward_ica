@@ -3,7 +3,6 @@ import optax
 from jax import vmap, lax, config, numpy as jnp
 from jax.random import normal
 config.update("jax_enable_x64", True)
-config.update("jax_debug_nans", True)
 
 from .hmm import *
 from .utils import *
@@ -64,7 +63,7 @@ class ELBO:
         self.num_samples = num_samples
 
     def V_step(self, state, obs):
-        
+
         q_filt_state, tractable_term, p_params, q_params = state
         q_backwd_state = self.q.new_backwd_state(q_filt_state, q_params)
 
@@ -81,22 +80,7 @@ class ELBO:
         tractable_term = quadratic_term_from_log_gaussian(p_params.prior)
 
         q_filt_state = self.q.init_filt_state(obs_seq[0], p_params.prior, q_params)
-        
-
-        # #--- debugging
-        # q_backward_seq = []
-        # for obs in obs_seq[1:]:
-        #     (q_filtering, tractable_term, p, q_params), q_backward = self.V_step((q_filtering, tractable_term, p, q_params), obs)
-        #     q_backward_seq.append(q_backward)
-        # weights = jnp.stack(tuple(q_backward.matrix for q_backward in q_backward_seq))
-        # biases = jnp.stack(tuple(q_backward.bias for q_backward in q_backward_seq))
-        # covs = jnp.stack(tuple(q_backward.cov for q_backward in q_backward_seq))
-        # q_backward_seq = LinearGaussianKernel(_mappings['linear'],
-        #                                     {'weight':weights,'bias':biases},
-        #                                     covs)
-        # #---
-
-
+    
         (q_last_filt_state, tractable_term, p_params, q_params), q_backwd_state_seq = lax.scan(self.V_step, 
                                                         init=(q_filt_state, tractable_term, p_params, q_params), 
                                                         xs=obs_seq[1:])
@@ -137,19 +121,25 @@ class ELBO:
                         
         return monte_carlo_term + tractable_term
         
+
+
 class SVI:
 
     def __init__(self, p:GaussianHMM, q:Smoother, optimizer, num_epochs, batch_size, num_samples=1):
+
         self.optimizer = optimizer 
         self.num_samples = num_samples
         self.num_epochs = num_epochs
         self.batch_size = batch_size
-        self.loss = lambda seq, key, p_params, q_params: -ELBO(p, q, self.num_samples).compute(seq, key, p.format_params(p_params), q.format_params(q_params))
+        self.q = q 
+        self.p = p 
+        self.loss = lambda seq, key, p_params, q_params: -ELBO(self.p, self.q, self.num_samples).compute(seq, key, p_params, q_params)
 
 
     def fit(self, data, p_params, q_params, subkey_montecarlo=None):
 
-        loss = lambda seq, key, q_params:self.loss(seq, key, p_params, q_params)
+        loss = lambda seq, key, q_params:self.loss(seq, key, self.p.format_params(p_params), self.q.format_params(q_params))
+        
         opt_state = self.optimizer.init(q_params)
         num_seqs = data.shape[0]
         subkeys = jnp.empty((self.num_epochs, num_seqs, 1))
@@ -178,13 +168,7 @@ class SVI:
             q_params, opt_state = carry
             subkeys_epoch = x
             batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
-            
-            # #--- debugging
-            # avg_elbo_batches = []
-            # for batch_start_index in batch_start_indices:
-            #     (q_params, opt_state, subkeys_epoch), avg_elbo_batch = batch_step((q_params, opt_state, subkeys_epoch), batch_start_index)
-            #     avg_elbo_batches.append(avg_elbo_batch)
-            # #---
+        
 
             (q_params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step, 
                                                                 init=(q_params, opt_state, subkeys_epoch), 
@@ -192,20 +176,25 @@ class SVI:
 
             return (q_params, opt_state), jnp.mean(avg_elbo_batches)
 
-        # #--- debugging
-        # avg_elbos = []
-        # for subkey in subkeys:
-        #     (q_params, opt_state), avg_elbo = epoch_step((init_q_params, opt_state), subkey)
-        #     avg_elbos.append(avg_elbo)
-        # avg_elbos = jnp.array(avg_elbos)
-        # #---
 
         (q_params, _), avg_elbos = jax.lax.scan(epoch_step, init=(q_params, opt_state), xs=subkeys)
         
         return q_params, avg_elbos
 
+    def multi_fit(self, data, p_params, key, num_fits=1):
+        all_avg_elbos = []
+        all_fitted_params = []
+        for key in jax.random.split(key, num_fits):
+            fitted_params, avg_elbos = self.fit(data, p_params, self.q.get_random_params(key))
+            all_avg_elbos.append(avg_elbos)
+            all_fitted_params.append(fitted_params)
+        best_optim = jnp.argmax(jnp.array([avg_elbos[-1] for avg_elbos in all_avg_elbos]))
+        return all_fitted_params[best_optim], all_avg_elbos[best_optim]
+
+
 
 def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, p_params):
     evidence_via_elbo_on_seq = lambda seq: ELBO(p,p).compute(seq, None, p.format_params(p_params), p.format_params(p_params))
     evidence_via_kalman_on_seq = lambda seq: p.likelihood_seq(seq, p_params)
-    print(jnp.abs(jnp.mean(jax.vmap(evidence_via_elbo_on_seq)(data) - jax.vmap(evidence_via_kalman_on_seq)(data))))
+    print('ELBO sanity check:',jnp.abs(jnp.mean(jax.vmap(evidence_via_elbo_on_seq)(data) - jax.vmap(evidence_via_kalman_on_seq)(data))))
+

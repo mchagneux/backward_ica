@@ -13,9 +13,9 @@ _conditionnings = {'diagonal':lambda param: jnp.diag(param),
 
 class GaussianHMM(metaclass=ABCMeta): 
 
-    default_prior_cov_base = 1e-2
-    default_transition_cov_base = 1e-2
-    default_emission_cov_base = 8e-3
+    default_prior_cov_base = 5e-2
+    default_transition_cov_base = 5e-2
+    default_emission_cov_base = 2e-2
 
 
     def __init__(self, 
@@ -215,8 +215,8 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
         return kalman_filter_seq(obs_seq, self.format_params(params))[-1]
 
     def smooth_seq(self, obs_seq, params):
-        params = self.format_params(params)
-        filt_state = self.init_filt_state(obs_seq[0], None, params)
+        formatted_params = self.format_params(params)
+        filt_state = self.init_filt_state(obs_seq[0], None, formatted_params)
 
         def _forward_pass(carry, x):
             filt_state, params = carry 
@@ -224,7 +224,8 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
             backwd_state = self.new_backwd_state(filt_state, params)
             filt_state = self.new_filt_state(obs, filt_state, params)
             return (filt_state, params), backwd_state
-        (last_filt_state, params), backwd_state_seq = lax.scan(_forward_pass, init=(filt_state, params), xs=obs_seq[1:])
+
+        (last_filt_state, _), backwd_state_seq = lax.scan(_forward_pass, init=(filt_state, formatted_params), xs=obs_seq[1:])
 
         return self.backwd_pass(last_filt_state, backwd_state_seq)
 
@@ -272,6 +273,7 @@ class NonLinearGaussianHMM(GaussianHMM):
         return self.emission_map_apply(state, params=params.emission.map_params)
 
     def get_random_params(self, key):
+        
         key, subkey = random.split(key, 2)
         prior_params, transition_params = self.init_prior_and_linear_transition(key)
         
@@ -308,11 +310,3 @@ class NeuralSmoother(Smoother):
     def update_backwd_state(self, filt_state, params):
         return self.model['backward_update'](filt_state=filt_state,
                                             params=params['shared'])
-    
-    
-
-
-
-
-        
-
