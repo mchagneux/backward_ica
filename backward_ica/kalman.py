@@ -1,4 +1,4 @@
-from jax import numpy as jnp, lax, config
+from jax import numpy as jnp, lax, config, jit
 from jax.scipy.stats.multivariate_normal import logpdf as jax_gaussian_logpdf
 from pykalman.standard import KalmanFilter
 from .utils import *
@@ -38,6 +38,7 @@ def kalman_filter_seq(obs_seq, hmm_params):
     init_filt_mean, init_filt_cov = kalman_init(obs_seq[0], hmm_params.prior.mean, hmm_params.prior.cov, hmm_params.emission)
     loglikelihood = log_l_term(hmm_params.prior.mean, hmm_params.prior.cov, obs_seq[0], hmm_params.emission)
 
+    @jit
     def _filter_step(carry, x):
         loglikelihood, filt_mean, filt_cov, transition_params, emission_params  = carry
         pred_mean, pred_cov = kalman_predict(filt_mean, filt_cov, transition_params)
@@ -63,7 +64,8 @@ def kalman_smooth_seq(obs_seq, hmm_params):
     pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq = kalman_filter_seq(obs_seq, hmm_params)[:-1]
 
     last_smooth_mean, last_smooth_cov = filt_mean_seq[-1], filt_cov_seq[-1]
-
+    
+    @jit
     def _smooth_step(carry, x):
         smooth_mean, smooth_cov, transition_matrix = carry 
         filt_mean, filt_cov, next_pred_mean, next_pred_cov = x  

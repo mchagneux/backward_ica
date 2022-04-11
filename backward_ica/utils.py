@@ -2,7 +2,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 from queue import PriorityQueue
 from typing import Any
-from jax import numpy as jnp, vmap, config, lax, jit
+from jax import numpy as jnp, vmap, config
 from jax.tree_util import register_pytree_node_class 
 from jax.scipy.linalg import solve_triangular, cho_solve, cho_factor
 import matplotlib.pyplot as plt
@@ -130,38 +130,42 @@ def plot_fit_results_1D(p, q, p_params, q_params, state_seqs, obs_seqs, avg_elbo
 
     ax1 = fig.add_subplot(132)
     plot_relative_errors_1D(ax1, state_seqs[seq_nb], *p.smooth_seq(obs_seqs[seq_nb], p_params))
-    ax1.set_title('Kalman')
+    ax1.set_title(f'Kalman, MSE={smoothing_results_mse(state_seqs, obs_seqs, p, p_params):.5f}')
+
 
     ax2 = fig.add_subplot(133, sharey=ax1)
     plot_relative_errors_1D(ax2, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], q_params))
-    ax2.set_title('Backward variational')
+    ax2.set_title(f'Backward variational, MSE={smoothing_results_mse(state_seqs, obs_seqs, q, q_params):.5f}')
+
 
     plt.tight_layout()
     plt.autoscale(True)
     plt.legend()
     plt.show()
 
-def smoothing_results_mse(state_seqs, obs_seqs, smoother, params, step):
-    v_smoother = vmap(lambda seq: smoother.smooth_seq(seq, params)[0])
 
+def smoothing_results_mse(state_seqs, obs_seqs, smoother, params):
+    v_smoother = vmap(lambda seq: smoother.smooth_seq(seq, params)[0])
+    return jnp.mean((v_smoother(obs_seqs) - state_seqs)**2)
+
+def smoothing_results_mse_different_lengths(state_seqs, obs_seqs, smoother, params, step):
+    
     results = []    
     for length in range(2, state_seqs.shape[1], step):
-        results.append(jnp.mean((v_smoother(obs_seqs[:length]) - state_seqs[:length])**2))
+        results.append(smoothing_results_mse(state_seqs[:,:length,:], obs_seqs[:,:length,:], smoother, params))
 
     return results
 
-def compare_mse_for_different_lengths(p, q, p_params, q_params, obs_seqs, state_seqs):
-    step = 4
-    results_true_params = smoothing_results_mse(state_seqs, obs_seqs, p, p_params, step)
-    results_fitted_params = smoothing_results_mse(state_seqs, obs_seqs, q, q_params, step)
-    seq_lengths = np.arange(2, state_seqs.shape[1], 4)
-    plt.plot(seq_lengths, results_true_params, c='r', label='Kalman', marker='.')
-    plt.plot(seq_lengths, results_fitted_params, c='b', label='Backward variational', marker='.')
+def compare_mse_for_different_lengths(p, q, p_params, q_params, obs_seqs, state_seqs, step=4):
+    results_true_params = smoothing_results_mse_different_lengths(state_seqs, obs_seqs, p, p_params, step)
+    results_fitted_params = smoothing_results_mse_different_lengths(state_seqs, obs_seqs, q, q_params, step)
+    seq_lengths = np.arange(2, state_seqs.shape[1], step)
+    plt.plot(seq_lengths, results_true_params, c='r', label='Kalman', marker='.', linestyle='dotted')
+    plt.plot(seq_lengths, results_fitted_params, c='b', label='Backward variational', marker='.', linestyle='dotted')
     plt.xlabel('Sequence length')
     plt.ylabel('MSE between smoothed means and true states')
     plt.legend()
-    plt.show()
-
+    plt.show()    
 
 # if __name__ == '__main__':
 #     import jax 

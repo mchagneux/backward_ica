@@ -55,9 +55,16 @@ def quadratic_term_from_log_gaussian(gaussian_params):
 
     return result
 
+def exact_expectation_of_emission_term(marginal_mean, marginal_cov, obs, p_params):
+    A = p_params.emission.matrix
+    b = p_params.emission.bias - obs
+    Omega = p_params.emission.prec
+    gaussian_params = GaussianParams(mean=marginal_mean, cov_chol=None, cov=marginal_cov, prec=None, log_det=None)
+    return expect_quadratic_term_under_gaussian(-0.5*QuadTerm.from_A_b_Omega(A, b, Omega), gaussian_params)
+
 class ELBO:
 
-    def __init__(self, p:GaussianHMM, q:Smoother, num_samples=1):
+    def __init__(self, p:GaussianHMM, q:Smoother, num_samples=200):
         self.p = p
         self.q = q
         self.num_samples = num_samples
@@ -96,32 +103,51 @@ class ELBO:
     def compute(self, obs_seq, key, p_params, q_params):
 
         tractable_term, (q_last_filt_state, q_backwd_state_seq) = self.compute_tractable_terms(obs_seq, p_params, q_params)
-        marginal_means, marginal_covs = self.q.backwd_pass(q_last_filt_state, q_backwd_state_seq)
 
-        def exact_expectation(marginal_mean, marginal_cov, obs, p_params):
-            A = p_params.emission.matrix
-            b = p_params.emission.bias - obs
-            Omega = p_params.emission.prec
-            gaussian_params = GaussianParams(mean=marginal_mean, cov_chol=None, cov=marginal_cov, prec=None, log_det=None)
-            return expect_quadratic_term_under_gaussian(-0.5*QuadTerm.from_A_b_Omega(A, b, Omega), gaussian_params)
+        # marginal_means, marginal_covs = self.q.backwd_pass(q_last_filt_state, q_backwd_state_seq)
+        # monte_carlo_term = jnp.sum(vmap(exact_expectation_of_emission_term, in_axes=(0,0,0,None))(marginal_means, marginal_covs, obs_seq, p_params))
 
-        def monte_carlo_sample(normal_sample, marginal_mean, marginal_cov_chol, obs, p):
-            common_term = obs - p.emission.map(marginal_mean + marginal_cov_chol @ normal_sample)
-            return -0.5 * (common_term.T @ p.emission.prec @ common_term)
+        normal_samples = normal(key, shape=(self.num_samples, obs_seq.shape[0], self.p.state_dim))
 
-        # normal_samples = normal(key, shape=(self.num_samples, *marginal_means.shape))
         # marginal_covs_chol = jnp.linalg.cholesky(marginal_covs)
-        # monte_carlo_samples = vmap(vmap(monte_carlo_sample, in_axes=(0,0,0,0,None)), in_axes=(0,None,None,None,None))(normal_samples, marginal_means, marginal_covs_chol, obs_seq, p)
-        # monte_carlo_term = jnp.sum(jnp.mean(monte_carlo_samples, axis=0))
+        def sample_from_marginal(normal_sample, marginal_mean, marginal_cov_chol, obs, p_params):
+            common_term = obs - self.p.emission_map(marginal_mean + marginal_cov_chol @ normal_sample, p_params)
+            return -0.5 * (common_term.T @ p_params.emission.prec @ common_term)
+       
+
+        def sample_autoregressive(normal_samples, last_filt_state, backwd_state_seq):
+            
+            def _sample_step(carry, x):
+                next_state_sample = carry
+                matrix, bias, cov, obs, normal_sample = x
+                current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
+                common_term = obs - self.p.emission_map(current_state_sample, p_params)
+                return current_state_sample, -0.5 * (common_term.T @ p_params.emission.prec @ common_term)
+            
+            matrices = jnp.concatenate((backwd_state_seq.matrix, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
+            biases = jnp.concatenate((backwd_state_seq.bias, last_filt_state.mean[None,:]))
+            covs = jnp.concatenate((backwd_state_seq.cov, last_filt_state.cov[None,:]))
+
+            single_path_sample = lambda normal_samples_seq: lax.scan(_sample_step, 
+                                                                    init=jnp.empty((self.p.state_dim,)), 
+                                                                    xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
+                                                                    reverse=True)[1]
+            return jax.vmap(single_path_sample)(normal_samples)
+
+
+
         
-        monte_carlo_term = jnp.sum(vmap(exact_expectation, in_axes=(0,0,0,None))(marginal_means, marginal_covs, obs_seq, p_params))
-        
+        # monte_carlo_samples = vmap(vmap(sample_from_marginal, in_axes=(0,0,0,0,None)), in_axes=(0,None,None,None,None))(normal_samples, marginal_means, marginal_covs_chol, obs_seq, p_params)
+        monte_carlo_samples = sample_autoregressive(normal_samples, q_last_filt_state, q_backwd_state_seq)
+
+        monte_carlo_term = jnp.sum(jnp.mean(monte_carlo_samples, axis=0))
+
         monte_carlo_term += obs_seq.shape[0] * constant_terms_from_log_gaussian(p_params.emission.cov.shape[0], p_params.emission.log_det)
 
                         
         return monte_carlo_term + tractable_term
         
-class SVI:
+class SVITrainer:
 
     def __init__(self, p:GaussianHMM, q:Smoother, optimizer, num_epochs, batch_size, num_samples=1):
 
@@ -139,10 +165,10 @@ class SVI:
         
         opt_state = self.optimizer.init(q_params)
         num_seqs = data.shape[0]
-        subkeys = jnp.empty((self.num_epochs, num_seqs, 1))
-        
-        # subkeys = jax.random.split(subkey_montecarlo, num_seqs * num_epochs)
-        # subkeys = jnp.array(subkeys).reshape(num_epochs,num_seqs,-1)
+
+        # subkeys = jnp.empty((self.num_epochss, num_seqs, 1))
+        subkeys = jax.random.split(subkey_montecarlo, num_seqs * self.num_epochs)
+        subkeys = jnp.array(subkeys).reshape(self.num_epochs, num_seqs,-1)
 
         @jax.jit
         def batch_step(carry, x):
@@ -181,15 +207,18 @@ class SVI:
     def multi_fit(self, data, p_params, key, num_fits=1):
         all_avg_elbos = []
         all_fitted_params = []
-        for key in jax.random.split(key, num_fits):
-            fitted_params, avg_elbos = self.fit(data, p_params, self.q.get_random_params(key))
+        for fit_nb, key in enumerate(jax.random.split(key, num_fits)):
+            params_key, monte_carlo_key = jax.random.split(key, 2)
+            fitted_params, avg_elbos = self.fit(data, p_params, self.q.get_random_params(params_key), monte_carlo_key)
             all_avg_elbos.append(avg_elbos)
             all_fitted_params.append(fitted_params)
+            print(f'End of fit {fit_nb+1}/{num_fits}, final ELBO {avg_elbos[-1]:.3f}')
         best_optim = jnp.argmax(jnp.array([avg_elbos[-1] for avg_elbos in all_avg_elbos]))
+        print('Best fit is',best_optim+1)
         return all_fitted_params[best_optim], all_avg_elbos[best_optim]
 
-def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, p_params):
-    evidence_via_elbo_on_seq = lambda seq: ELBO(p,p).compute(seq, None, p.format_params(p_params), p.format_params(p_params))
+def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, p_params, key):
+    evidence_via_elbo_on_seq = lambda seq: ELBO(p,p).compute(seq, key, p.format_params(p_params), p.format_params(p_params))
     evidence_via_kalman_on_seq = lambda seq: p.likelihood_seq(seq, p_params)
     print('ELBO sanity check:',jnp.abs(jnp.mean(jax.vmap(evidence_via_elbo_on_seq)(data) - jax.vmap(evidence_via_kalman_on_seq)(data))))
 
