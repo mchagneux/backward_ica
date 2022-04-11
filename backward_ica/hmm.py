@@ -8,6 +8,11 @@ config.update('jax_enable_x64', True)
 from .utils import *
 
 
+def symetric_def_pos(param):
+    tril_mat = jnp.zeros()
+    return param @ param.T
+
+
 _conditionnings = {'diagonal':lambda param: jnp.diag(param),
                 'symetric_def_pos': lambda param: param @ param.T}
 
@@ -19,9 +24,11 @@ class GaussianHMM(metaclass=ABCMeta):
 
     def __init__(self, 
                 state_dim, 
-                obs_dim):
+                obs_dim, 
+                transition_matrix_conditionning):
 
         self.state_dim, self.obs_dim = state_dim, obs_dim
+        self.transition_matrix_conditionning = transition_matrix_conditionning
 
     @abstractmethod
     def get_random_params(self, key):
@@ -70,7 +77,10 @@ class GaussianHMM(metaclass=ABCMeta):
         if self.transition_matrix_conditionning == 'diagonal':
             matrix = random.uniform(subkeys[0], shape=(self.state_dim,))
         else: 
-            matrix = random.uniform(subkeys[0], shape=(self.state_dim,self.state_dim))
+            d = self.state_dim
+            num_free_params = (d * (d+1)) // 2 
+            matrix = random.uniform(subkeys[0], shape=(num_free_params,))
+
 
         transition_params = LinearGaussianKernelBaseParams(matrix=matrix,
                                     bias=random.uniform(subkeys[1], shape=(self.state_dim,)),
@@ -143,9 +153,8 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
                 obs_dim, 
                 transition_matrix_conditioning):
 
-        GaussianHMM.__init__(self, state_dim, obs_dim)
+        GaussianHMM.__init__(self, state_dim, obs_dim, transition_matrix_conditioning)
         Smoother.__init__(self)
-        self.transition_matrix_conditionning = transition_matrix_conditioning
 
     def emission_map(self, state, params):
         return params.emission.matrix @ state + params.emission.bias 

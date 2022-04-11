@@ -2,11 +2,12 @@ from collections import namedtuple
 from dataclasses import dataclass
 from queue import PriorityQueue
 from typing import Any
-from jax import numpy as jnp, vmap, config
+from jax import numpy as jnp, vmap, config, lax, jit
 from jax.tree_util import register_pytree_node_class 
 from jax.scipy.linalg import solve_triangular, cho_solve, cho_factor
 import matplotlib.pyplot as plt
 config.update('jax_enable_x64',True)
+import numpy as np 
 # Containers for parameters of various objects 
 
 GaussianKernelBaseParams = namedtuple('GaussianKernelBaseParams', ['map_params', 'cov_base'])
@@ -118,12 +119,14 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
 
 
 def plot_fit_results_1D(p, q, p_params, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence, seq_nb=0):
-    fig = plt.figure(figsize=(10,10))
+    fig = plt.figure(figsize=(15,5))
 
     ax0 = fig.add_subplot(131)
     ax0.plot(avg_elbos, label='$\mathcal{L}(\\theta,\\phi)$')
-    ax0.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$' )
+    ax0.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
     ax0.set_xlabel('Epoch') 
+    ax0.set_title('Training')
+    ax0.legend()
 
     ax1 = fig.add_subplot(132)
     plot_relative_errors_1D(ax1, state_seqs[seq_nb], *p.smooth_seq(obs_seqs[seq_nb], p_params))
@@ -133,15 +136,31 @@ def plot_fit_results_1D(p, q, p_params, q_params, state_seqs, obs_seqs, avg_elbo
     plot_relative_errors_1D(ax2, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], q_params))
     ax2.set_title('Backward variational')
 
+    plt.tight_layout()
     plt.autoscale(True)
     plt.legend()
     plt.show()
 
-def mse_smoothed_means_against_true_states(state_seqs, obs_seqs, smoother, params):
+def smoothing_results_mse(state_seqs, obs_seqs, smoother, params, step):
     v_smoother = vmap(lambda seq: smoother.smooth_seq(seq, params)[0])
-    smoothed_means = v_smoother(obs_seqs)
-    return jnp.mean((smoothed_means - state_seqs)**2)
 
+    results = []    
+    for length in range(2, state_seqs.shape[1], step):
+        results.append(jnp.mean((v_smoother(obs_seqs[:length]) - state_seqs[:length])**2))
+
+    return results
+
+def compare_mse_for_different_lengths(p, q, p_params, q_params, obs_seqs, state_seqs):
+    step = 4
+    results_true_params = smoothing_results_mse(state_seqs, obs_seqs, p, p_params, step)
+    results_fitted_params = smoothing_results_mse(state_seqs, obs_seqs, q, q_params, step)
+    seq_lengths = np.arange(2, state_seqs.shape[1], 4)
+    plt.plot(seq_lengths, results_true_params, c='r', label='Kalman', marker='.')
+    plt.plot(seq_lengths, results_fitted_params, c='b', label='Backward variational', marker='.')
+    plt.xlabel('Sequence length')
+    plt.ylabel('MSE between smoothed means and true states')
+    plt.legend()
+    plt.show()
 
 
 # if __name__ == '__main__':

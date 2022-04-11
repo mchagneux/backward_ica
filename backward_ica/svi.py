@@ -121,8 +121,6 @@ class ELBO:
                         
         return monte_carlo_term + tractable_term
         
-
-
 class SVI:
 
     def __init__(self, p:GaussianHMM, q:Smoother, optimizer, num_epochs, batch_size, num_samples=1):
@@ -134,7 +132,6 @@ class SVI:
         self.q = q 
         self.p = p 
         self.loss = lambda seq, key, p_params, q_params: -ELBO(self.p, self.q, self.num_samples).compute(seq, key, p_params, q_params)
-
 
     def fit(self, data, p_params, q_params, subkey_montecarlo=None):
 
@@ -190,8 +187,6 @@ class SVI:
             all_fitted_params.append(fitted_params)
         best_optim = jnp.argmax(jnp.array([avg_elbos[-1] for avg_elbos in all_avg_elbos]))
         return all_fitted_params[best_optim], all_avg_elbos[best_optim]
-
-
 
 def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, p_params):
     evidence_via_elbo_on_seq = lambda seq: ELBO(p,p).compute(seq, None, p.format_params(p_params), p.format_params(p_params))
