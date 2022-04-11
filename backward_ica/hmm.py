@@ -142,18 +142,34 @@ class Smoother(metaclass=ABCMeta):
         
         return means, covs 
 
-    @abstractmethod
+
     def smooth_seq(self, obs_seq, params):
-        raise NotImplementedError
+        # return kalman_smooth_seq(obs_seq, self.format_params(params))
+
+        formatted_params = self.format_params(params)
+        filt_state = self.init_filt_state(obs_seq[0], None, formatted_params)
+
+        def _forward_pass(carry, x):
+            filt_state, params = carry 
+            obs = x 
+            backwd_state = self.new_backwd_state(filt_state, params)
+            filt_state = self.new_filt_state(obs, filt_state, params)
+            return (filt_state, params), backwd_state
+
+        (last_filt_state, _), backwd_state_seq = lax.scan(_forward_pass, init=(filt_state, formatted_params), xs=obs_seq[1:])
+
+        return self.backwd_pass(last_filt_state, backwd_state_seq)
+
+
 
 class LinearGaussianHMM(GaussianHMM, Smoother):
 
     def __init__(self, 
                 state_dim, 
                 obs_dim, 
-                transition_matrix_conditioning):
+                transition_matrix_conditionning):
 
-        GaussianHMM.__init__(self, state_dim, obs_dim, transition_matrix_conditioning)
+        GaussianHMM.__init__(self, state_dim, obs_dim, transition_matrix_conditionning)
         Smoother.__init__(self)
 
     def emission_map(self, state, params):
@@ -161,9 +177,9 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
         
     def get_random_params(self, key):
         key, subkey = random.split(key, 2)
-        prior_params, transition_params = self.init_prior_and_linear_transition(key)
+        prior_params, transition_params = self.init_prior_and_linear_transition(subkey)
         
-        subkeys = random.split(subkey, 3)
+        subkeys = random.split(key, 3)
         emission_params = LinearGaussianKernelBaseParams(matrix=random.uniform(subkeys[0], shape=(self.obs_dim, self.state_dim)),
                                     bias=random.uniform(subkeys[1], shape=(self.obs_dim,)),
                                     cov_base=GaussianHMM.default_emission_cov_base * jnp.ones((self.obs_dim,)))
@@ -221,102 +237,115 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
     def likelihood_seq(self, obs_seq, params):
         return kalman_filter_seq(obs_seq, self.format_params(params))[-1]
 
-    def smooth_seq(self, obs_seq, params):
-        formatted_params = self.format_params(params)
-        filt_state = self.init_filt_state(obs_seq[0], None, formatted_params)
-
-        def _forward_pass(carry, x):
-            filt_state, params = carry 
-            obs = x 
-            backwd_state = self.new_backwd_state(filt_state, params)
-            filt_state = self.new_filt_state(obs, filt_state, params)
-            return (filt_state, params), backwd_state
-
-        (last_filt_state, _), backwd_state_seq = lax.scan(_forward_pass, init=(filt_state, formatted_params), xs=obs_seq[1:])
-
-        return self.backwd_pass(last_filt_state, backwd_state_seq)
-    
     # def smooth_seq(self, obs_seq, params):
     #     return kalman_smooth_seq(obs_seq, self.format_params(params))
 
-# def backwd_update(shared_param, filt_mean, filt_cov):
-#     net = hk.nets.MLP((8, d**2 + d + d*(d+1) // 2))
-#     out = net(jnp.concatenate((shared_param, filt_mean, jnp.tril(filt_cov).flatten())))
-#     A = out[:d**2].reshape((d,d))
-#     a = out[d**2:d**2+d]
-#     cov = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d**2+d:])
-#     return A, a, cov @ cov.T
-
-# def filt_predict(shared_param, filt_mean, filt_cov):
-
-#     net = hk.nets.MLP((8, d + d*(d+1) // 2))
-#     out = net(jnp.concatenate((shared_param, filt_mean, jnp.tril(filt_cov).flatten())))
-#     mean = out[:d]
-#     cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
-#     return mean, cov_chol @ cov_chol.T
-
-# def filt_update(obs, pred_mean, pred_cov):
-
-#     net = hk.nets.MLP((8, d + d*(d+1) // 2))
-#     out = net(jnp.concatenate((obs, pred_mean, jnp.tril(pred_cov).flatten())))
-#     mean = out[:d]
-#     cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
-#     return mean, cov_chol @ cov_chol.T
-
     
-
-
-
 class NonLinearGaussianHMM(GaussianHMM):
 
     def __init__(self, state_dim, obs_dim, transition_matrix_conditionning):
-        super().__init__(state_dim, obs_dim)
+        super().__init__(state_dim, obs_dim, transition_matrix_conditionning)
 
         def emission_map_forward(state):
             net = hk.nets.MLP((8,self.obs_dim))
             return net(state)
 
         self.emission_map_init_params, self.emission_map_apply = hk.without_apply_rng(hk.transform(emission_map_forward))
-        self.transition_matrix_conditionning = transition_matrix_conditionning
 
     def emission_map(self, state, params):
-        return self.emission_map_apply(state, params=params.emission.map_params)
+        return self.emission_map_apply(params.emission.map_params, state)
 
     def get_random_params(self, key):
         
         key, subkey = random.split(key, 2)
-        prior_params, transition_params = self.init_prior_and_linear_transition(key)
+        prior_params, transition_params = self.init_prior_and_linear_transition(subkey)
         
-        subkeys = random.split(subkey, 2)
-        emission_params = GaussianKernelBaseParams(map_params=self.emission_map_init_params(jnp.empty((self.state_dim,))),
+        subkeys = random.split(key, 2)
+        emission_params = GaussianKernelBaseParams(map_params=self.emission_map_init_params(subkeys[0], jnp.empty((self.state_dim,))),
                                                 cov_base=GaussianHMM.default_emission_cov_base * jnp.ones((self.obs_dim,)))
 
         return HMMParams(prior=prior_params, transition=transition_params, emission=emission_params)
 
     def format_params(self, params):
-        raise NotImplementedError
+        formatted_prior_params, formatted_transition_params = self.format_prior_and_linear_transition_params(params.prior, params.transition)
+        formatted_emission_params = GaussianKernelParams(params.emission.map_params,
+                                                    *cov_params_from_cov_chol(jnp.diag(params.emission.cov_base)))
+                                                    
+        return HMMParams(prior=formatted_prior_params, transition=formatted_transition_params, emission=formatted_emission_params)
+
 
 class NeuralSmoother(Smoother):
 
     def __init__(self, state_dim, obs_dim):
         self.state_dim, self.obs_dim = state_dim, obs_dim 
+        d = self.state_dim
+        self.shared_param_shape = d + d*(d+1) // 2
+
+        def filt_predict_forward(shared_params, filt_state):
+            filt_mean, filt_cov = filt_state
+            net = hk.nets.MLP((8, d + d*(d+1) // 2))
+            out = net(jnp.concatenate((shared_params, filt_mean, jnp.tril(filt_cov).flatten())))
+            mean = out[:d]
+            cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
+            return mean, cov_chol @ cov_chol.T
+        
+        def filt_update_forward(pred_state, obs):
+            pred_mean, pred_cov = pred_state
+            net = hk.nets.MLP((8, d + d*(d+1) // 2))
+            out = net(jnp.concatenate((obs, pred_mean, jnp.tril(pred_cov).flatten())))
+            mean = out[:d]
+            cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
+            return mean, cov_chol @ cov_chol.T
+        
+        def backwd_update_forward(shared_params, filt_state):
+            filt_mean, filt_cov = filt_state
+            net = hk.nets.MLP((8, d**2 + d + d*(d+1) // 2))
+            out = net(jnp.concatenate((shared_params, filt_mean, jnp.tril(filt_cov).flatten())))
+            A = out[:d**2].reshape((d,d))
+            a = out[d**2:d**2+d]
+            cov = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d**2+d:])
+            return A, a, cov @ cov.T
+
+        self.filt_predict_init_params, self.filt_predict_apply = hk.without_apply_rng(hk.transform(filt_predict_forward))
+        self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(filt_update_forward))
+        self.backwd_update_init_params, self.backwd_update_apply = hk.without_apply_rng(hk.transform(backwd_update_forward))
+
         
     def get_random_params(self, key):
-        raise NotImplementedError
+        subkeys = random.split(key, 5)
+        prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,)), 
+                                    cov_base=GaussianHMM.default_prior_cov_base * jnp.ones((self.state_dim,)))
 
-    def init_filt_state(self, obs, params):
+        shared_params = random.uniform(subkeys[1], shape=(self.shared_param_shape,))
+        dummy_mean = jnp.empty((self.state_dim,))
+        dummy_cov = jnp.empty((self.state_dim, self.state_dim))
+        dummy_obs = jnp.empty((self.obs_dim,))
 
-        return self.model['filt_init'](obs=obs, 
-                                    params=params['filt_init'])
+        filt_predict_params = self.filt_predict_init_params(subkeys[2], shared_params, (dummy_mean, dummy_cov))
+        filt_update_params = self.filt_update_init_params(subkeys[3], (dummy_mean, dummy_cov), dummy_obs)
+        backwd_update_params = self.backwd_update_init_params(subkeys[4], shared_params, (dummy_mean, dummy_cov))
 
-    def update_filt_state(self, obs, filt_state, params):
-        pred_state = self.model['filt_predict'](filt_state=filt_state, 
-                                                params=params['shared'])
-        filt_state = self.model['filt_update'](obs=obs,
-                                            pred_state=pred_state,
-                                            params=params['filt_update'])
-        return filt_state
+        return NeuralSmootherParams(prior_params, shared_params, filt_predict_params, filt_update_params, backwd_update_params)
+
+
+    def init_filt_state(self, obs, pred_state, params):
+
+        mean, cov = self.filt_update_apply(params.filt_update, (params.prior.mean, params.prior.cov), obs)
+        return GaussianParams(mean, *cov_params_from_cov(cov))
+
+
+    def new_filt_state(self, obs, filt_state, params):
+        pred_state = self.filt_predict_apply(params.filt_predict, params.shared, (filt_state.mean, filt_state.cov))
+        mean, cov = self.filt_update_apply(params.filt_update, pred_state, obs)
+        return GaussianParams(mean, *cov_params_from_cov(cov))
     
-    def update_backwd_state(self, filt_state, params):
-        return self.model['backward_update'](filt_state=filt_state,
-                                            params=params['shared'])
+    def new_backwd_state(self, filt_state, params):
+
+        A_back, a_back, cov_back = self.backwd_update_apply(params.backwd_update, params.shared, (filt_state.mean, filt_state.cov))
+
+        return LinearGaussianKernelParams(A_back, a_back, *cov_params_from_cov(cov_back))
+
+    def format_params(self, params):
+        formatted_prior_params = GaussianParams(params.prior.mean, 
+                                                *cov_params_from_cov_chol(jnp.diag(params.prior.cov_base)))
+        return NeuralSmootherParams(formatted_prior_params, *params[1:])

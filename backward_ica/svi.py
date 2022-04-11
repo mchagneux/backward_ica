@@ -213,7 +213,9 @@ class SVITrainer:
             all_avg_elbos.append(avg_elbos)
             all_fitted_params.append(fitted_params)
             print(f'End of fit {fit_nb+1}/{num_fits}, final ELBO {avg_elbos[-1]:.3f}')
-        best_optim = jnp.argmax(jnp.array([avg_elbos[-1] for avg_elbos in all_avg_elbos]))
+        array_to_sort = np.array([avg_elbos[-1] for avg_elbos in all_avg_elbos])
+        array_to_sort[np.isnan(array_to_sort)] = -np.inf
+        best_optim = jnp.argmax(array_to_sort)
         print('Best fit is',best_optim+1)
         return all_fitted_params[best_optim], all_avg_elbos[best_optim]
 

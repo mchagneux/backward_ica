@@ -4,7 +4,6 @@ from pykalman.standard import KalmanFilter
 from .utils import *
 
 config.update("jax_enable_x64", True)
-config.update("jax_debug_nans", True)
 
 
 def kalman_init(obs, prior_mean, prior_cov, emission_params:LinearGaussianKernelParams):

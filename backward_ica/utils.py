@@ -21,6 +21,8 @@ GaussianParams = namedtuple('GaussianParams', ['mean', 'cov_chol','cov','prec','
 
 HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
+NeuralSmootherParams = namedtuple('NeuralSmootherParams', ['prior', 'shared', 'filt_predict', 'filt_update', 'backwd_update'])
+
 def chol_from_inv(mat):
     tril_inv = jnp.swapaxes(
         jnp.linalg.cholesky(mat[..., ::-1, ::-1])[..., ::-1, ::-1], -2, -1
@@ -118,7 +120,7 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
     ax.set_xlabel('t')
 
 
-def plot_fit_results_1D(p, q, p_params, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence, seq_nb=0):
+def plot_fit_results_1D_against_reference(p, q, p_params, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence=None, seq_nb=0):
     fig = plt.figure(figsize=(15,5))
 
     ax0 = fig.add_subplot(131)
@@ -144,6 +146,25 @@ def plot_fit_results_1D(p, q, p_params, q_params, state_seqs, obs_seqs, avg_elbo
     plt.show()
 
 
+def plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, seq_nb=0):
+    fig = plt.figure(figsize=(15,5))
+
+    ax0 = fig.add_subplot(121)
+    ax0.plot(avg_elbos, label='$\mathcal{L}(\\theta,\\phi)$')
+    ax0.set_xlabel('Epoch') 
+    ax0.set_title('Training')
+    ax0.legend()
+
+    ax1 = fig.add_subplot(122)
+    plot_relative_errors_1D(ax1, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], q_params))
+    ax1.set_title(f'Backward variational, MSE={smoothing_results_mse(state_seqs, obs_seqs, q, q_params):.5f}')
+
+    plt.tight_layout()
+    plt.autoscale(True)
+    plt.legend()
+    plt.show()
+
+
 def smoothing_results_mse(state_seqs, obs_seqs, smoother, params):
     v_smoother = vmap(lambda seq: smoother.smooth_seq(seq, params)[0])
     return jnp.mean((v_smoother(obs_seqs) - state_seqs)**2)
@@ -156,7 +177,16 @@ def smoothing_results_mse_different_lengths(state_seqs, obs_seqs, smoother, para
 
     return results
 
-def compare_mse_for_different_lengths(p, q, p_params, q_params, obs_seqs, state_seqs, step=4):
+def compare_mse_for_different_lengths(q, q_params, state_seqs, obs_seqs, step=4):
+    results_fitted_params = smoothing_results_mse_different_lengths(state_seqs, obs_seqs, q, q_params, step)
+    seq_lengths = np.arange(2, state_seqs.shape[1], step)
+    plt.plot(seq_lengths, results_fitted_params, c='b', label='Backward variational', marker='.', linestyle='dotted')
+    plt.xlabel('Sequence length')
+    plt.ylabel('MSE between smoothed means and true states')
+    plt.legend()
+    plt.show()    
+
+def compare_mse_for_different_lengths_against_reference(p, q, p_params, q_params, state_seqs, obs_seqs, step=4):
     results_true_params = smoothing_results_mse_different_lengths(state_seqs, obs_seqs, p, p_params, step)
     results_fitted_params = smoothing_results_mse_different_lengths(state_seqs, obs_seqs, q, q_params, step)
     seq_lengths = np.arange(2, state_seqs.shape[1], step)
