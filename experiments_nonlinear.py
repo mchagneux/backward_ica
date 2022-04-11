@@ -27,7 +27,7 @@ num_seqs = 2048
 
 batch_size = 64
 learning_rate = 1e-2
-num_epochs = 70
+num_epochs = 100
 num_batches_per_epoch = num_seqs // batch_size
 optimizer = optax.adam(learning_rate=learning_rate)
 num_samples = 1
