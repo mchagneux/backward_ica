@@ -39,16 +39,16 @@ def kalman_filter_seq(obs_seq, hmm_params):
 
     @jit
     def _filter_step(carry, x):
-        loglikelihood, filt_mean, filt_cov, transition_params, emission_params  = carry
-        pred_mean, pred_cov = kalman_predict(filt_mean, filt_cov, transition_params)
-        filt_mean, filt_cov = kalman_update(pred_mean, pred_cov, x, emission_params)
+        loglikelihood, filt_mean, filt_cov = carry
+        pred_mean, pred_cov = kalman_predict(filt_mean, filt_cov, hmm_params.transition)
+        filt_mean, filt_cov = kalman_update(pred_mean, pred_cov, x, hmm_params.emission)
 
-        loglikelihood += log_l_term(pred_mean, pred_cov, x, emission_params)
+        loglikelihood += log_l_term(pred_mean, pred_cov, x, hmm_params.emission)
 
-        return (loglikelihood, filt_mean, filt_cov, transition_params, emission_params), (pred_mean, pred_cov, filt_mean, filt_cov)
+        return (loglikelihood, filt_mean, filt_cov), (pred_mean, pred_cov, filt_mean, filt_cov)
 
     (loglikelihood, *_), (pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq) = lax.scan(f=_filter_step, 
-                                init=(loglikelihood, init_filt_mean, init_filt_cov, hmm_params.transition, hmm_params.emission), 
+                                init=(loglikelihood, init_filt_mean, init_filt_cov), 
                                 xs=obs_seq[1:])
 
     pred_mean_seq = jnp.concatenate((hmm_params.prior.mean[None,:], pred_mean_seq))
@@ -66,17 +66,17 @@ def kalman_smooth_seq(obs_seq, hmm_params):
     
     @jit
     def _smooth_step(carry, x):
-        smooth_mean, smooth_cov, transition_matrix = carry 
+        next_smooth_mean, next_smooth_cov = carry 
         filt_mean, filt_cov, next_pred_mean, next_pred_cov = x  
         
-        C = filt_cov @ transition_matrix @ inv(next_pred_cov)
-        smooth_mean = filt_mean + C @ (smooth_mean - next_pred_mean)
-        smooth_cov = filt_cov + C @ (smooth_cov - next_pred_cov) @ C.T
+        C = filt_cov @ hmm_params.transition.matrix @ inv(next_pred_cov)
+        smooth_mean = filt_mean + C @ (next_smooth_mean - next_pred_mean)
+        smooth_cov = filt_cov + C @ (next_smooth_cov - next_pred_cov) @ C.T
 
-        return (smooth_mean, smooth_cov, transition_matrix), (smooth_mean, smooth_cov)
+        return (smooth_mean, smooth_cov), (smooth_mean, smooth_cov)
 
     _, (smooth_mean_seq, smooth_cov_seq) = lax.scan(f=_smooth_step,
-                                            init=(last_smooth_mean, last_smooth_cov, hmm_params.transition.matrix),
+                                            init=(last_smooth_mean, last_smooth_cov),
                                             xs=(filt_mean_seq[:-1], 
                                                 filt_cov_seq[:-1],
                                                 pred_mean_seq[1:],
