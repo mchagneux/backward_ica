@@ -10,6 +10,7 @@ from functools import partial
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 from backward_ica.svi import SVITrainer, check_linear_gaussian_elbo
+from backward_ica.smc import smc_filter_seq
 from IPython.display import display, Markdown
 from argparse import Namespace
 
@@ -26,8 +27,8 @@ seq_length = 64
 num_seqs = 2048
 
 batch_size = 64
-learning_rate = 1e-2
-num_epochs = 100
+learning_rate = 1e-3
+num_epochs = 150
 num_batches_per_epoch = num_seqs // batch_size
 optimizer = optax.adam(learning_rate=learning_rate)
 num_samples = 1
@@ -39,9 +40,9 @@ infer_key = jax.random.PRNGKey(seed_infer)
 p = hmm.NonLinearGaussianHMM(state_dim=state_dim, 
                         obs_dim=obs_dim, 
                         transition_matrix_conditionning='diagonal')
+
 key, subkey = jax.random.split(key, 2)
 p_params = p.get_random_params(subkey)
-
 
 #%% Define q 
 q = hmm.NeuralSmoother(state_dim=state_dim, 
@@ -53,13 +54,30 @@ sampler = jax.vmap(p.sample_seq, in_axes=(0, None, None))
 state_seqs, obs_seqs = sampler(jnp.array(subkeys), p_params, seq_length)
 
 
+#%%
+num_particles = 1000
+smc_likel = lambda obs_seq, prior_keys, resampling_keys, proposal_keys: p.likelihood_seq(obs_seq,
+                                                                                    prior_keys, 
+                                                                                    resampling_keys, 
+                                                                                    proposal_keys, 
+                                                                                    p_params,
+                                                                                    num_particles)
+
+prior_key, resampling_key, proposal_key = jax.random.split(key, 3)
+prior_keys = jax.random.split(prior_key, num_seqs * num_particles).reshape(num_seqs, num_particles, -1)
+resampling_keys = jax.random.split(resampling_key, num_seqs * (seq_length - 1)).reshape(num_seqs, seq_length - 1, -1)
+proposal_keys = jax.random.split(proposal_key, num_seqs * (seq_length - 1)).reshape(num_seqs, seq_length - 1, -1)
+
+avg_evidence_smc = jnp.mean(jax.vmap(smc_likel)(obs_seqs, prior_keys, resampling_keys, proposal_keys))
+print('Avg evidence bootstrap SMC:',avg_evidence_smc)
+
 #%% Fit q
 trainer = SVITrainer(p, q, optimizer, num_epochs, batch_size, num_samples)
 
 q_params, avg_elbos = trainer.multi_fit(obs_seqs, p_params, infer_key, num_fits=num_fits)
 
 #%% Plotting results 
-utils.plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos)
+utils.plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence_smc)
 
 num_test_seqs = 32
 test_seqs_length = 4096

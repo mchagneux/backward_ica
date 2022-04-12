@@ -121,7 +121,7 @@ class ELBO:
                 next_state_sample = carry
                 matrix, bias, cov, obs, normal_sample = x
                 current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
-                common_term = obs - self.p.emission_kernel.map(current_state_sample, p_params.emission)
+                common_term = obs - self.p.emission_kernel.map(jnp.atleast_2d(current_state_sample), p_params.emission).squeeze()
                 return current_state_sample, -0.5 * (common_term.T @ p_params.emission.prec @ common_term)
             
             matrices = jnp.concatenate((backwd_state_seq.matrix, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))

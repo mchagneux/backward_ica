@@ -5,7 +5,7 @@ from .utils import *
 
 config.update("jax_enable_x64", True)
 
-
+@jit
 def kalman_init(obs, prior_mean, prior_cov, emission_params:LinearGaussianKernelParams):
     filt_mean, filt_cov = kalman_update(prior_mean, prior_cov, obs, emission_params)
     return filt_mean, filt_cov

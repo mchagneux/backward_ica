@@ -146,11 +146,13 @@ def plot_fit_results_1D_against_reference(p, q, p_params, q_params, state_seqs, 
     plt.show()
 
 
-def plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, seq_nb=0):
+def plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence, seq_nb=0):
     fig = plt.figure(figsize=(15,5))
 
     ax0 = fig.add_subplot(121)
     ax0.plot(avg_elbos, label='$\mathcal{L}(\\theta,\\phi)$')
+    ax0.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
+
     ax0.set_xlabel('Epoch') 
     ax0.set_title('Training')
     ax0.legend()
