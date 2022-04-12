@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+from atexit import register
 from .utils import *
 from jax import numpy as jnp, random
 from backward_ica.kalman import kalman_init, kalman_predict, kalman_smooth_seq, kalman_update, kalman_filter_seq
@@ -6,7 +7,8 @@ import haiku as hk
 from jax import lax, vmap, config
 config.update('jax_enable_x64', True)
 from .utils import *
-
+from jax.scipy.stats.multivariate_normal import logpdf
+from jax.tree_util import Partial
 
 def symetric_def_pos(param):
     tril_mat = jnp.zeros()
@@ -14,90 +16,151 @@ def symetric_def_pos(param):
 
 
 _conditionnings = {'diagonal':lambda param: jnp.diag(param),
-                'symetric_def_pos': lambda param: param @ param.T}
+                'symetric_def_pos': lambda param: param @ param.T,
+                None:lambda x:x}
+
+
+@register_pytree_node_class
+class GaussianKernel:
+
+    default_cov_base = 2e-2
+
+    def __init__(self, in_dim, out_dim):
+
+        self.in_dim = in_dim
+        self.out_dim = out_dim 
+
+        def neural_map(input):
+            net = hk.nets.MLP((8,self.out_dim))
+            return net(input)
+
+        self.map_init_params, self.map_apply = hk.without_apply_rng(hk.transform(neural_map))
+        self.map_init_params = Partial(self.map_init_params)
+        self.map_apply = Partial(self.map_apply)
+
+    def map(self, state, params):
+        return self.map_apply(params.map_params, state) 
+    
+    def sample(self, key, state, params, shape=None):
+        return random.multivariate_normal(key, self.map(state, params), params.cov, shape)
+
+    def logpdf(self, x, state, params):
+        return logpdf(x, self.map(state, params), params.cov)
+
+    def get_random_params(self, key):
+        subkeys = random.split(key, 2)
+        return GaussianKernelBaseParams(map_params=self.map_init_params(subkeys[0], jnp.empty((self.in_dim,))),
+                                                cov_base=GaussianKernel.default_cov_base * jnp.ones((self.out_dim,)))
+    def format_params(self, params):
+        return GaussianKernelParams(params.map_params,
+                                                    *cov_params_from_cov_chol(jnp.diag(params.cov_base)))
+    def tree_flatten(self):
+        return ((self.in_dim, self.out_dim, self.map_init_params, self.map_apply), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        obj = cls.__new__(cls)
+        obj.in_dim, obj.out_dim, obj.map_init_params, obj.map_apply = children
+        return obj
+
+
+    
+@register_pytree_node_class
+class LinearGaussianKernel(GaussianKernel):
+
+    default_cov_base = 2e-2
+
+    def __init__(self, in_dim, out_dim, matrix_conditionning=None):
+
+        self.in_dim = in_dim 
+        self.out_dim = out_dim
+        self.matrix_conditionning = matrix_conditionning
+
+    def map(self, state, params):
+        return params.matrix @ state + params.bias
+    
+    def get_random_params(self, key):
+        subkeys = random.split(key, 3)
+
+        if self.matrix_conditionning == 'diagonal':
+            matrix = random.uniform(subkeys[0], shape=(self.in_dim,))
+        else: 
+            matrix = random.uniform(subkeys[0], shape=(self.out_dim, self.in_dim))
+
+
+        return LinearGaussianKernelBaseParams(matrix=matrix,
+                    bias=random.uniform(subkeys[1], shape=(self.out_dim,)),
+                    cov_base=LinearGaussianKernel.default_cov_base * jnp.ones((self.out_dim,)))
+
+    def format_params(self, params):
+        return LinearGaussianKernelParams(_conditionnings[self.matrix_conditionning](params.matrix),
+                                        params.bias, 
+                                        *cov_params_from_cov_chol(jnp.diag(params.cov_base)))
+
+    def tree_flatten(self):
+        return ((self.in_dim, self.out_dim, self.matrix_conditionning), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
 
 class GaussianHMM(metaclass=ABCMeta): 
 
     default_prior_cov_base = 5e-2
-    default_transition_cov_base = 5e-2
-    default_emission_cov_base = 2e-2
 
     def __init__(self, 
                 state_dim, 
                 obs_dim, 
-                transition_matrix_conditionning):
+                transition_kernel_type, 
+                emission_kernel_type):
 
         self.state_dim, self.obs_dim = state_dim, obs_dim
-        self.transition_matrix_conditionning = transition_matrix_conditionning
-
-    @abstractmethod
+        self.prior_sampler = Partial(lambda key, params, shape=None: random.multivariate_normal(key, params.mean, params.cov, shape))
+        self.transition_kernel:GaussianKernel = transition_kernel_type(state_dim)
+        self.emission_kernel:GaussianKernel = emission_kernel_type(state_dim, obs_dim)
+        
     def get_random_params(self, key):
-        raise NotImplementedError
-
-    @abstractmethod
-    def format_params(self, params):
-        raise NotImplementedError
-
-    @abstractmethod
-    def emission_map(self, state, params):
-        raise NotImplementedError
-
-    def transition_map(self, prev_state, params):
-        return params.transition.matrix @ prev_state + params.transition.bias 
-
-    def sample_seq(self, key, params, seq_length):
-        params = self.format_params(params)
-        keys = random.split(key, 2*seq_length)
-        state_keys = keys[:seq_length]
-        obs_keys = keys[seq_length:]
-
-        prior_sample = random.multivariate_normal(state_keys[0], mean=params.prior.mean, cov=params.prior.cov)
-
-        def _state_sample(carry, x):
-            prev_sample = carry
-            key = x
-            sample = random.multivariate_normal(key, mean=self.transition_map(prev_sample, params), cov=params.transition.cov)
-            return sample, sample
-        _, state_seq = lax.scan(_state_sample, init=prior_sample, xs=state_keys[1:])
-        state_seq = jnp.concatenate((prior_sample[None,:], state_seq))
-
-        def _obs_sample(state_sample, key):
-            return random.multivariate_normal(key, mean=self.emission_map(state_sample, params), cov=params.emission.cov)
-        obs_seq = vmap(_obs_sample)(state_seq, obs_keys)
-
-        return state_seq, obs_seq
-
-    def init_prior_and_linear_transition(self, key):
 
         key, *subkeys = random.split(key, 3)
         prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,)), 
                                     cov_base=GaussianHMM.default_prior_cov_base * jnp.ones((self.state_dim,)))
+        subkeys = random.split(key, 2)
 
-        subkeys = random.split(key, 3)
-        if self.transition_matrix_conditionning == 'diagonal':
-            matrix = random.uniform(subkeys[0], shape=(self.state_dim,))
-        else: 
-            d = self.state_dim
-            num_free_params = (d * (d+1)) // 2 
-            matrix = random.uniform(subkeys[0], shape=(num_free_params,))
-
-
-        transition_params = LinearGaussianKernelBaseParams(matrix=matrix,
-                                    bias=random.uniform(subkeys[1], shape=(self.state_dim,)),
-                                    cov_base=GaussianHMM.default_transition_cov_base * jnp.ones((self.state_dim,)))
-
-        return prior_params, transition_params
-
-    def format_prior_and_linear_transition_params(self, prior_params, transition_params):
-
-        formatted_prior_params = GaussianParams(prior_params.mean, 
-                                                *cov_params_from_cov_chol(jnp.diag(prior_params.cov_base)))
-
-        formatted_transition_params = LinearGaussianKernelParams(_conditionnings[self.transition_matrix_conditionning](transition_params.matrix),
-                                                                transition_params.bias, 
-                                                                *cov_params_from_cov_chol(jnp.diag(transition_params.cov_base)))
+        transition_params = self.transition_kernel.get_random_params(subkeys[0])
+        emission_params = self.emission_kernel.get_random_params(subkeys[1])
+        return HMMParams(prior_params, transition_params, emission_params)
         
-        return formatted_prior_params, formatted_transition_params
+    def format_params(self, params):
+        formatted_prior_params = GaussianParams(params.prior.mean, 
+                                                *cov_params_from_cov_chol(jnp.diag(params.prior.cov_base)))
+
+        formatted_transition_params = self.transition_kernel.format_params(params.transition)
+        formatted_emission_params = self.emission_kernel.format_params(params.emission)
+
+        return HMMParams(formatted_prior_params, formatted_transition_params, formatted_emission_params)
+    
+    def sample_seq(self, key, params, seq_length):
+
+        params = self.format_params(params)
+
+        keys = random.split(key, 2*seq_length)
+        state_keys = keys[:seq_length]
+        obs_keys = keys[seq_length:]
+
+        prior_sample = self.prior_sampler(state_keys[0], params.prior)
+
+        def _state_sample(carry, x):
+            prev_sample = carry
+            key = x
+            sample = self.transition_kernel.sample(key, prev_sample, params.transition)
+            return sample, sample
+        _, state_seq = lax.scan(_state_sample, init=prior_sample, xs=state_keys[1:])
+
+        state_seq = jnp.concatenate((prior_sample[None,:], state_seq))
+
+        obs_seq = vmap(lambda state, key: self.emission_kernel.sample(key, state, params.emission))(state_seq, obs_keys)
+
+        return state_seq, obs_seq
 
 class Smoother(metaclass=ABCMeta):
 
@@ -109,7 +172,11 @@ class Smoother(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def init_filt_state(self, obs, pred_state, params):
+    def format_params(self, params):
+        raise NotImplementedError
+
+    @abstractmethod
+    def init_filt_state(self, obs, params):
         raise NotImplementedError
 
     @abstractmethod
@@ -118,10 +185,6 @@ class Smoother(metaclass=ABCMeta):
 
     @abstractmethod
     def new_backwd_state(self, filt_state, params):
-        raise NotImplementedError
-
-    @abstractmethod
-    def format_params(self, params):
         raise NotImplementedError
 
     def backwd_pass(self, last_filt_state, backwd_state_seq):
@@ -142,12 +205,11 @@ class Smoother(metaclass=ABCMeta):
         
         return means, covs 
 
-
     def smooth_seq(self, obs_seq, params):
         # return kalman_smooth_seq(obs_seq, self.format_params(params))
 
         formatted_params = self.format_params(params)
-        filt_state = self.init_filt_state(obs_seq[0], None, formatted_params)
+        filt_state = self.init_filt_state(obs_seq[0], formatted_params)
 
         def _forward_pass(carry, x):
             filt_state, params = carry 
@@ -160,8 +222,6 @@ class Smoother(metaclass=ABCMeta):
 
         return self.backwd_pass(last_filt_state, backwd_state_seq)
 
-
-
 class LinearGaussianHMM(GaussianHMM, Smoother):
 
     def __init__(self, 
@@ -169,33 +229,13 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
                 obs_dim, 
                 transition_matrix_conditionning):
 
-        GaussianHMM.__init__(self, state_dim, obs_dim, transition_matrix_conditionning)
+        transition_kernel_type = lambda state_dim:LinearGaussianKernel(state_dim, state_dim, transition_matrix_conditionning)
+        emission_kernel_type = LinearGaussianKernel
+
+        GaussianHMM.__init__(self, state_dim, obs_dim, transition_kernel_type, emission_kernel_type)
         Smoother.__init__(self)
 
-    def emission_map(self, state, params):
-        return params.emission.matrix @ state + params.emission.bias 
-        
-    def get_random_params(self, key):
-        key, subkey = random.split(key, 2)
-        prior_params, transition_params = self.init_prior_and_linear_transition(subkey)
-        
-        subkeys = random.split(key, 3)
-        emission_params = LinearGaussianKernelBaseParams(matrix=random.uniform(subkeys[0], shape=(self.obs_dim, self.state_dim)),
-                                    bias=random.uniform(subkeys[1], shape=(self.obs_dim,)),
-                                    cov_base=GaussianHMM.default_emission_cov_base * jnp.ones((self.obs_dim,)))
-
-        return HMMParams(prior=prior_params, transition=transition_params, emission=emission_params)
-
-    def format_params(self, params):
-    
-        formatted_prior_params, formatted_transition_params = self.format_prior_and_linear_transition_params(params.prior, params.transition)
-        formatted_emission_params = LinearGaussianKernelParams(params.emission.matrix,
-                                                    params.emission.bias,
-                                                    *cov_params_from_cov_chol(jnp.diag(params.emission.cov_base)))
-                                                    
-        return HMMParams(prior=formatted_prior_params, transition=formatted_transition_params, emission=formatted_emission_params)
-
-    def init_filt_state(self, obs, pred_state, params):
+    def init_filt_state(self, obs, params):
 
         mean, cov =  kalman_init(obs, params.prior.mean, params.prior.cov, params.emission)
 
@@ -222,61 +262,29 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
         a_back = mu @ C - K @ a
         cov_back = C @ Sigma
 
-        # transition_params = params.transition
-        # prec = transition_params.matrix.T @ transition_params.prec @ transition_params.matrix + filt_state.prec
-        # cov = jnp.linalg.inv(prec)
-
-        # common_term = transition_params.matrix.T @ transition_params.prec
-        # A_back = cov @ common_term
-        # a_back = cov @ (filt_state.prec @ filt_state.mean - common_term @  transition_params.bias)
-        # cov_back = cov
-
-
         return LinearGaussianKernelParams(A_back, a_back, *cov_params_from_cov(cov_back))
 
     def likelihood_seq(self, obs_seq, params):
         return kalman_filter_seq(obs_seq, self.format_params(params))[-1]
 
-    # def smooth_seq(self, obs_seq, params):
-    #     return kalman_smooth_seq(obs_seq, self.format_params(params))
-
-    
 class NonLinearGaussianHMM(GaussianHMM):
 
-    def __init__(self, state_dim, obs_dim, transition_matrix_conditionning):
-        super().__init__(state_dim, obs_dim, transition_matrix_conditionning)
+    def __init__(self, 
+                state_dim, 
+                obs_dim, 
+                transition_matrix_conditionning,
+                num_particles=100):
 
-        def emission_map_forward(state):
-            net = hk.nets.MLP((8,self.obs_dim))
-            return net(state)
+        transition_kernel_type = lambda state_dim: LinearGaussianKernel(state_dim, state_dim, transition_matrix_conditionning)
+        emission_kernel_type = GaussianKernel
+        self.num_particles = num_particles
 
-        self.emission_map_init_params, self.emission_map_apply = hk.without_apply_rng(hk.transform(emission_map_forward))
-
-    def emission_map(self, state, params):
-        return self.emission_map_apply(params.emission.map_params, state)
-
-    def get_random_params(self, key):
-        
-        key, subkey = random.split(key, 2)
-        prior_params, transition_params = self.init_prior_and_linear_transition(subkey)
-        
-        subkeys = random.split(key, 2)
-        emission_params = GaussianKernelBaseParams(map_params=self.emission_map_init_params(subkeys[0], jnp.empty((self.state_dim,))),
-                                                cov_base=GaussianHMM.default_emission_cov_base * jnp.ones((self.obs_dim,)))
-
-        return HMMParams(prior=prior_params, transition=transition_params, emission=emission_params)
-
-    def format_params(self, params):
-        formatted_prior_params, formatted_transition_params = self.format_prior_and_linear_transition_params(params.prior, params.transition)
-        formatted_emission_params = GaussianKernelParams(params.emission.map_params,
-                                                    *cov_params_from_cov_chol(jnp.diag(params.emission.cov_base)))
-                                                    
-        return HMMParams(prior=formatted_prior_params, transition=formatted_transition_params, emission=formatted_emission_params)
-
+        GaussianHMM.__init__(self, state_dim, obs_dim, transition_kernel_type, emission_kernel_type)
 
 class NeuralSmoother(Smoother):
 
     def __init__(self, state_dim, obs_dim):
+
         self.state_dim, self.obs_dim = state_dim, obs_dim 
         d = self.state_dim
         self.shared_param_shape = d + d*(d+1) // 2
@@ -303,8 +311,8 @@ class NeuralSmoother(Smoother):
             out = net(jnp.concatenate((shared_params, filt_mean, jnp.tril(filt_cov).flatten())))
             A = out[:d**2].reshape((d,d))
             a = out[d**2:d**2+d]
-            cov = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d**2+d:])
-            return A, a, cov @ cov.T
+            cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d**2+d:])
+            return A, a, cov_chol @ cov_chol.T
 
         self.filt_predict_init_params, self.filt_predict_apply = hk.without_apply_rng(hk.transform(filt_predict_forward))
         self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(filt_update_forward))
@@ -312,6 +320,7 @@ class NeuralSmoother(Smoother):
 
         
     def get_random_params(self, key):
+
         subkeys = random.split(key, 5)
         prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,)), 
                                     cov_base=GaussianHMM.default_prior_cov_base * jnp.ones((self.state_dim,)))
@@ -328,7 +337,7 @@ class NeuralSmoother(Smoother):
         return NeuralSmootherParams(prior_params, shared_params, filt_predict_params, filt_update_params, backwd_update_params)
 
 
-    def init_filt_state(self, obs, pred_state, params):
+    def init_filt_state(self, obs, params):
 
         mean, cov = self.filt_update_apply(params.filt_update, (params.prior.mean, params.prior.cov), obs)
         return GaussianParams(mean, *cov_params_from_cov(cov))

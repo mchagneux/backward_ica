@@ -86,7 +86,7 @@ class ELBO:
     def compute_tractable_terms(self, obs_seq, p_params, q_params):
         tractable_term = quadratic_term_from_log_gaussian(p_params.prior)
 
-        q_filt_state = self.q.init_filt_state(obs_seq[0], p_params.prior, q_params)
+        q_filt_state = self.q.init_filt_state(obs_seq[0], q_params)
     
         (q_last_filt_state, tractable_term, p_params, q_params), q_backwd_state_seq = lax.scan(self.V_step, 
                                                         init=(q_filt_state, tractable_term, p_params, q_params), 
@@ -100,7 +100,7 @@ class ELBO:
 
         return tractable_term, (q_last_filt_state, q_backwd_state_seq)
         
-    def compute(self, obs_seq, key, p_params, q_params):
+    def compute(self, obs_seq, key, p_params:HMMParams, q_params):
 
         tractable_term, (q_last_filt_state, q_backwd_state_seq) = self.compute_tractable_terms(obs_seq, p_params, q_params)
 
@@ -111,7 +111,7 @@ class ELBO:
 
         # marginal_covs_chol = jnp.linalg.cholesky(marginal_covs)
         def sample_from_marginal(normal_sample, marginal_mean, marginal_cov_chol, obs, p_params):
-            common_term = obs - self.p.emission_map(marginal_mean + marginal_cov_chol @ normal_sample, p_params)
+            common_term = obs - self.p.emission_kernel.map(marginal_mean + marginal_cov_chol @ normal_sample, p_params)
             return -0.5 * (common_term.T @ p_params.emission.prec @ common_term)
        
 
@@ -121,18 +121,18 @@ class ELBO:
                 next_state_sample = carry
                 matrix, bias, cov, obs, normal_sample = x
                 current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
-                common_term = obs - self.p.emission_map(current_state_sample, p_params)
+                common_term = obs - self.p.emission_kernel.map(current_state_sample, p_params.emission)
                 return current_state_sample, -0.5 * (common_term.T @ p_params.emission.prec @ common_term)
             
             matrices = jnp.concatenate((backwd_state_seq.matrix, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
             biases = jnp.concatenate((backwd_state_seq.bias, last_filt_state.mean[None,:]))
             covs = jnp.concatenate((backwd_state_seq.cov, last_filt_state.cov[None,:]))
 
-            single_path_sample = lambda normal_samples_seq: lax.scan(_sample_step, 
+            sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
                                                                     init=jnp.empty((self.p.state_dim,)), 
                                                                     xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
                                                                     reverse=True)[1]
-            return jax.vmap(single_path_sample)(normal_samples)
+            return jax.vmap(sample_path)(normal_samples)
 
 
 
@@ -166,7 +166,7 @@ class SVITrainer:
         opt_state = self.optimizer.init(q_params)
         num_seqs = data.shape[0]
 
-        # subkeys = jnp.empty((self.num_epochss, num_seqs, 1))
+        # subkeys = jnp.empty((self.num_epochs, num_seqs, 1))
         subkeys = jax.random.split(subkey_montecarlo, num_seqs * self.num_epochs)
         subkeys = jnp.array(subkeys).reshape(self.num_epochs, num_seqs,-1)
 
