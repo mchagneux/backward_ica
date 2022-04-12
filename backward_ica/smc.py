@@ -55,6 +55,4 @@ def smc_filter_seq(prior_keys, resampling_keys, proposal_keys, obs_seq, prior_sa
 
     return terminal_log_probs, terminal_particles, likel
 
-    
-
 

@@ -16,7 +16,6 @@ from argparse import Namespace
 
 
 #%% Hyperparameters 
-experiment_name = 'q_backward'
 seed_model_params = 1326
 seed_infer = 4569
 

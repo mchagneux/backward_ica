@@ -132,12 +132,14 @@ def plot_fit_results_1D_against_reference(p, q, p_params, q_params, state_seqs, 
 
     ax1 = fig.add_subplot(132)
     plot_relative_errors_1D(ax1, state_seqs[seq_nb], *p.smooth_seq(obs_seqs[seq_nb], p_params))
-    ax1.set_title(f'Kalman, MSE={smoothing_results_mse(state_seqs, obs_seqs, p, p_params):.5f}')
+    ax1.set_title('Example sequence Kalman')
+    print('Kalman MSE averaged across all sequences:', smoothing_results_mse(state_seqs, obs_seqs, p, p_params))
 
 
     ax2 = fig.add_subplot(133, sharey=ax1)
     plot_relative_errors_1D(ax2, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], q_params))
-    ax2.set_title(f'Backward variational, MSE={smoothing_results_mse(state_seqs, obs_seqs, q, q_params):.5f}')
+    ax2.set_title('Example sequence backward variational')
+    print('Backward variational MSE averaged across all sequences:', smoothing_results_mse(state_seqs, obs_seqs, q, q_params))
 
 
     plt.tight_layout()

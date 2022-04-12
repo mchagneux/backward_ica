@@ -129,9 +129,9 @@ class ELBO:
             covs = jnp.concatenate((backwd_state_seq.cov, last_filt_state.cov[None,:]))
 
             sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
-                                                                    init=jnp.empty((self.p.state_dim,)), 
-                                                                    xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
-                                                                    reverse=True)[1]
+                                                            init=jnp.empty((self.p.state_dim,)), 
+                                                            xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
+                                                            reverse=True)[1]
             return jax.vmap(sample_path)(normal_samples)
 
 

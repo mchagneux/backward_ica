@@ -11,6 +11,12 @@ from .utils import *
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
 from jax.tree_util import Partial
 from functools import partial
+from jax import nn
+
+def sample_multiple_sequences(key, hmm_sampler, hmm_params, num_seqs, seq_length):
+    key, *subkeys = random.split(key, num_seqs+1)
+    sampler = vmap(hmm_sampler, in_axes=(0, None, None))
+    return sampler(jnp.array(subkeys), hmm_params, seq_length) 
 
 def symetric_def_pos(param):
     tril_mat = jnp.zeros()
