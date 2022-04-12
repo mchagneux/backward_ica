@@ -59,8 +59,6 @@ def backwd_update_forward(shared_params, filt_state, d):
 @register_pytree_node_class
 class GaussianKernel:
 
-    default_cov_base = 2e-2
-
     def __init__(self, in_dim, out_dim):
 
         self.in_dim = in_dim
@@ -79,14 +77,14 @@ class GaussianKernel:
     def logpdf(self, x, mapped_state, params):
         return gaussian_logpdf(x, mapped_state, params.cov)
 
-    def get_random_params(self, key):
+    def get_random_params(self, key, default_cov_base=None):
         subkeys = random.split(key, 2)
         return GaussianKernelBaseParams(map_params=self.map_init_params(subkeys[0], jnp.empty((self.in_dim,))),
-                                                cov_base=GaussianKernel.default_cov_base * jnp.ones((self.out_dim,)))
+                                                cov_base=default_cov_base * jnp.ones((self.out_dim,)))
     
     def format_params(self, params):
         return GaussianKernelParams(params.map_params,
-                                                    *cov_params_from_cov_chol(jnp.diag(params.cov_base)))
+                                    *cov_params_from_cov_chol(jnp.diag(params.cov_base)))
     
     def tree_flatten(self):
         return ((self.in_dim, self.out_dim, self.map_init_params, self.map_apply), None)
@@ -100,8 +98,6 @@ class GaussianKernel:
 @register_pytree_node_class
 class LinearGaussianKernel(GaussianKernel):
 
-    default_cov_base = 2e-2
-
     def __init__(self, in_dim, out_dim, matrix_conditionning=None):
 
         self.in_dim = in_dim 
@@ -112,7 +108,7 @@ class LinearGaussianKernel(GaussianKernel):
     def map(self, state, params):
         return self.map_apply(state, params)
 
-    def get_random_params(self, key):
+    def get_random_params(self, key, default_cov_base=None):
         subkeys = random.split(key, 3)
 
         if self.matrix_conditionning == 'diagonal':
@@ -123,7 +119,7 @@ class LinearGaussianKernel(GaussianKernel):
 
         return LinearGaussianKernelBaseParams(matrix=matrix,
                     bias=random.uniform(subkeys[1], shape=(self.out_dim,)),
-                    cov_base=LinearGaussianKernel.default_cov_base * jnp.ones((self.out_dim,)))
+                    cov_base=default_cov_base * jnp.ones((self.out_dim,)))
 
     def format_params(self, params):
         return LinearGaussianKernelParams(_conditionnings[self.matrix_conditionning](params.matrix),
@@ -142,6 +138,8 @@ class LinearGaussianKernel(GaussianKernel):
 class GaussianHMM: 
 
     default_prior_cov_base = 5e-2
+    default_transition_cov_base = 5e-2
+    default_emission_cov_base = 2e-2
 
     def __init__(self, 
                 state_dim, 
@@ -161,8 +159,8 @@ class GaussianHMM:
                                     cov_base=GaussianHMM.default_prior_cov_base * jnp.ones((self.state_dim,)))
         subkeys = random.split(key, 2)
 
-        transition_params = self.transition_kernel.get_random_params(subkeys[0])
-        emission_params = self.emission_kernel.get_random_params(subkeys[1])
+        transition_params = self.transition_kernel.get_random_params(subkeys[0], GaussianHMM.default_transition_cov_base)
+        emission_params = self.emission_kernel.get_random_params(subkeys[1], GaussianHMM.default_emission_cov_base)
         return HMMParams(prior_params, transition_params, emission_params)
         
     def format_params(self, params):
@@ -329,7 +327,7 @@ class NonLinearGaussianHMM(GaussianHMM):
                             self.format_params(params),
                             num_particles)[-1]
 
-    def smooth_seq()
+    # def smooth_seq()
 
 
 class NeuralSmoother(Smoother):
