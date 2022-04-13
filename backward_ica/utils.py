@@ -123,23 +123,27 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
 def plot_fit_results_1D_against_reference(p, q, p_params, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence=None, seq_nb=0):
     fig = plt.figure(figsize=(15,5))
 
-    ax0 = fig.add_subplot(131)
+    ax0 = fig.add_subplot(141)
     ax0.plot(avg_elbos, label='$\mathcal{L}(\\theta,\\phi)$')
     ax0.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
     ax0.set_xlabel('Epoch') 
     ax0.set_title('Training')
     ax0.legend()
 
-    ax1 = fig.add_subplot(132)
+    ax1 = fig.add_subplot(142)
     plot_relative_errors_1D(ax1, state_seqs[seq_nb], *p.smooth_seq(obs_seqs[seq_nb], p_params))
     ax1.set_title('Example sequence Kalman')
     print('Kalman MSE averaged across all sequences:', smoothing_results_mse(state_seqs, obs_seqs, p, p_params))
 
 
-    ax2 = fig.add_subplot(133, sharey=ax1)
+    ax2 = fig.add_subplot(143, sharey=ax1)
     plot_relative_errors_1D(ax2, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], q_params))
     ax2.set_title('Example sequence backward variational')
     print('Backward variational MSE averaged across all sequences:', smoothing_results_mse(state_seqs, obs_seqs, q, q_params))
+
+    ax3 = fig.add_subplot(144)
+    ax3.set_title('Associated observations')
+    ax3.plot(obs_seqs[seq_nb], marker='.', linestyle='dotted')
 
 
     plt.tight_layout()
@@ -151,7 +155,7 @@ def plot_fit_results_1D_against_reference(p, q, p_params, q_params, state_seqs, 
 def plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence, seq_nb=0):
     fig = plt.figure(figsize=(15,5))
 
-    ax0 = fig.add_subplot(121)
+    ax0 = fig.add_subplot(131)
     ax0.plot(avg_elbos, label='$\mathcal{L}(\\theta,\\phi)$')
     ax0.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
 
@@ -159,9 +163,16 @@ def plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, avg_eviden
     ax0.set_title('Training')
     ax0.legend()
 
-    ax1 = fig.add_subplot(122)
+    ax1 = fig.add_subplot(132)
     plot_relative_errors_1D(ax1, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], q_params))
-    ax1.set_title(f'Backward variational, MSE={smoothing_results_mse(state_seqs, obs_seqs, q, q_params):.5f}')
+    ax1.set_title('Example sequence backward variational')
+    print('Backward variational MSE averaged across all sequences:', smoothing_results_mse(state_seqs, obs_seqs, q, q_params))
+
+
+    ax2 = fig.add_subplot(133)
+    ax2.set_title('Associated observations')
+    ax2.plot(obs_seqs[seq_nb], marker='.', linestyle='dotted')
+    ax2.set_xlabel('t')
 
     plt.tight_layout()
     plt.autoscale(True)

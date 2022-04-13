@@ -33,11 +33,11 @@ def linear_map(input, params):
 
 def neural_map(input, out_dim):
     net = hk.nets.MLP((8,out_dim))
-    return net(input)
+    return jnp.sin(net(input))
 
 def filt_predict_forward(shared_params, filt_state, d):
     filt_mean, filt_cov = filt_state
-    net = hk.nets.MLP((8, d + d*(d+1) // 2))
+    net = hk.nets.MLP([8, d + d*(d+1) // 2])
     out = net(jnp.concatenate((shared_params, filt_mean, jnp.tril(filt_cov).flatten())))
     mean = out[:d]
     cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
@@ -45,7 +45,7 @@ def filt_predict_forward(shared_params, filt_state, d):
 
 def filt_update_forward(pred_state, obs, d):
     pred_mean, pred_cov = pred_state
-    net = hk.nets.MLP((8, d + d*(d+1) // 2))
+    net = hk.nets.MLP([8, d + d*(d+1) // 2])
     out = net(jnp.concatenate((obs, pred_mean, jnp.tril(pred_cov).flatten())))
     mean = out[:d]
     cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
@@ -53,7 +53,7 @@ def filt_update_forward(pred_state, obs, d):
 
 def backwd_update_forward(shared_params, filt_state, d):
     filt_mean, filt_cov = filt_state
-    net = hk.nets.MLP((8, d**2 + d + d*(d+1) // 2))
+    net = hk.nets.MLP([8, d**2 + d + d*(d+1) // 2])
     out = net(jnp.concatenate((shared_params, filt_mean, jnp.tril(filt_cov).flatten())))
     A = out[:d**2].reshape((d,d))
     a = out[d**2:d**2+d]
