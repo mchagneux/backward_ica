@@ -114,7 +114,6 @@ class ELBO:
             common_term = obs - self.p.emission_kernel.map(marginal_mean + marginal_cov_chol @ normal_sample, p_params)
             return -0.5 * (common_term.T @ p_params.emission.prec @ common_term)
        
-
         def sample_autoregressive(normal_samples, last_filt_state, backwd_state_seq):
             
             def _sample_step(carry, x):

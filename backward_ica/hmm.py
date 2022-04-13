@@ -33,20 +33,17 @@ def linear_map(input, params):
 
 def neural_map(input, out_dim):
     net = hk.nets.MLP((8,out_dim))
-    return jnp.sin(net(input))
+    return net(input)
 
-def filt_predict_forward(shared_params, filt_state, d):
+def filt_predict_forward(shared_params, filt_state, out_dim):
     filt_mean, filt_cov = filt_state
-    net = hk.nets.MLP([8, d + d*(d+1) // 2])
+    net = hk.nets.MLP([8, out_dim])
     out = net(jnp.concatenate((shared_params, filt_mean, jnp.tril(filt_cov).flatten())))
-    mean = out[:d]
-    cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
-    return mean, cov_chol @ cov_chol.T
+    return out
 
 def filt_update_forward(pred_state, obs, d):
-    pred_mean, pred_cov = pred_state
     net = hk.nets.MLP([8, d + d*(d+1) // 2])
-    out = net(jnp.concatenate((obs, pred_mean, jnp.tril(pred_cov).flatten())))
+    out = net(jnp.concatenate((obs, pred_state)))
     mean = out[:d]
     cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
     return mean, cov_chol @ cov_chol.T
@@ -247,7 +244,7 @@ class Smoother(metaclass=ABCMeta):
         return means, covs 
 
     def smooth_seq(self, obs_seq, params):
-        # return kalman_smooth_seq(obs_seq, self.format_params(params))
+        return kalman_smooth_seq(obs_seq, self.format_params(params))
 
         formatted_params = self.format_params(params)
         filt_state = self.init_filt_state(obs_seq[0], formatted_params)
@@ -342,9 +339,9 @@ class NeuralSmoother(Smoother):
 
         self.state_dim, self.obs_dim = state_dim, obs_dim 
         d = self.state_dim
-        self.shared_param_shape = d + d*(d+1) // 2
+        self.shared_param_shape = 8
 
-        self.filt_predict_init_params, self.filt_predict_apply = hk.without_apply_rng(hk.transform(partial(filt_predict_forward, d=d)))
+        self.filt_predict_init_params, self.filt_predict_apply = hk.without_apply_rng(hk.transform(partial(filt_predict_forward, out_dim=self.shared_param_shape)))
         self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(filt_update_forward, d=d)))
         self.backwd_update_init_params, self.backwd_update_apply = hk.without_apply_rng(hk.transform(partial(backwd_update_forward, d=d)))
 
@@ -352,16 +349,14 @@ class NeuralSmoother(Smoother):
     def get_random_params(self, key):
 
         subkeys = random.split(key, 5)
-        prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,)), 
-                                    cov_base=GaussianHMM.default_prior_cov_base * jnp.ones((self.state_dim,)))
-
+        prior_params = random.uniform(subkeys[0], shape=(self.shared_param_shape,))
         shared_params = random.uniform(subkeys[1], shape=(self.shared_param_shape,))
         dummy_mean = jnp.empty((self.state_dim,))
         dummy_cov = jnp.empty((self.state_dim, self.state_dim))
         dummy_obs = jnp.empty((self.obs_dim,))
 
         filt_predict_params = self.filt_predict_init_params(subkeys[2], shared_params, (dummy_mean, dummy_cov))
-        filt_update_params = self.filt_update_init_params(subkeys[3], (dummy_mean, dummy_cov), dummy_obs)
+        filt_update_params = self.filt_update_init_params(subkeys[3], prior_params, dummy_obs)
         backwd_update_params = self.backwd_update_init_params(subkeys[4], shared_params, (dummy_mean, dummy_cov))
 
         return NeuralSmootherParams(prior_params, shared_params, filt_predict_params, filt_update_params, backwd_update_params)
@@ -369,7 +364,7 @@ class NeuralSmoother(Smoother):
 
     def init_filt_state(self, obs, params):
 
-        mean, cov = self.filt_update_apply(params.filt_update, (params.prior.mean, params.prior.cov), obs)
+        mean, cov = self.filt_update_apply(params.filt_update, params.prior, obs)
         return GaussianParams(mean, *cov_params_from_cov(cov))
 
 
@@ -385,6 +380,4 @@ class NeuralSmoother(Smoother):
         return LinearGaussianKernelParams(A_back, a_back, *cov_params_from_cov(cov_back))
 
     def format_params(self, params):
-        formatted_prior_params = GaussianParams(params.prior.mean, 
-                                                *cov_params_from_cov_chol(jnp.diag(params.prior.cov_base)))
-        return NeuralSmootherParams(formatted_prior_params, *params[1:])
+        return params
