@@ -29,9 +29,9 @@ num_samples = 1 # number of samples for the monte carlo approximation of the exp
 # we get the same random keys therefore the transition kernel is identical to the one in the linear case
 key = jax.random.PRNGKey(seed_model_params)
 infer_key = jax.random.PRNGKey(seed_infer)
-num_particles = 100 #number of particles for the smc runs
+num_particles = 1000 #number of particles for the smc runs
 
-p = hmm.LinearGaussianHMM(state_dim=state_dim, 
+p = hmm.NonLinearGaussianHMM(state_dim=state_dim, 
                         obs_dim=obs_dim, 
                         transition_matrix_conditionning='diagonal') # the emission map is a fully connected neural network with 8 neurons in the hidden layer
 
@@ -51,35 +51,11 @@ proposal_keys = jax.random.split(proposal_key, num_seqs * (seq_length - 1)).resh
 
 #%%
 
-likel_kalman = lambda obs_seq: p.likelihood_seq(obs_seq, p_params)
+likel_smc = lambda obs_seq, prior_keys, resampling_keys, proposal_keys: p.likelihood_seq(obs_seq, prior_keys, resampling_keys, proposal_keys, p_params, num_particles)
 
-likel_smc = lambda prior_keys, resampling_keys, proposal_keys, obs_seq: smc_filter_seq(prior_keys, 
-                                                                                    resampling_keys, 
-                                                                                    proposal_keys, 
-                                                                                    obs_seq, 
-                                                                                    p.prior_sampler, 
-                                                                                    p.transition_kernel, 
-                                                                                    p.emission_kernel, 
-                                                                                    p.format_params(p_params), 
-                                                                                    num_particles)[-1]
+avg_evidence_smc = jnp.mean(jax.vmap(likel_smc)(obs_seqs, prior_keys, resampling_keys, proposal_keys))
+print('Avg evidence given by SMC', avg_evidence_smc)
 
-# avg_evidence_smc = jnp.mean(jax.vmap(smc_likel)(obs_seqs, prior_keys, resampling_keys, proposal_keys)) # we compute the filtering distribution 
-print('Avg evidence given by Kalman:', jnp.mean(jax.vmap(likel_kalman)(obs_seqs)))
-print('Avg evidence given by SMC', jnp.mean(jax.vmap(likel_smc)(prior_keys, resampling_keys, proposal_keys, obs_seqs)))
-#%%
-
-tau = smc_smooth_seq(prior_keys[0], 
-                    resampling_keys[0], 
-                    proposal_keys[0], 
-                    obs_seqs[0], 
-                    p.prior_sampler, 
-                    p.transition_kernel, 
-                    p.emission_kernel, 
-                    p.format_params(p_params), 
-                    num_particles)
-
-print('Smoothing with FFBSm',tau)
-print('Smoothing with Kalman',jnp.sum(p.smooth_seq(obs_seqs[0], p_params)[0]))
 #%%
 q = hmm.LinearGaussianHMM(state_dim, obs_dim, 'diagonal')
 

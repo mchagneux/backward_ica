@@ -3,7 +3,7 @@ from atexit import register
 from .utils import *
 from jax import numpy as jnp, random
 from backward_ica.kalman import kalman_init, kalman_predict, kalman_smooth_seq, kalman_update, kalman_filter_seq
-from backward_ica.smc import smc_filter_seq
+from backward_ica.smc import smc_filter_seq, smc_smooth_seq
 import haiku as hk
 from jax import lax, vmap, config
 config.update('jax_enable_x64', True)
@@ -32,7 +32,7 @@ def linear_map(input, params):
     return params.matrix @ input + params.bias 
 
 def neural_map(input, out_dim):
-    net = hk.nets.MLP((8,out_dim))
+    net = hk.nets.MLP((8, out_dim), activate_final=True, activation=nn.sigmoid)
     return net(input)
 
 def filt_predict_forward(shared_params, filt_state, out_dim):
@@ -244,7 +244,7 @@ class Smoother(metaclass=ABCMeta):
         return means, covs 
 
     def smooth_seq(self, obs_seq, params):
-        return kalman_smooth_seq(obs_seq, self.format_params(params))
+        # return kalman_smooth_seq(obs_seq, self.format_params(params))
 
         formatted_params = self.format_params(params)
         filt_state = self.init_filt_state(obs_seq[0], formatted_params)
@@ -329,6 +329,18 @@ class NonLinearGaussianHMM(GaussianHMM):
                             self.emission_kernel, 
                             self.format_params(params),
                             num_particles)[-1]
+
+    def smooth_seq(self, prior_keys, resampling_keys, proposal_keys, obs_seq, params, num_particles):
+        
+        return smc_smooth_seq(prior_keys, 
+                        resampling_keys, 
+                        proposal_keys, 
+                        obs_seq, 
+                        self.prior_sampler, 
+                        self.transition_kernel, 
+                        self.emission_kernel, 
+                        self.format_params(params), 
+                        num_particles)
 
     # def smooth_seq()
 
