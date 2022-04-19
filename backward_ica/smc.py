@@ -2,6 +2,8 @@ from jax.scipy.special import logsumexp
 import jax.numpy as jnp
 from jax import vmap, jit, lax, random
 from jax import lax
+
+from backward_ica.utils import tree_prepend
 def exp_and_normalize(x):
 
     x = jnp.exp(x - x.max())
@@ -56,7 +58,7 @@ def smc_filter_seq(prior_keys, resampling_keys, proposal_keys, obs_seq, prior_sa
     return terminal_log_probs, terminal_particles, likel
 
 
-def smc_smooth_seq(obs_seq, params, h_tilde, prior_keys, resampling_keys, proposal_keys, prior_sampler, transition_kernel, emission_kernel, num_particles):
+def smc_smooth_additive_func(obs_seq, params, h_tilde, prior_keys, resampling_keys, proposal_keys, prior_sampler, transition_kernel, emission_kernel, num_particles):
 
     init_log_probs, init_particles = smc_init(prior_keys, obs_seq[0], prior_sampler, emission_kernel, params.prior, params.emission)
     init_tau = jnp.zeros((num_particles,))
@@ -87,3 +89,48 @@ def smc_smooth_seq(obs_seq, params, h_tilde, prior_keys, resampling_keys, propos
 
     
     return smoothing_seq
+
+
+def smc_compute_filt_seq(prior_keys, resampling_keys, proposal_keys, obs_seq, prior_sampler, transition_kernel, emission_kernel, params, num_particles):
+
+    init_log_probs, init_particles = smc_init(prior_keys, obs_seq[0], prior_sampler, emission_kernel, params.prior, params.emission)
+
+    @jit
+    def _filter_step(carry, x):
+        log_probs, particles = carry
+        obs, resampling_key, proposal_key = x
+        particles = smc_predict(resampling_key, proposal_key, log_probs, particles, transition_kernel, params.transition, num_particles)
+        log_probs = smc_update(particles, obs, emission_kernel, params.emission)
+        return (log_probs, particles), (log_probs, particles)
+
+    log_probs, particles = lax.scan(_filter_step, 
+                                                init=(init_log_probs, init_particles), 
+                                                xs=(obs_seq[1:], resampling_keys, proposal_keys))[1]
+
+    return tree_prepend(init_log_probs, log_probs), tree_prepend(init_particles, particles)
+
+def smc_smooth_from_filt_seq(filt_seq, transition_kernel, backwd_proposal_keys, params):
+
+    log_probs_seq, particles_seq = filt_seq
+
+    @jit
+    def _sample_path(backwd_proposal_key):
+
+        last_sample = random.choice(backwd_proposal_key, a=particles_seq[-1], p=exp_and_normalize(log_probs_seq[-1]))
+
+        def _step(carry, x):
+            next_sample = carry 
+            log_probs, particles = x 
+            log_probs_backwd = log_probs + transition_kernel.logpdf(next_sample, transition_kernel.map(particles, params.transition), params.transition)
+            sample = random.choice(backwd_proposal_key, a=particles, p=exp_and_normalize(log_probs_backwd))
+            return sample, sample
+
+        samples = lax.scan(_step, init=last_sample, xs=(log_probs_seq[:-1], particles_seq[:-1]), reverse=True)[1]
+        
+        return jnp.concatenate((samples, last_sample[None,:]))
+    
+    paths = vmap(_sample_path)(backwd_proposal_keys)
+
+    return jnp.mean(paths, axis=0), jnp.var(paths, axis=0)
+    
+

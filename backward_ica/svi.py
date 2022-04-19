@@ -335,7 +335,9 @@ class SVITrainer:
             batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
         
 
-            (params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step, 
+            (params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step, #                         obs_dim=obs_dim, 
+#                         transition_matrix_conditionning=None) # specify the structure of the true model, but init params are sampled during optimisiation     
+
                                                                 init=(params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
 
@@ -346,10 +348,8 @@ class SVITrainer:
         
         return params, avg_elbos
 
-    def multi_fit(self, key, data, theta, num_fits=1, plot=True):
-        
-        avg_evidence = jnp.mean(vmap(lambda obs_seq: self.p.likelihood_seq(obs_seq, theta))(data))
-        print('Avg evidence:', avg_evidence)
+    def multi_fit(self, key, data, theta, num_fits=1):
+
         all_avg_elbos = []
         all_fitted_params = []
         for fit_nb, key in enumerate(jax.random.split(key, num_fits)):
@@ -363,14 +363,12 @@ class SVITrainer:
             all_fitted_params.append(fitted_params)
             print(f'End of fit {fit_nb+1}/{num_fits}, final ELBO {avg_elbos[-1]:.3f}')
 
-        if plot: plot_training_curves(all_avg_elbos, avg_evidence)
-
 
         array_to_sort = np.array([avg_elbos[-1] for avg_elbos in all_avg_elbos])
         array_to_sort[np.isnan(array_to_sort)] = -np.inf
         best_optim = jnp.argmax(array_to_sort)
         print(f'Best fit is {best_optim+1}.')
-        return all_fitted_params[best_optim]
+        return all_fitted_params[best_optim], all_avg_elbos
 
 def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, theta):
     evidence_via_elbo_on_seq = lambda seq: LinearGaussianELBO(p,p)(seq, p.format_params(theta), p.format_params(theta))
