@@ -2,10 +2,12 @@ from collections import namedtuple
 from dataclasses import dataclass
 from queue import PriorityQueue
 from typing import Any
-from jax import numpy as jnp, vmap, config
-from jax.tree_util import register_pytree_node_class 
+from jax import disable_jit, numpy as jnp, vmap, config, random, lax, jit
+from functools import partial
+from jax.tree_util import register_pytree_node_class, tree_multimap, tree_map
 from jax.scipy.linalg import solve_triangular, cho_solve, cho_factor
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 config.update('jax_enable_x64',True)
 import numpy as np 
 # Containers for parameters of various objects 
@@ -22,6 +24,39 @@ GaussianParams = namedtuple('GaussianParams', ['mean', 'cov_chol','cov','prec','
 HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
 NeuralSmootherParams = namedtuple('NeuralSmootherParams', ['prior', 'shared', 'filt_predict', 'filt_update', 'backwd_update'])
+
+
+
+def tree_prepend(prep, tree):
+    preprended = tree_multimap(
+        lambda a, b: jnp.concatenate((a[None,:], b)), prep, tree
+    )
+    return preprended
+
+
+def tree_append(tree, app):
+    appended = tree_multimap(
+        lambda a, b: jnp.concatenate((a, b[None,:])), tree, app
+    )
+    return appended
+
+def tree_droplast(tree):
+    '''Drop last index from each leaf'''
+    return tree_map(lambda a: a[:-1], tree)
+
+
+def tree_dropfirst(tree):
+    '''Drop first index from each leaf'''
+    return tree_map(lambda a: a[1:], tree)
+
+
+def tree_get_idx(idx, tree):
+    '''Get idx row from each leaf of tuple'''
+    return tree_map(lambda a: a[idx], tree)
+
+def tree_get_slice(start, stop, tree):
+    '''Get idx row from each leaf of tuple'''
+    return tree_map(lambda a: a[start:stop], tree)
 
 def chol_from_inv(mat):
     tril_inv = jnp.swapaxes(
@@ -120,39 +155,39 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
     ax.set_xlabel('t')
 
 
-def plot_fit_results_1D_against_reference(p, q, p_params, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence=None, seq_nb=0):
-    fig = plt.figure(figsize=(15,5))
-
-    ax0 = fig.add_subplot(141)
-    ax0.plot(avg_elbos, label='$\mathcal{L}(\\theta,\\phi)$')
-    ax0.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
-    ax0.set_xlabel('Epoch') 
-    ax0.set_title('Training')
-    ax0.legend()
-
-    ax1 = fig.add_subplot(142)
-    plot_relative_errors_1D(ax1, state_seqs[seq_nb], *p.smooth_seq(obs_seqs[seq_nb], p_params))
-    ax1.set_title('Example sequence Kalman')
-    print('Kalman MSE averaged across all sequences:', smoothing_results_mse(state_seqs, obs_seqs, p, p_params))
+def plot_training_curves(avg_elbos, avg_evidence=None):
 
 
-    ax2 = fig.add_subplot(143, sharey=ax1)
-    plot_relative_errors_1D(ax2, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], q_params))
-    ax2.set_title('Example sequence backward variational')
-    print('Backward variational MSE averaged across all sequences:', smoothing_results_mse(state_seqs, obs_seqs, q, q_params))
+    num_fits = len(avg_elbos)
+    fig, axes = plt.subplots(1,num_fits, sharey=True)
+    for fit_nb in range(num_fits):
+        axes[fit_nb].plot(avg_elbos[fit_nb], label='$\mathcal{L}(\\theta,\\phi)$')
+        axes[fit_nb].axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
+        axes[fit_nb].set_xlabel('Epoch') 
+        axes[fit_nb].set_title(f'Fit {fit_nb+1}')
+        axes[fit_nb].legend()
 
-    ax3 = fig.add_subplot(144)
-    ax3.set_title('Associated observations')
-    ax3.plot(obs_seqs[seq_nb], marker='.', linestyle='dotted')
+    plt.show()
 
+def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb):
+
+    fig, (ax0, ax1) = plt.subplots(1,2)
+    plot_relative_errors_1D(ax0, state_seqs[seq_nb], *p.smooth_seq(obs_seqs[seq_nb], theta))
+    ax0.set_title('Reference')
+
+    plot_relative_errors_1D(ax1, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], phi))
+    ax1.set_title('Approx')
 
     plt.tight_layout()
     plt.autoscale(True)
-    plt.legend()
     plt.show()
 
 
-def plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence, seq_nb=0):
+
+
+
+
+def plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence, seq_nb, *aux):
     fig = plt.figure(figsize=(15,5))
 
     ax0 = fig.add_subplot(131)
@@ -166,12 +201,10 @@ def plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, avg_eviden
     ax1 = fig.add_subplot(132)
     plot_relative_errors_1D(ax1, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], q_params))
     ax1.set_title('Example sequence backward variational')
-    print('Backward variational MSE averaged across all sequences:', smoothing_results_mse(state_seqs, obs_seqs, q, q_params))
-
 
     ax2 = fig.add_subplot(133)
     ax2.set_title('Associated observations')
-    ax2.plot(obs_seqs[seq_nb], marker='.', linestyle='dotted')
+    ax2.plot(obs_seqs[seq_nb], marker='.', linestyle='dotted', label='x')
     ax2.set_xlabel('t')
 
     plt.tight_layout()
@@ -180,17 +213,24 @@ def plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, avg_eviden
     plt.show()
 
 
+def smoothing_results_mse_with_aux(state_seqs, obs_seqs, smoother, params, *aux):
+    prior_keys, resampling_keys, proposal_keys, num_particles = aux
+    squared_error_on_seq = vmap(lambda state_seq, obs_seq, prior_keys, resampling_keys, proposal_keys: (smoother.smooth_sum_of_means(obs_seq, params, prior_keys, resampling_keys, proposal_keys, num_particles) - jnp.sum(state_seq))**2)
+    return jnp.sum(squared_error_on_seq(state_seqs, obs_seqs, prior_keys, resampling_keys, proposal_keys)) / (state_seqs.shape[0] * state_seqs.shape[1])
+
+
 def smoothing_results_mse(state_seqs, obs_seqs, smoother, params):
-    v_smoother = vmap(lambda seq: smoother.smooth_seq(seq, params)[0])
-    return jnp.mean((v_smoother(obs_seqs) - state_seqs)**2)
+    squared_error_on_seq = vmap(lambda state_seq, obs_seq: (jnp.abs(smoother.smooth_sum_of_means(obs_seq, params) - jnp.sum(state_seq, axis=0))))
+    return jnp.sum(squared_error_on_seq(state_seqs, obs_seqs)) / (state_seqs.shape[0] * state_seqs.shape[1])
 
 def smoothing_results_mse_different_lengths(state_seqs, obs_seqs, smoother, params, step):
     
-    results = []    
+    additive = []
     for length in range(2, state_seqs.shape[1], step):
-        results.append(smoothing_results_mse(state_seqs[:,:length,:], obs_seqs[:,:length,:], smoother, params))
+        additive.append(smoothing_results_mse(state_seqs[:,:length,:], obs_seqs[:,:length,:], smoother, params))
 
-    return results
+
+    return additive
 
 def compare_mse_for_different_lengths(q, q_params, state_seqs, obs_seqs, step=4):
     results_fitted_params = smoothing_results_mse_different_lengths(state_seqs, obs_seqs, q, q_params, step)
@@ -201,26 +241,75 @@ def compare_mse_for_different_lengths(q, q_params, state_seqs, obs_seqs, step=4)
     plt.legend()
     plt.show()    
 
-def compare_mse_for_different_lengths_against_reference(p, q, p_params, q_params, state_seqs, obs_seqs, step=4):
-    results_true_params = smoothing_results_mse_different_lengths(state_seqs, obs_seqs, p, p_params, step)
-    results_fitted_params = smoothing_results_mse_different_lengths(state_seqs, obs_seqs, q, q_params, step)
-    seq_lengths = np.arange(2, state_seqs.shape[1], step)
-    plt.plot(seq_lengths, results_true_params, c='r', label='Kalman', marker='.', linestyle='dotted')
-    plt.plot(seq_lengths, results_fitted_params, c='b', label='Backward variational', marker='.', linestyle='dotted')
-    plt.xlabel('Sequence length')
-    plt.ylabel('MSE between smoothed means and true states')
-    plt.legend()
-    plt.show()    
 
-# if __name__ == '__main__':
-#     import jax 
-#     
-#     key = jax.random.PRNGKey(0)
-#     d = 3
-#     tril_values = jax.random.uniform(key, shape=(d*(d+1) // 2,))
-#     A_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(tril_values)
-#     A = A_chol @ A_chol.T 
+def additive_smoothing_wrt_seq_length(key, reference_smoother, approx_smoother, reference_params, approx_params, seq_length, step, reference_smoother_name, approx_smoother_name):
+    timesteps = range(2, seq_length, step)
 
-#     print(cholesky_of_inverse(jnp.linalg.inv(A)) - A_chol)
+    reference_filt_and_backwd_seq = lambda obs_seq: reference_smoother.compute_filt_and_backwd_seq(obs_seq, reference_params)
+    approx_filt_and_backwd_seq = lambda obs_seq: approx_smoother.compute_filt_and_backwd_seq(obs_seq, approx_params)
+    reference_backwd_pass = reference_smoother.backwd_pass
+    approx_backwd_pass = approx_smoother.backwd_pass
+
+    def results_for_single_seq(state_seq, obs_seq):
+
+        reference_filt_seq, reference_backwd_seq = reference_filt_and_backwd_seq(obs_seq)
+        approx_filt_seq, approx_backwd_seq = approx_filt_and_backwd_seq(obs_seq)
+        kalman_wrt_states, vi_wrt_states, vi_vs_kalman = [], [], []
+
+        def result_up_to_length(length):
+
+            reference_smoothed_means = reference_backwd_pass(tree_get_idx(length, reference_filt_seq), tree_get_slice(0,length-1, reference_backwd_seq))[0]
+            approx_smoothed_means = approx_backwd_pass(tree_get_idx(length, approx_filt_seq), tree_get_slice(0,length-1, approx_backwd_seq))[0]
+            
+            kalman_wrt_states = jnp.abs(jnp.sum(reference_smoothed_means - state_seq[:length], axis=0))
+            vi_wrt_states = jnp.abs(jnp.sum(approx_smoothed_means - state_seq[:length], axis=0))
+            vi_vs_kalman = jnp.abs(jnp.sum(approx_smoothed_means - reference_smoothed_means, axis=0))
+
+            return kalman_wrt_states, vi_wrt_states, vi_vs_kalman
+        
+        for length in timesteps: 
+            result = result_up_to_length(length)
+            kalman_wrt_states.append(result[0])
+            vi_wrt_states.append(result[1])
+            vi_vs_kalman.append(result[2])
+
+        reference_smoothed_means = reference_backwd_pass(tree_get_idx(-1, reference_filt_seq), tree_get_slice(0,-1, reference_backwd_seq))[0]
+        approx_smoothed_means = approx_backwd_pass(tree_get_idx(-1, approx_filt_seq), tree_get_slice(0,-1, approx_backwd_seq))[0]
+        vi_vs_kalman_marginals = jnp.abs(reference_smoothed_means - approx_smoothed_means)[jnp.array(timesteps)]
+
+        return kalman_wrt_states, vi_wrt_states, vi_vs_kalman, vi_vs_kalman_marginals
 
 
+    state_seqs, obs_seqs = vmap(reference_smoother.sample_seq, in_axes=(0,None,None))(random.split(key, 5), reference_params, seq_length)
+
+    fig, (ax0, ax1, ax2, ax3) = plt.subplots(1,4)
+
+    
+    for seq_nb, (state_seq, obs_seq) in tqdm(enumerate(zip(state_seqs, obs_seqs))):
+        kalman_wrt_states, vi_wrt_states, vi_vs_kalman, vi_vs_kalman_marginals = results_for_single_seq(state_seq, obs_seq)
+        ax0.plot(timesteps, kalman_wrt_states, label = f'Sequence {seq_nb}')
+        ax1.plot(timesteps, vi_wrt_states, label = f'Sequence {seq_nb}')
+        ax2.plot(timesteps, vi_vs_kalman, label = f'Sequence {seq_nb}')
+        ax3.plot(timesteps, vi_vs_kalman_marginals, label = f'Sequence {seq_nb}')
+
+    
+    ax0.set_title(f'{reference_smoother_name} vs states (additive)')
+    ax0.set_xlabel('Sequence length')
+    ax0.legend()
+
+    ax1.set_title(f'{approx_smoother_name} vs states (additive)')
+    ax1.set_xlabel('Sequence length')
+    ax1.legend()
+
+
+    ax2.set_title(f'{approx_smoother_name} vs {reference_smoother_name} (additive)')
+    ax2.set_xlabel('Sequence length')
+    ax2.legend()
+
+
+    ax3.set_title(f'{approx_smoother_name} vs {reference_smoother_name} (marginals)')
+    ax3.set_xlabel('Sequence length')
+    ax3.legend()
+
+
+    plt.show()

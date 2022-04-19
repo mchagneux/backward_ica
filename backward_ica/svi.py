@@ -8,6 +8,27 @@ from .hmm import *
 from .utils import *
 
 
+def get_keys(key, num_seqs, num_epochs):
+    keys = jax.random.split(key, num_seqs * num_epochs)
+    keys = jnp.array(keys).reshape(num_epochs, num_seqs,-1)
+    return keys
+
+def get_dummy_keys(key, num_seqs, num_epochs): 
+    return jnp.empty((num_epochs, num_seqs, 1))
+
+def init_rep_net_forward(state_dim, out_dim):
+    d = state_dim
+    eta1_num_params = d 
+    eta2_num_params = (d * (d+1)) // 2 
+    def rep_net_forward(x):
+        net = hk.nets.MLP((8, eta1_num_params + eta2_num_params))
+        out = net(x)
+        eta1 = out[:eta1_num_params]
+        eta2 = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[eta1_num_params:])
+        return eta1, - eta2 @ eta2.T
+    dummy_obs = jnp.empty((out_dim,))
+    return hk.without_apply_rng(hk.transform(rep_net_forward(dummy_obs)))
+
 def constant_terms_from_log_gaussian(dim:int, log_det:float)->float:
     """Utility function to compute the log of the term that is against the exponential for a multivariate Normal
 
@@ -55,171 +76,304 @@ def quadratic_term_from_log_gaussian(gaussian_params):
 
     return result
 
-def exact_expectation_of_emission_term(marginal_mean, marginal_cov, obs, p_params):
-    A = p_params.emission.matrix
-    b = p_params.emission.bias - obs
-    Omega = p_params.emission.prec
-    gaussian_params = GaussianParams(mean=marginal_mean, cov_chol=None, cov=marginal_cov, prec=None, log_det=None)
-    return expect_quadratic_term_under_gaussian(-0.5*QuadTerm.from_A_b_Omega(A, b, Omega), gaussian_params)
+def get_tractable_emission_term(obs, emission_params):
+    A = emission_params.matrix
+    b = emission_params.bias - obs
+    Omega = emission_params.prec
+    emission_term = -0.5*QuadTerm.from_A_b_Omega(A, b, Omega)
+    emission_term.c += constant_terms_from_log_gaussian(emission_params.cov.shape[0], emission_params.log_det)
+    return emission_term
 
-class ELBO:
+def get_tractable_emission_term_from_natparams(emission_natparams):
+    eta1, eta2 = emission_natparams
+    const = -0.25 * eta1.T @ jnp.linalg.solve(eta2, eta1) - 0.5 * jnp.log(jnp.linalg.det(-2*eta2)) - eta1.shape[0] * jnp.log(jnp.pi)
+    return QuadTerm(W=eta2, 
+                    v=eta1, 
+                    c=const)
 
-    def __init__(self, p:GaussianHMM, q:Smoother, num_samples=200):
+class GeneralELBO:
+
+    def __init__(self, p:GaussianHMM, q:LinearBackwardSmoother, num_samples=200):
         self.p = p
         self.q = q
         self.num_samples = num_samples
 
-    def V_step(self, state, obs):
+    def __call__(self, obs_seq, theta:HMMParams, phi, *args):
 
-        q_filt_state, tractable_term, p_params, q_params = state
-        q_backwd_state = self.q.new_backwd_state(q_filt_state, q_params)
+        _, key = args
 
-        tractable_term = expect_quadratic_term_under_backward(tractable_term, q_backwd_state) \
-                + transition_term_integrated_under_backward(q_backwd_state, p_params.transition)
+        def compute_kl_term(obs_seq):
 
+            kl_term = quadratic_term_from_log_gaussian(theta.prior)
 
-        tractable_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.log_det) +  0.5 * self.p.state_dim
-        q_filt_state = self.q.new_filt_state(obs, q_filt_state, q_params)
+            q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
 
-        return (q_filt_state, tractable_term, p_params, q_params), q_backwd_state
+            def V_step(state, obs):
 
-    def compute_tractable_terms(self, obs_seq, p_params, q_params):
-        tractable_term = quadratic_term_from_log_gaussian(p_params.prior)
+                q_filt_state, kl_term = state
+                q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
 
-        q_filt_state = self.q.init_filt_state(obs_seq[0], q_params)
-    
-        (q_last_filt_state, tractable_term, p_params, q_params), q_backwd_state_seq = lax.scan(self.V_step, 
-                                                        init=(q_filt_state, tractable_term, p_params, q_params), 
-                                                        xs=obs_seq[1:])
+                kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
+                        + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
 
 
+                kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.log_det) +  0.5 * self.p.state_dim
+                q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
 
-        tractable_term = expect_quadratic_term_under_gaussian(tractable_term, q_last_filt_state) \
-                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \
-                    + 0.5*self.p.state_dim
-
-        return tractable_term, (q_last_filt_state, q_backwd_state_seq)
+                return (q_filt_state, kl_term), q_backwd_state
         
-    def compute(self, obs_seq, key, p_params:HMMParams, q_params):
+            (q_last_filt_state, kl_term), q_backwd_state_seq = lax.scan(V_step, 
+                                                            init=(q_filt_state, kl_term), 
+                                                            xs=obs_seq[1:])
 
-        tractable_term, (q_last_filt_state, q_backwd_state_seq) = self.compute_tractable_terms(obs_seq, p_params, q_params)
 
-        # marginal_means, marginal_covs = self.q.backwd_pass(q_last_filt_state, q_backwd_state_seq)
-        # monte_carlo_term = jnp.sum(vmap(exact_expectation_of_emission_term, in_axes=(0,0,0,None))(marginal_means, marginal_covs, obs_seq, p_params))
+            kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state) \
+                        - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \
+                        + 0.5*self.p.state_dim
+
+            return kl_term, (q_last_filt_state, q_backwd_state_seq)
+
+        kl_term, (q_last_filt_state, q_backwd_state_seq) = compute_kl_term(obs_seq)
 
         normal_samples = normal(key, shape=(self.num_samples, obs_seq.shape[0], self.p.state_dim))
 
-        # marginal_covs_chol = jnp.linalg.cholesky(marginal_covs)
-        def sample_from_marginal(normal_sample, marginal_mean, marginal_cov_chol, obs, p_params):
-            common_term = obs - self.p.emission_kernel.map(marginal_mean + marginal_cov_chol @ normal_sample, p_params)
-            return -0.5 * (common_term.T @ p_params.emission.prec @ common_term)
-       
-        def sample_autoregressive(normal_samples, last_filt_state, backwd_state_seq):
+        def _sample_step(carry, x):
+            next_state_sample = carry
+            matrix, bias, cov, obs, normal_sample = x
+            current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
+            common_term = obs - self.p.emission_kernel.map(jnp.atleast_2d(current_state_sample), theta.emission).squeeze()
+            return current_state_sample, -0.5 * (common_term.T @ theta.emission.prec @ common_term)
             
-            def _sample_step(carry, x):
-                next_state_sample = carry
-                matrix, bias, cov, obs, normal_sample = x
-                current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
-                common_term = obs - self.p.emission_kernel.map(jnp.atleast_2d(current_state_sample), p_params.emission).squeeze()
-                return current_state_sample, -0.5 * (common_term.T @ p_params.emission.prec @ common_term)
-            
-            matrices = jnp.concatenate((backwd_state_seq.matrix, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
-            biases = jnp.concatenate((backwd_state_seq.bias, last_filt_state.mean[None,:]))
-            covs = jnp.concatenate((backwd_state_seq.cov, last_filt_state.cov[None,:]))
+        matrices = jnp.concatenate((q_backwd_state_seq.matrix, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
+        biases = jnp.concatenate((q_backwd_state_seq.bias, q_last_filt_state.mean[None,:]))
+        covs = jnp.concatenate((q_backwd_state_seq.cov, q_last_filt_state.cov[None,:]))
 
-            sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
-                                                            init=jnp.empty((self.p.state_dim,)), 
-                                                            xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
-                                                            reverse=True)[1]
-            return jax.vmap(sample_path)(normal_samples)
+        sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
+                                                        init=jnp.empty((self.p.state_dim,)), 
+                                                        xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
+                                                        reverse=True)[1]
 
-
-
-        
-        # monte_carlo_samples = vmap(vmap(sample_from_marginal, in_axes=(0,0,0,0,None)), in_axes=(0,None,None,None,None))(normal_samples, marginal_means, marginal_covs_chol, obs_seq, p_params)
-        monte_carlo_samples = sample_autoregressive(normal_samples, q_last_filt_state, q_backwd_state_seq)
-
-        monte_carlo_term = jnp.sum(jnp.mean(monte_carlo_samples, axis=0))
-
-        monte_carlo_term += obs_seq.shape[0] * constant_terms_from_log_gaussian(p_params.emission.cov.shape[0], p_params.emission.log_det)
+        reconstruction_term = jnp.sum(jnp.mean(jax.vmap(sample_path)(normal_samples), axis=0)) \
+                            + obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.cov.shape[0], theta.emission.log_det)
 
                         
-        return monte_carlo_term + tractable_term
+        return reconstruction_term + kl_term
+
+class JohnsonELBO:
+
+    def __init__(self, p:GaussianHMM, q:LinearBackwardSmoother, aux_map, num_samples=200):
+
+        self.p = p
+        self.q = q
+        self.aux_map = aux_map
+        self.num_samples = num_samples
+
+    def __call__(self, obs_seq, theta:HMMParams, phi, *args):
+
+        key, params = args
+
+        def tractable_terms(obs_seq):
+
+            kl_term = quadratic_term_from_log_gaussian(theta.prior) 
+            aux_reconstruction_term  = get_tractable_emission_term_from_natparams(self.aux_map(aux_params, obs_seq[0]))
+
+            q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
+
+            def V_step(state, obs):
+
+                q_filt_state, kl_term, aux_reconstruction_term = state
+                q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
+
+                kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
+                        + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
+
+                aux_reconstruction_term = expect_quadratic_term_under_backward(aux_reconstruction_term, q_backwd_state) \
+                        + get_tractable_emission_term_from_natparams(self.aux_map(aux_params, obs))
+
+
+                kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.log_det) +  0.5 * self.p.state_dim
+                q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
+
+                return (q_filt_state, kl_term, aux_reconstruction_term), q_backwd_state
         
+            (q_last_filt_state, kl_term, aux_reconstruction_term), q_backwd_state_seq = lax.scan(V_step, 
+                                                            init=(q_filt_state, kl_term, aux_reconstruction_term), 
+                                                            xs=obs_seq[1:])
+
+
+            kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state) \
+                        - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \
+                        + 0.5*self.p.state_dim
+            aux_reconstruction_term = expect_quadratic_term_under_gaussian(aux_reconstruction_term, q_last_filt_state)
+
+            return (kl_term, aux_reconstruction_term), (q_last_filt_state, q_backwd_state_seq)
+
+        (kl_term, aux_reconstruction_term), (q_last_filt_state, q_backwd_state_seq) = tractable_terms(obs_seq)
+
+        normal_samples = normal(key, shape=(self.num_samples, obs_seq.shape[0], self.p.state_dim))
+
+        def _sample_step(carry, x):
+            next_state_sample = carry
+            matrix, bias, cov, obs, normal_sample = x
+            current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
+            common_term = obs - self.p.emission_kernel.map(jnp.atleast_2d(current_state_sample), theta.emission).squeeze()
+            return current_state_sample, -0.5 * (common_term.T @ theta.emission.prec @ common_term)
+            
+        matrices = jnp.concatenate((q_backwd_state_seq.matrix, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
+        biases = jnp.concatenate((q_backwd_state_seq.bias, q_last_filt_state.mean[None,:]))
+        covs = jnp.concatenate((q_backwd_state_seq.cov, q_last_filt_state.cov[None,:]))
+
+        sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
+                                                        init=jnp.empty((self.p.state_dim,)), 
+                                                        xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
+                                                        reverse=True)[1]
+
+        reconstruction_term = jnp.sum(jnp.mean(jax.vmap(sample_path)(normal_samples), axis=0)) \
+                            + obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.cov.shape[0], theta.emission.log_det)
+
+                        
+        return kl_term + aux_reconstruction_term, kl_term + reconstruction_term
+
+class LinearGaussianELBO:
+
+    def __init__(self, p:GaussianHMM, q:LinearGaussianHMM):
+        self.p = p
+        self.q = q
+        
+    def __call__(self, obs_seq, theta:HMMParams, phi:HMMParams, *args):
+
+        result = quadratic_term_from_log_gaussian(theta.prior) + get_tractable_emission_term(obs_seq[0], theta.emission)
+
+        q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
+
+        def V_step(state, obs):
+
+            q_filt_state, kl_term = state
+            q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
+
+            kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
+                    + transition_term_integrated_under_backward(q_backwd_state, theta.transition) \
+                    + get_tractable_emission_term(obs, theta.emission)
+
+
+            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.log_det) +  0.5 * self.p.state_dim
+            q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
+
+            return (q_filt_state, kl_term), q_backwd_state
+    
+        (q_last_filt_state, result) = lax.scan(V_step, 
+                                                init=(q_filt_state, result), 
+                                                xs=obs_seq[1:])[0]
+
+
+        return expect_quadratic_term_under_gaussian(result, q_last_filt_state) \
+                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \
+                    + 0.5*self.p.state_dim
+    
+
+
 class SVITrainer:
 
-    def __init__(self, p:GaussianHMM, q:Smoother, optimizer, num_epochs, batch_size, num_samples=1):
+    def __init__(self, p:GaussianHMM, q:LinearBackwardSmoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, use_johnson=False):
 
-        self.optimizer = optimizer 
-        self.num_samples = num_samples
+        self.optimizer = optimizer(learning_rate)
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.q = q 
         self.p = p 
-        self.loss = lambda seq, key, p_params, q_params: -ELBO(self.p, self.q, self.num_samples).compute(seq, key, p_params, q_params)
+        self.use_johnson = use_johnson
 
-    def fit(self, data, p_params, q_params, subkey_montecarlo=None):
+        if isinstance(self.p, LinearGaussianHMM):
+            elbo = LinearGaussianELBO(self.p, self.q)
+            self.get_montecarlo_keys = get_dummy_keys
+        else: 
+            if self.use_johnson:
+                self.aux_init_params, aux_map = init_rep_net_forward(self.p.state_dim, self.p.obs_dim)
+                elbo = JohnsonELBO(self.p, self.q, aux_map, num_samples)
+                self.get_montecarlo_keys = get_keys
+            else: 
+                elbo = GeneralELBO(self.p, self.q, num_samples)
+                self.get_montecarlo_keys = get_keys
 
-        loss = lambda seq, key, q_params:self.loss(seq, key, self.p.format_params(p_params), self.q.format_params(q_params))
         
-        opt_state = self.optimizer.init(q_params)
-        num_seqs = data.shape[0]
+        self.loss = lambda seq, key, theta, phi, aux_params: -elbo(seq, theta, phi, aux_params, key)
+        
+    def fit(self, data, theta, phi, aux_params=None, subkey_montecarlo=None):
 
-        # subkeys = jnp.empty((self.num_epochs, num_seqs, 1))
-        subkeys = jax.random.split(subkey_montecarlo, num_seqs * self.num_epochs)
-        subkeys = jnp.array(subkeys).reshape(self.num_epochs, num_seqs,-1)
+        if self.use_johnson: 
+            loss = lambda seq, key, phi, aux_params: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), aux_params)
+            params = (phi, aux_params)
+        else: 
+            loss = lambda seq, key, phi: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), None)
+            params = phi
+        
+        opt_state = self.optimizer.init(params)
+        num_seqs = data.shape[0]
+        subkeys = self.get_montecarlo_keys(subkey_montecarlo, num_seqs, self.num_epochs)
+
 
         @jax.jit
         def batch_step(carry, x):
 
-            def q_step(q_params, opt_state, batch, keys):
-                neg_elbo_values, grads = jax.vmap(jax.value_and_grad(loss, argnums=2), in_axes=(0,0,None))(batch, keys, q_params)
+            def step(params, opt_state, batch, keys):
+                neg_elbo_values, grads = jax.vmap(jax.value_and_grad(loss, argnums=2), in_axes=(0,0,None))(batch, keys, params)
                 avg_grads = jax.tree_util.tree_map(jnp.mean, grads)
-                updates, opt_state = self.optimizer.update(avg_grads, opt_state, q_params)
-                q_params = optax.apply_updates(q_params, updates)
-                return q_params, opt_state, jnp.mean(-neg_elbo_values)
+                updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
+                params = optax.apply_updates(params, updates)
+                return params, opt_state, jnp.mean(-neg_elbo_values)
 
-            q_params, opt_state, subkeys_epoch = carry
+            params, opt_state, subkeys_epoch = carry
             batch_start = x
             batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
             batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
-            q_params, opt_state, avg_elbo_batch = q_step(q_params, opt_state, batch_obs_seq, batch_keys)
-            return (q_params, opt_state, subkeys_epoch), avg_elbo_batch
+            params, opt_state, avg_elbo_batch = step(params, opt_state, batch_obs_seq, batch_keys)
+            return (params, opt_state, subkeys_epoch), avg_elbo_batch
 
         def epoch_step(carry, x):
-            q_params, opt_state = carry
+            params, opt_state = carry
             subkeys_epoch = x
             batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
         
 
-            (q_params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step, 
-                                                                init=(q_params, opt_state, subkeys_epoch), 
+            (params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step, 
+                                                                init=(params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
 
-            return (q_params, opt_state), jnp.mean(avg_elbo_batches)
+            return (params, opt_state), jnp.mean(avg_elbo_batches)
 
 
-        (q_params, _), avg_elbos = jax.lax.scan(epoch_step, init=(q_params, opt_state), xs=subkeys)
+        (params, _), avg_elbos = jax.lax.scan(epoch_step, init=(params, opt_state), xs=subkeys)
         
-        return q_params, avg_elbos
+        return params, avg_elbos
 
-    def multi_fit(self, data, p_params, key, num_fits=1):
+    def multi_fit(self, key, data, theta, num_fits=1, plot=True):
+        
+        avg_evidence = jnp.mean(vmap(lambda obs_seq: self.p.likelihood_seq(obs_seq, theta))(data))
+        print('Avg evidence:', avg_evidence)
         all_avg_elbos = []
         all_fitted_params = []
         for fit_nb, key in enumerate(jax.random.split(key, num_fits)):
             params_key, monte_carlo_key = jax.random.split(key, 2)
-            fitted_params, avg_elbos = self.fit(data, p_params, self.q.get_random_params(params_key), monte_carlo_key)
+            if self.use_johnson: 
+                aux_params = self.aux_init_params(params_key, data[0][0])
+            else:
+                aux_params = None
+            fitted_params, avg_elbos = self.fit(data, theta, self.q.get_random_params(params_key), aux_params, monte_carlo_key)
             all_avg_elbos.append(avg_elbos)
             all_fitted_params.append(fitted_params)
             print(f'End of fit {fit_nb+1}/{num_fits}, final ELBO {avg_elbos[-1]:.3f}')
+
+        if plot: plot_training_curves(all_avg_elbos, avg_evidence)
+
+
         array_to_sort = np.array([avg_elbos[-1] for avg_elbos in all_avg_elbos])
         array_to_sort[np.isnan(array_to_sort)] = -np.inf
         best_optim = jnp.argmax(array_to_sort)
-        print('Best fit is',best_optim+1)
-        return all_fitted_params[best_optim], all_avg_elbos[best_optim]
+        print(f'Best fit is {best_optim+1}.')
+        return all_fitted_params[best_optim]
 
-def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, p_params, key):
-    evidence_via_elbo_on_seq = lambda seq: ELBO(p,p).compute(seq, key, p.format_params(p_params), p.format_params(p_params))
-    evidence_via_kalman_on_seq = lambda seq: p.likelihood_seq(seq, p_params)
+def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, theta):
+    evidence_via_elbo_on_seq = lambda seq: LinearGaussianELBO(p,p)(seq, p.format_params(theta), p.format_params(theta))
+    evidence_via_kalman_on_seq = lambda seq: p.likelihood_seq(seq, theta)
     print('ELBO sanity check:',jnp.abs(jnp.mean(jax.vmap(evidence_via_elbo_on_seq)(data) - jax.vmap(evidence_via_kalman_on_seq)(data))))
 

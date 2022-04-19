@@ -51,10 +51,10 @@ def kalman_filter_seq(obs_seq, hmm_params):
                                 init=(loglikelihood, init_filt_mean, init_filt_cov), 
                                 xs=obs_seq[1:])
 
-    pred_mean_seq = jnp.concatenate((hmm_params.prior.mean[None,:], pred_mean_seq))
-    pred_cov_seq = jnp.concatenate((hmm_params.prior.cov[None,:], pred_cov_seq))
-    filt_mean_seq =  jnp.concatenate((init_filt_mean[None,:], filt_mean_seq))
-    filt_cov_seq =  jnp.concatenate((init_filt_cov[None,:], filt_cov_seq))
+    pred_mean_seq = tree_prepend(hmm_params.prior.mean, pred_mean_seq) 
+    pred_cov_seq =  tree_prepend(hmm_params.prior.cov, pred_cov_seq) 
+    filt_mean_seq = tree_prepend(init_filt_mean, filt_mean_seq) 
+    filt_cov_seq =  tree_prepend(init_filt_cov, filt_cov_seq)
 
     return pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq, loglikelihood
 
@@ -103,6 +103,19 @@ def pykalman_filter_seq(obs_seq, hmm_params):
 
     return engine.filter(obs_seq)
 
+def pykalman_logl_seq(obs_seq, hmm_params):
+
+    engine = KalmanFilter(transition_matrices=hmm_params.transition.matrix, 
+                        observation_matrices=hmm_params.emission.matrix,
+                        transition_covariance=hmm_params.transition.cov,
+                        observation_covariance=hmm_params.emission.cov,
+                        transition_offsets=hmm_params.transition.bias,
+                        observation_offsets=hmm_params.emission.bias,
+                        initial_state_mean=hmm_params.prior.mean,
+                        initial_state_covariance=hmm_params.prior.cov)
+    
+    return engine.loglikelihood(obs_seq)
+    
 def pykalman_smooth_seq(obs_seq, hmm_params):
     engine = KalmanFilter(transition_matrices=hmm_params.transition.matrix, 
                         observation_matrices=hmm_params.emission.matrix,

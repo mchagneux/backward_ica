@@ -1,5 +1,4 @@
 from abc import ABCMeta, abstractmethod
-from atexit import register
 from .utils import *
 from jax import numpy as jnp, random
 from backward_ica.kalman import kalman_init, kalman_predict, kalman_smooth_seq, kalman_update, kalman_filter_seq
@@ -12,6 +11,8 @@ from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
 from jax.tree_util import Partial
 from functools import partial
 from jax import nn
+import jax
+import optax 
 
 def sample_multiple_sequences(key, hmm_sampler, hmm_params, num_seqs, seq_length):
     key, *subkeys = random.split(key, num_seqs+1)
@@ -31,8 +32,11 @@ _conditionnings = {'diagonal':lambda param: jnp.diag(param),
 def linear_map(input, params):
     return params.matrix @ input + params.bias 
 
+def nonlinear_map(input, params):
+    return params[0]*input + jnp.sin(params[1]*jnp.exp(-(input-params[2])**params[3]))
+
 def neural_map(input, out_dim):
-    net = hk.nets.MLP((8, out_dim), activate_final=True, activation=nn.sigmoid)
+    net = hk.nets.MLP((2,2,2,out_dim,), activate_final=False, activation = nn.sigmoid)
     return net(input)
 
 def filt_predict_forward(shared_params, filt_state, out_dim):
@@ -67,12 +71,13 @@ class GaussianKernel:
         self.in_dim = in_dim
         self.out_dim = out_dim 
 
-        self.map_init_params, self.map_apply = hk.without_apply_rng(hk.transform(partial(neural_map, out_dim=self.out_dim)))
-        self.map_init_params = Partial(self.map_init_params)
-        self.map_apply = Partial(self.map_apply)
+        # self.map_init_params, self.map_apply = hk.without_apply_rng(hk.transform(partial(neural_map, out_dim=self.out_dim)))
+        # self.map_init_params = Partial(self.map_init_params)
+        # self.map_apply = Partial(self.map_apply)
+        self.map_apply = Partial(vmap(nonlinear_map, in_axes=(0,None)))
 
     def map(self, state, params):
-        return self.map_apply(params.map_params, state)
+        return self.map_apply(state, params.map_params)
     
     def sample(self, key, mapped_state, params):
         return random.multivariate_normal(key, mapped_state, params.cov)
@@ -82,24 +87,24 @@ class GaussianKernel:
 
     def get_random_params(self, key, default_cov_base=None):
         subkeys = random.split(key, 2)
-        return GaussianKernelBaseParams(map_params=self.map_init_params(subkeys[0], jnp.empty((self.in_dim,))),
-                                                cov_base=default_cov_base * jnp.ones((self.out_dim,)))
+        return GaussianKernelBaseParams(map_params=(4, 10, 0.8, 2),
+                                        cov_base=default_cov_base * jnp.ones((self.out_dim,)))
     
     def format_params(self, params):
         return GaussianKernelParams(params.map_params,
                                     *cov_params_from_cov_chol(jnp.diag(params.cov_base)))
     
     def tree_flatten(self):
-        return ((self.in_dim, self.out_dim, self.map_init_params, self.map_apply), None)
+        return ((self.in_dim, self.out_dim, self.map_apply), None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         obj = cls.__new__(cls)
-        obj.in_dim, obj.out_dim, obj.map_init_params, obj.map_apply = children
+        obj.in_dim, obj.out_dim, obj.map_apply = children
         return obj
 
 @register_pytree_node_class
-class LinearGaussianKernel(GaussianKernel):
+class LinearGaussianKernel:
 
     def __init__(self, in_dim, out_dim, matrix_conditionning=None):
 
@@ -110,6 +115,12 @@ class LinearGaussianKernel(GaussianKernel):
 
     def map(self, state, params):
         return self.map_apply(state, params)
+
+    def logpdf(self, x, mapped_state, params):
+        return gaussian_logpdf(x, mapped_state, params.cov)
+        
+    def sample(self, key, mapped_state, params):
+        return random.multivariate_normal(key, mapped_state, params.cov)
 
     def get_random_params(self, key, default_cov_base=None):
         subkeys = random.split(key, 3)
@@ -193,14 +204,14 @@ class GaussianHMM:
             return sample, sample
         _, state_seq = lax.scan(_state_sample, init=prior_sample, xs=state_keys[1:])
 
-        state_seq = jnp.concatenate((prior_sample[None,:], state_seq)).reshape(seq_length, self.state_dim)
+        state_seq = tree_prepend(prior_sample, state_seq).reshape(seq_length, self.state_dim)
 
         mapped_state_seq = self.emission_kernel.map(state_seq, params.emission)
         obs_seq = vmap(lambda key, mapped_state: self.emission_kernel.sample(key, mapped_state, params.emission))(obs_keys, mapped_state_seq)
 
         return state_seq, obs_seq
 
-class Smoother(metaclass=ABCMeta):
+class LinearBackwardSmoother(metaclass=ABCMeta):
 
     def __init__(self):
         pass
@@ -226,42 +237,49 @@ class Smoother(metaclass=ABCMeta):
         raise NotImplementedError
 
     def backwd_pass(self, last_filt_state, backwd_state_seq):
-        last_filt_state_mean, last_filt_state_cov = last_filt_state.mean, last_filt_state.cov
+        last_filt_state_mean, last_filt_state_cov = last_filt_state
+
+        @jit
         def _backwd_step(filt_state, backwd_state):
             filt_state_mean, filt_state_cov = filt_state
             mean = backwd_state.matrix @ filt_state_mean + backwd_state.bias
             cov = backwd_state.matrix @ filt_state_cov @ backwd_state.matrix.T + backwd_state.cov
             return (mean, cov), (mean, cov)
 
-        _, (means, covs) = lax.scan(_backwd_step, 
+        means, covs = lax.scan(_backwd_step, 
                                 init=(last_filt_state_mean, last_filt_state_cov), 
                                 xs=backwd_state_seq, 
-                                reverse=True)
-
-        means = jnp.concatenate([means, last_filt_state_mean[None,:]])
-        covs = jnp.concatenate([covs, last_filt_state_cov[None,:]])
+                                reverse=True)[1]
         
-        return means, covs 
+        return tree_append(means, last_filt_state_mean), tree_append(covs, last_filt_state_cov) 
 
-    def smooth_seq(self, obs_seq, params):
-        # return kalman_smooth_seq(obs_seq, self.format_params(params))
+    def compute_filt_and_backwd_seq(self, obs_seq, params):
 
         formatted_params = self.format_params(params)
         filt_state = self.init_filt_state(obs_seq[0], formatted_params)
 
-        def _forward_pass(carry, x):
-            filt_state, params = carry 
+        @jit
+        def _forward_step(carry, x):
+            filt_state, formatted_params = carry
             obs = x 
-            backwd_state = self.new_backwd_state(filt_state, params)
-            filt_state = self.new_filt_state(obs, filt_state, params)
-            return (filt_state, params), backwd_state
+            backwd_state = self.new_backwd_state(filt_state, formatted_params)
+            filt_state = self.new_filt_state(obs, filt_state, formatted_params)
 
-        (last_filt_state, _), backwd_state_seq = lax.scan(_forward_pass, init=(filt_state, formatted_params), xs=obs_seq[1:])
+            return (filt_state, formatted_params), (filt_state, backwd_state)
 
-        return self.backwd_pass(last_filt_state, backwd_state_seq)
+        (mean_seq, _ , cov_seq, _ , _), backwd_state_seq = lax.scan(_forward_step, init=(filt_state, formatted_params), xs=obs_seq[1:])[1]
+        
+        mean_seq = tree_prepend(filt_state.mean, mean_seq)
+        cov_seq = tree_prepend(filt_state.cov, cov_seq)
+        return (mean_seq, cov_seq), backwd_state_seq
 
+    def smooth_seq(self, obs_seq, params):
 
-class LinearGaussianHMM(GaussianHMM, Smoother):
+        filt_state_seq, backwd_state_seq = self.compute_filt_and_backwd_seq(obs_seq, params)
+
+        return self.backwd_pass(tree_get_idx(-1, filt_state_seq), backwd_state_seq)
+
+class LinearGaussianHMM(GaussianHMM, LinearBackwardSmoother):
 
     def __init__(self, 
                 state_dim, 
@@ -272,7 +290,7 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
         emission_kernel_type = LinearGaussianKernel
 
         GaussianHMM.__init__(self, state_dim, obs_dim, transition_kernel_type, emission_kernel_type)
-        Smoother.__init__(self)
+        LinearBackwardSmoother.__init__(self)
 
     def init_filt_state(self, obs, params):
 
@@ -306,6 +324,61 @@ class LinearGaussianHMM(GaussianHMM, Smoother):
     def likelihood_seq(self, obs_seq, params):
         return kalman_filter_seq(obs_seq, self.format_params(params))[-1]
 
+    def fit(self, params, data, optimizer, batch_size, num_epochs):
+                
+        loss = lambda seq, params: -self.likelihood_seq(seq, params)
+        
+        opt_state = optimizer.init(params)
+        num_seqs = data.shape[0]
+
+        @jax.jit
+        def batch_step(carry, x):
+            
+            def step(params, opt_state, batch):
+                neg_logl_value, grads = jax.vmap(jax.value_and_grad(loss, argnums=1), in_axes=(0,None))(batch, params)
+                avg_grads = jax.tree_util.tree_map(jnp.mean, grads)
+                updates, opt_state = optimizer.update(avg_grads, opt_state, params)
+                params = optax.apply_updates(params, updates)
+                return params, opt_state, jnp.mean(-neg_logl_value)
+
+            params, opt_state = carry
+            batch_start = x
+            batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, batch_size)
+            params, opt_state, avg_logl_batch = step(params, opt_state, batch_obs_seq)
+            return (params, opt_state), avg_logl_batch
+
+        def epoch_step(carry, x):
+            params, opt_state = carry
+            batch_start_indices = jnp.arange(0, num_seqs, batch_size)
+        
+
+            (params, opt_state), avg_logl_batches = jax.lax.scan(batch_step, 
+                                                                init=(params, opt_state), 
+                                                                xs=batch_start_indices)
+
+            return (params, opt_state), jnp.mean(avg_logl_batches)
+
+
+        (params, _), avg_logls = jax.lax.scan(epoch_step, init=(params, opt_state), xs=None, length=num_epochs)
+        
+        return params, avg_logls
+
+    def multi_fit(self, key, data, optimizer, batch_size, num_epochs, num_fits=5):
+
+        all_avg_logls = []
+        all_fitted_params = []
+        for fit_nb, key in enumerate(jax.random.split(key, num_fits)):
+            fitted_params, avg_logls = self.fit(self.get_random_params(key), data, optimizer, batch_size, num_epochs)
+            all_avg_logls.append(avg_logls)
+            all_fitted_params.append(fitted_params)
+            print(f'End of fit {fit_nb+1}/{num_fits}, final logl {avg_logls[-1]:.3f}')
+        array_to_sort = np.array([avg_logls[-1] for avg_logls in all_avg_logls])
+
+        array_to_sort[np.isnan(array_to_sort)] = -np.inf
+        best_optim = jnp.argmax(array_to_sort)
+        print(f'Best fit is {best_optim+1}.')
+        return all_fitted_params[best_optim], all_avg_logls[best_optim]
+
 class NonLinearGaussianHMM(GaussianHMM):
 
     def __init__(self, 
@@ -330,30 +403,42 @@ class NonLinearGaussianHMM(GaussianHMM):
                             self.format_params(params),
                             num_particles)[-1]
 
-    def smooth_seq(self, prior_keys, resampling_keys, proposal_keys, obs_seq, params, num_particles):
-        
-        return smc_smooth_seq(prior_keys, 
+    def smooth_sum_of_means(self, obs_seq, params, prior_keys, resampling_keys, proposal_keys, num_particles):
+        h_tilde =  lambda z_prev, z:z
+        return smc_smooth_seq(obs_seq, 
+                        self.format_params(params),
+                        h_tilde,
+                        prior_keys, 
                         resampling_keys, 
                         proposal_keys, 
-                        obs_seq, 
                         self.prior_sampler, 
                         self.transition_kernel, 
                         self.emission_kernel, 
-                        self.format_params(params), 
+                        num_particles)[-1]
+
+    def smooth_sum_of_means_all_timesteps(self, obs_seq, params, prior_keys, resampling_keys, proposal_keys, num_particles):
+        h_tilde =  lambda z_prev, z:z
+        return smc_smooth_seq(obs_seq, 
+                        self.format_params(params),
+                        h_tilde,
+                        prior_keys, 
+                        resampling_keys, 
+                        proposal_keys, 
+                        self.prior_sampler, 
+                        self.transition_kernel, 
+                        self.emission_kernel, 
                         num_particles)
 
-    # def smooth_seq()
-
-
-class NeuralSmoother(Smoother):
+class NeuralBackwardSmoother(LinearBackwardSmoother):
 
     def __init__(self, state_dim, obs_dim):
 
         self.state_dim, self.obs_dim = state_dim, obs_dim 
         d = self.state_dim
-        self.shared_param_shape = 8
+        self.shared_param_shape = 2*d + d*(d+1) // 2 
+        self.prior_param_shape = d + d*(d+1) // 2 
 
-        self.filt_predict_init_params, self.filt_predict_apply = hk.without_apply_rng(hk.transform(partial(filt_predict_forward, out_dim=self.shared_param_shape)))
+        self.filt_predict_init_params, self.filt_predict_apply = hk.without_apply_rng(hk.transform(partial(filt_predict_forward, out_dim=self.prior_param_shape)))
         self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(filt_update_forward, d=d)))
         self.backwd_update_init_params, self.backwd_update_apply = hk.without_apply_rng(hk.transform(partial(backwd_update_forward, d=d)))
 
@@ -361,7 +446,7 @@ class NeuralSmoother(Smoother):
     def get_random_params(self, key):
 
         subkeys = random.split(key, 5)
-        prior_params = random.uniform(subkeys[0], shape=(self.shared_param_shape,))
+        prior_params = random.uniform(subkeys[0], shape=(self.prior_param_shape,))
         shared_params = random.uniform(subkeys[1], shape=(self.shared_param_shape,))
         dummy_mean = jnp.empty((self.state_dim,))
         dummy_cov = jnp.empty((self.state_dim, self.state_dim))
@@ -393,3 +478,4 @@ class NeuralSmoother(Smoother):
 
     def format_params(self, params):
         return params
+

@@ -56,7 +56,7 @@ def smc_filter_seq(prior_keys, resampling_keys, proposal_keys, obs_seq, prior_sa
     return terminal_log_probs, terminal_particles, likel
 
 
-def smc_smooth_seq(prior_keys, resampling_keys, proposal_keys, obs_seq, prior_sampler, transition_kernel, emission_kernel, params, num_particles):
+def smc_smooth_seq(obs_seq, params, h_tilde, prior_keys, resampling_keys, proposal_keys, prior_sampler, transition_kernel, emission_kernel, num_particles):
 
     init_log_probs, init_particles = smc_init(prior_keys, obs_seq[0], prior_sampler, emission_kernel, params.prior, params.emission)
     init_tau = jnp.zeros((num_particles,))
@@ -68,21 +68,22 @@ def smc_smooth_seq(prior_keys, resampling_keys, proposal_keys, obs_seq, prior_sa
         mapped_prev_particles = transition_kernel.map(prev_particles, params.transition)
         particles = smc_predict(resampling_key, proposal_key, prev_log_probs, prev_particles, transition_kernel, params.transition, num_particles)
 
-        def new_tau_component(prev_tau, prev_log_probs, mapped_prev_particles, particle):
-            log_probs_right_member = vmap(lambda mapped_prev_particle: transition_kernel.logpdf(particle, mapped_prev_particle, params.transition))(mapped_prev_particles)
-            log_probs_backward = prev_log_probs + log_probs_right_member
+        def new_tau_component(particle):
+            log_probs_backward = prev_log_probs + vmap(lambda mapped_prev_particle: transition_kernel.logpdf(particle, mapped_prev_particle, params.transition))(mapped_prev_particles)
             normalized_weights = exp_and_normalize(log_probs_backward)
-            return jnp.sum(vmap(lambda normalized_weight, tau_component: normalized_weight * (tau_component + particle))(normalized_weights, prev_tau))
+            sum_component = lambda normalized_weight, tau_component, prev_particle: normalized_weight * (tau_component + h_tilde(prev_particle, particle))
+            return jnp.sum(vmap(sum_component)(normalized_weights, prev_tau, prev_particles))
             
-        tau = vmap(new_tau_component, in_axes=(None, None, None, 0))(prev_tau, prev_log_probs, mapped_prev_particles, particles)
+        tau = vmap(new_tau_component)(particles)
         log_probs = smc_update(particles, obs, emission_kernel, params.emission)
         
-        return (log_probs, particles, tau), None
+        return (log_probs, particles, tau), jnp.sum(exp_and_normalize(log_probs) * tau)
 
-    (log_probs, _, tau), _ = lax.scan(_smoothing_step, 
-                                    init=(init_log_probs, init_particles, init_tau), 
-                                    xs=(obs_seq[1:], resampling_keys, proposal_keys))
-
-    weighted_tau = exp_and_normalize(log_probs) * tau
+    smoothing_seq = lax.scan(_smoothing_step, 
+                            init=(init_log_probs, init_particles, init_tau), 
+                            xs=(obs_seq[1:], resampling_keys, proposal_keys))[1]
     
-    return jnp.sum(weighted_tau)        
+    smoothing_seq = jnp.concatenate((jnp.zeros((1,)), smoothing_seq))
+
+    
+    return smoothing_seq
