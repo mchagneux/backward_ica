@@ -1,11 +1,5 @@
 # Experiments on backward ICA
 
-## Self-contained Google Colab notebook
-*If you do not want to set up the project on your own machine.*
-
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mchagneux/backward_ica/blob/main/backward_variational_experiments.ipynb)
-
-
 ## Local installation 
 
 1. Create an environment:
@@ -33,10 +27,6 @@ pip install --upgrade "jax[cpu]"
 ```shell 
 pip install -r requirements.txt
 ```
-
-## Experiments 
-
-For now, all successful experiments are summarized in [this notebook](demos.ipynb), but the buildings blocks are in the [backward_ica](backward_ica) folder.
 
 
 
