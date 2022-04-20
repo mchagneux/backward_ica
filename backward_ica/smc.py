@@ -125,11 +125,11 @@ def smc_smooth_from_filt_seq(key, filt_seq, params, transition_kernel):
 
     proposal_keys = random.split(key, len(particles_seq[0]))
 
+    @jit
     def _sample_path(proposal_key, log_probs_seq, particles_seq):
 
         last_sample = random.choice(proposal_key, a=particles_seq[-1], p=exp_and_normalize(log_probs_seq[-1]))
 
-        @jit 
         def _step(carry, x):
             next_sample, proposal_key = carry 
             log_probs, particles = x 

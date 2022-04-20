@@ -159,20 +159,20 @@ def plot_training_curves(avg_elbos, avg_evidence=None):
 
 
     num_fits = len(avg_elbos)
-    fig, axes = plt.subplots(1,num_fits, sharey=True)
+    fig, axes = plt.subplots(1,num_fits, sharey=True, figsize=(20,10))
     for fit_nb in range(num_fits):
+        axes[fit_nb].set_yscale('symlog')
         axes[fit_nb].plot(avg_elbos[fit_nb], label='$\mathcal{L}(\\theta,\\phi)$')
         if avg_evidence is not None:
             axes[fit_nb].axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
         axes[fit_nb].set_xlabel('Epoch') 
         axes[fit_nb].set_title(f'Fit {fit_nb+1}')
         axes[fit_nb].legend()
-
-    plt.show()
+    
 
 def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb, *args):
 
-    fig, (ax0, ax1) = plt.subplots(1,2, sharey=True)
+    fig, (ax0, ax1) = plt.subplots(1,2, sharey=True, figsize=(20,10))
     plot_relative_errors_1D(ax0, state_seqs[seq_nb], *p.smooth_seq(obs_seqs[seq_nb], theta, *args))
     ax0.set_title('True params')
 
@@ -181,7 +181,6 @@ def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb,
 
     plt.tight_layout()
     plt.autoscale(True)
-    plt.show()
 
 
 
@@ -283,15 +282,15 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
 
     state_seqs, obs_seqs = vmap(ref_smoother.sample_seq, in_axes=(0,None,None))(random.split(key, 2), ref_params, seq_length)
 
-    fig, (ax0, ax1, ax2, ax3) = plt.subplots(1,4)
+    fig, (ax0, ax1, ax2, ax3) = plt.subplots(1,4, figsize=(20,10))
 
     
     for seq_nb, (state_seq, obs_seq) in tqdm(enumerate(zip(state_seqs, obs_seqs))):
         kalman_wrt_states, vi_wrt_states, vi_vs_kalman, vi_vs_kalman_marginals = results_for_single_seq(state_seq, obs_seq)
-        ax0.plot(timesteps, kalman_wrt_states, label = f'Sequence {seq_nb}')
-        ax1.plot(timesteps, vi_wrt_states, label = f'Sequence {seq_nb}')
-        ax2.plot(timesteps, vi_vs_kalman, label = f'Sequence {seq_nb}')
-        ax3.plot(timesteps, vi_vs_kalman_marginals, label = f'Sequence {seq_nb}')
+        ax0.plot(timesteps, kalman_wrt_states, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+        ax1.plot(timesteps, vi_wrt_states, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+        ax2.plot(timesteps, vi_vs_kalman, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+        ax3.plot(timesteps, vi_vs_kalman_marginals, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
 
     
     ax0.set_title(f'{ref_smoother_name} vs states (additive)')
@@ -311,9 +310,9 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
     ax3.set_title(f'{approx_smoother_name} vs {ref_smoother_name} (marginals)')
     ax3.set_xlabel('Sequence length')
     ax3.legend()
+    plt.autoscale(True)
+    plt.tight_layout()
 
-
-    plt.show()
 
 def plot_smoothing_wrt_seq_length_nonlinear(ref_smoother, approx_smoother, ref_params, approx_params, seq_length, step, ref_smoother_name, approx_smoother_name, *args):
     
@@ -333,43 +332,45 @@ def plot_smoothing_wrt_seq_length_nonlinear(ref_smoother, approx_smoother, ref_p
 
         ref_filt_seq, approx_filt_seq = compute_ref_filt_seq(obs_seq), compute_approx_filt_seq(obs_seq)
         approx_backwd_seq = compute_approx_backwd_seq(approx_filt_seq)
-        kalman_wrt_states, vi_wrt_states, vi_vs_kalman = [], [], []
+        ref_vs_states_additive, vi_vs_states_additive, vi_vs_ref_additive = [], [], []
 
         def result_up_to_length(length):
 
             ref_smoothed_means = ref_backwd_pass(tree_get_slice(0, length, ref_filt_seq))[0]
             approx_smoothed_means = approx_backwd_pass(tree_get_idx(length, approx_filt_seq), tree_get_slice(0,length-1, approx_backwd_seq))[0]
             
-            kalman_wrt_states = jnp.abs(jnp.sum(ref_smoothed_means - state_seq[:length], axis=0))
-            vi_wrt_states = jnp.abs(jnp.sum(approx_smoothed_means - state_seq[:length], axis=0))
-            vi_vs_kalman = jnp.abs(jnp.sum(approx_smoothed_means - ref_smoothed_means, axis=0))
+            ref_vs_states_additive = jnp.abs(jnp.sum(ref_smoothed_means - state_seq[:length], axis=0))
+            vi_vs_states_additive = jnp.abs(jnp.sum(approx_smoothed_means - state_seq[:length], axis=0))
+            vi_vs_ref_additive = jnp.abs(jnp.sum(approx_smoothed_means - ref_smoothed_means, axis=0))
 
-            return kalman_wrt_states, vi_wrt_states, vi_vs_kalman
+            return ref_vs_states_additive, vi_vs_states_additive, vi_vs_ref_additive
         
         for length in tqdm(timesteps): 
             result = result_up_to_length(length)
-            kalman_wrt_states.append(result[0])
-            vi_wrt_states.append(result[1])
-            vi_vs_kalman.append(result[2])
+            ref_vs_states_additive.append(result[0])
+            vi_vs_states_additive.append(result[1])
+            vi_vs_ref_additive.append(result[2])
 
         ref_smoothed_means = ref_backwd_pass(ref_filt_seq)[0]
         approx_smoothed_means = approx_backwd_pass(tree_get_idx(-1, approx_filt_seq), approx_backwd_seq)[0]
-        vi_vs_kalman_marginals = jnp.abs(ref_smoothed_means - approx_smoothed_means)[jnp.array(timesteps)]
 
-        return kalman_wrt_states, vi_wrt_states, vi_vs_kalman, vi_vs_kalman_marginals
+        vi_vs_ref_marginals = jnp.abs(ref_smoothed_means - approx_smoothed_means)
 
+        return ref_vs_states_additive, vi_vs_states_additive, vi_vs_ref_additive, vi_vs_ref_marginals
 
-    state_seqs, obs_seqs = vmap(ref_smoother.sample_seq, in_axes=(0,None,None))(random.split(key, 2), ref_params, seq_length)
+    num_seqs = 5
+    state_seqs, obs_seqs = vmap(ref_smoother.sample_seq, in_axes=(0,None,None))(random.split(key, num_seqs), ref_params, seq_length)
 
-    fig, (ax0, ax1, ax2, ax3) = plt.subplots(1,4)
+    fig, (ax0, ax1, ax2, ax3) = plt.subplots(1,4, figsize=(20,10))
 
-    
+    marginal_averages = []
     for seq_nb, (state_seq, obs_seq) in tqdm(enumerate(zip(state_seqs, obs_seqs))):
-        kalman_wrt_states, vi_wrt_states, vi_vs_kalman, vi_vs_kalman_marginals = results_for_single_seq(state_seq, obs_seq)
-        ax0.plot(timesteps, kalman_wrt_states, label = f'Sequence {seq_nb}')
-        ax1.plot(timesteps, vi_wrt_states, label = f'Sequence {seq_nb}')
-        ax2.plot(timesteps, vi_vs_kalman, label = f'Sequence {seq_nb}')
-        ax3.plot(timesteps, vi_vs_kalman_marginals, label = f'Sequence {seq_nb}')
+        ref_vs_states_additive, vi_vs_states_additive, vi_vs_ref_additive, vi_vs_ref_marginals = results_for_single_seq(state_seq, obs_seq)
+        ax0.plot(timesteps, ref_vs_states_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+        ax1.plot(timesteps, vi_vs_states_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+        ax2.plot(timesteps, vi_vs_ref_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+        ax3.plot(vi_vs_ref_marginals, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+        marginal_averages.append(jnp.mean(vi_vs_ref_marginals))
 
     
     ax0.set_title(f'{ref_smoother_name} vs states (additive)')
@@ -389,9 +390,10 @@ def plot_smoothing_wrt_seq_length_nonlinear(ref_smoother, approx_smoother, ref_p
     ax3.set_title(f'{approx_smoother_name} vs {ref_smoother_name} (marginals)')
     ax3.set_xlabel('Sequence length')
     ax3.legend()
+    plt.suptitle(f'Mean marginal error {approx_smoother_name} vs {ref_smoother_name}: {jnp.mean(jnp.array(marginal_averages)):4f}')
+    plt.autoscale(True)
+    plt.tight_layout()
 
-
-    plt.show()
 
 
 

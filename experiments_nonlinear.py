@@ -5,13 +5,11 @@ from jax import config
 from tqdm import tqdm
 import pickle
 
-from backward_ica.smc import smc_compute_filt_seq, smc_filter_seq, smc_smooth_from_filt_seq
-
 config.update("jax_enable_x64", True)
 
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
-from backward_ica.svi import SVITrainer, check_linear_gaussian_elbo
+from backward_ica.svi import SVITrainer
 
 seed_model_params = 1326 # one seed for the true model
 seed_infer = 4569 # one seed for the approximating models 
@@ -19,14 +17,14 @@ seed_infer = 4569 # one seed for the approximating models
 num_fits = 5 # number of starting points for the optimisation of variational models
 state_dim, obs_dim = 1,1
 seq_length = 64 # length of each training sequence
-num_seqs = 2048 # number of sequences in the training set
+num_seqs = 4096 # number of sequences in the training set
 
 batch_size = 64 # here a batch is a group of sequences 
 learning_rate = 1e-2
 num_epochs = 200
 num_batches_per_epoch = num_seqs // batch_size
 optimizer = optax.adam
-num_samples = 1 # number of samples for the monte carlo approximation of the expectation of the (possibly nonlinear) emission term
+num_samples = 10 # number of samples for the monte carlo approximation of the expectation of the (possibly nonlinear) emission term
 num_particles = 1000
 key = jax.random.PRNGKey(seed_model_params)
 infer_key = jax.random.PRNGKey(seed_infer)
@@ -38,17 +36,24 @@ p = hmm.NonLinearGaussianHMM(state_dim=state_dim,
 key, subkey = jax.random.split(key, 2)
 theta = p.get_random_params(subkey) # sample params randomly (but covariances are fixed to default values)
 
+
+with open('nonlinear_true_model.pickle','wb') as f:
+    pickle.dump(theta, f)
+
+
 key, subkey = jax.random.split(key, 2)
 state_seqs, obs_seqs = hmm.sample_multiple_sequences(subkey, p.sample_seq, theta, num_seqs, seq_length)
+
+
 
 
 #%% 
 smc_keys = jax.random.split(key, num_seqs)
 
-# avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(obs_seq, 
-#                                                                     theta, 
-#                                                                     key,
-#                                                                     num_particles)))(obs_seqs, smc_keys))
+avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(obs_seq, 
+                                                                    theta, 
+                                                                    key,
+                                                                    num_particles)))(obs_seqs, smc_keys))
 
 # fast_smc_evidence = jax.jit(lambda obs_seq, key:smc_filter_seq(key, 
 #                                                             obs_seq, 
@@ -59,7 +64,7 @@ smc_keys = jax.random.split(key, num_seqs)
 #                                                             num_particles)[-1])
 
 # avg_evidence_smc = jnp.mean(jax.vmap(fast_smc_evidence)(obs_seqs, smc_keys))
-# print('Avg evidence:', avg_evidence)
+print('Avg evidence:', avg_evidence)
 # print('Avg evidence smc', avg_evidence_smc)
 # filt_seq = smc_compute_filt_seq(key, obs_seqs[0], p.format_params(theta), p.prior_sampler, p.transition_kernel, p.emission_kernel, num_particles)
 # smoothed_means, smoothed_covs = smc_smooth_from_filt_seq(key, filt_seq, p.format_params(theta), p.transition_kernel)
@@ -74,16 +79,30 @@ smc_keys = jax.random.split(key, num_seqs)
 
 # # phi, training_curves = p.multi_fit(key, obs_seqs, optimizer(learning_rate), batch_size, num_epochs, num_fits)
 # # utils.plot_training_curves(training_curves, avg_evidence)
+import matplotlib.pyplot as plt
+
+q = hmm.LinearGaussianHMM(state_dim, obs_dim, None)
+
+trainer = SVITrainer(p, q, optimizer, learning_rate, num_epochs, batch_size, num_samples)
 
 
-# q = hmm.LinearGaussianHMM(state_dim, obs_dim, None)
+phi, training_curves = trainer.multi_fit(infer_key, obs_seqs, theta, num_fits) # returns the best fit (based on the last value of the elbo)
+with open('linear_approx.pickle','wb') as f:
+    pickle.dump(phi, f)
+    
+utils.plot_training_curves(training_curves, avg_evidence=avg_evidence)
+plt.savefig('training_curves_linearVI')
+plt.clf()
 
-# trainer = SVITrainer(p, q, optimizer, learning_rate, num_epochs, batch_size, num_samples)
+utils.plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, 0, key, num_particles)
+plt.savefig('example_smoothing_linearVI')
+plt.clf()
 
-# phi, training_curves = trainer.multi_fit(infer_key, obs_seqs, theta, num_fits) # returns the best fit (based on the last value of the elbo)
-# utils.plot_training_curves(training_curves, avg_evidence=avg_evidence)
-# utils.plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, 0, key, num_particles)
-# utils.plot_smoothing_wrt_seq_length_nonlinear(p, q, theta, phi, 128, 8, 'FFBSi', 'VI', key, num_particles)
+utils.plot_smoothing_wrt_seq_length_nonlinear(p, q, theta, phi, 256, 16, f'FFBSi_{num_particles}', 'linearVI', key, num_particles)
+plt.savefig('smoothing_perf_linearVI')
+plt.clf()
+
+
 
 q = hmm.NeuralBackwardSmoother(state_dim=state_dim, 
                         obs_dim=obs_dim) # specify the structure of the true model, but init params are sampled during optimisiation     
@@ -91,11 +110,23 @@ q = hmm.NeuralBackwardSmoother(state_dim=state_dim,
 trainer = SVITrainer(p, q, optimizer, learning_rate, num_epochs, batch_size, num_samples)
 
 
-
 phi, training_curves = trainer.multi_fit(infer_key, obs_seqs, theta, num_fits) # returns the best fit (based on the last value of the elbo)
-# utils.plot_training_curves(training_curves, avg_evidence=avg_evidence)
+with open('nonlinear_approx.pickle','wb') as f:
+    pickle.dump(phi, f)
+    
+utils.plot_training_curves(training_curves, avg_evidence=avg_evidence)
+plt.savefig('training_curves_nonlinearVI')
+plt.clf()
 
-utils.plot_smoothing_wrt_seq_length_nonlinear(p, q, theta, phi, 128, 8, 'FFBSi', 'VI', key, num_particles)
+utils.plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, 0, key, num_particles)
+plt.savefig('example_smoothing_nonlinearVI')
+plt.clf()
+
+utils.plot_smoothing_wrt_seq_length_nonlinear(p, q, theta, phi, 256, 16, f'FFBSi_{num_particles}', 'nonlinearVI', key, num_particles)
+plt.savefig('smoothing_perf_nonlinearVI')
+plt.clf()
+
+
 
 # num_particles = 1000
 # prior_keys = jax.random.split(prior_key, num_particles)

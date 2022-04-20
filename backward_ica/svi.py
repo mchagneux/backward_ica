@@ -170,7 +170,7 @@ class JohnsonELBO:
 
     def __call__(self, obs_seq, theta:HMMParams, phi, *args):
 
-        key, params = args
+        key, aux_params = args
 
         def tractable_terms(obs_seq):
 
@@ -276,6 +276,8 @@ class SVITrainer:
 
     def __init__(self, p:GaussianHMM, q:LinearBackwardSmoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, use_johnson=False):
 
+        # schedule_fn = optax.piecewise_constant_schedule(1., {100*: decay_rate})
+        # self.optimizer = optax.chain(optimizer(learning_rate), optax.scale_by_schedule(schedule_fn))
         self.optimizer = optimizer(learning_rate)
         self.num_epochs = num_epochs
         self.batch_size = batch_size
