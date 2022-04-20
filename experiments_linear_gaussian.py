@@ -21,10 +21,9 @@ num_seqs = 4096 # number of sequences in the training set
 
 batch_size = 64 # here a batch is a group of sequences 
 learning_rate = 1e-2
-num_epochs = 90
+num_epochs = 80
 num_batches_per_epoch = num_seqs // batch_size
 optimizer = optax.adam
-num_samples = 1 # number of samples for the monte carlo approximation of the expectation of the (possibly nonlinear) emission term
 
 key = jax.random.PRNGKey(seed_model_params)
 infer_key = jax.random.PRNGKey(seed_infer)
@@ -52,7 +51,7 @@ q = hmm.LinearGaussianHMM(state_dim=state_dim,
                         obs_dim=obs_dim, 
                         transition_matrix_conditionning=None) # specify the structure of the true model, but init params are sampled during optimisiation     
 
-trainer = SVITrainer(p, q, optimizer, learning_rate, num_epochs, batch_size, num_samples)
+trainer = SVITrainer(p, q, optimizer, learning_rate, num_epochs, batch_size)
 
 
 
@@ -68,6 +67,6 @@ utils.plot_smoothing_wrt_seq_length_linear(key,
                                     theta, 
                                     phi, 
                                     seq_length=2048, 
-                                    step=64, 
+                                    step=32, 
                                     ref_smoother_name = 'Kalman', 
                                     approx_smoother_name = 'VI')

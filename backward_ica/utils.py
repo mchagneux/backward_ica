@@ -274,14 +274,14 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
             vi_wrt_states.append(result[1])
             vi_vs_kalman.append(result[2])
 
-        ref_smoothed_means = ref_backwd_pass(tree_get_idx(-1, ref_filt_seq), tree_get_slice(0,-1, ref_backwd_seq))[0]
-        approx_smoothed_means = approx_backwd_pass(tree_get_idx(-1, approx_filt_seq), tree_get_slice(0,-1, approx_backwd_seq))[0]
+        ref_smoothed_means = ref_backwd_pass(tree_get_idx(-1, ref_filt_seq), ref_backwd_seq)[0]
+        approx_smoothed_means = approx_backwd_pass(tree_get_idx(-1, approx_filt_seq), approx_backwd_seq)[0]
         vi_vs_kalman_marginals = jnp.abs(ref_smoothed_means - approx_smoothed_means)[jnp.array(timesteps)]
 
         return kalman_wrt_states, vi_wrt_states, vi_vs_kalman, vi_vs_kalman_marginals
 
 
-    state_seqs, obs_seqs = vmap(ref_smoother.sample_seq, in_axes=(0,None,None))(random.split(key, 5), ref_params, seq_length)
+    state_seqs, obs_seqs = vmap(ref_smoother.sample_seq, in_axes=(0,None,None))(random.split(key, 2), ref_params, seq_length)
 
     fig, (ax0, ax1, ax2, ax3) = plt.subplots(1,4)
 
@@ -315,25 +315,29 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
 
     plt.show()
 
+def plot_smoothing_wrt_seq_length_nonlinear(ref_smoother, approx_smoother, ref_params, approx_params, seq_length, step, ref_smoother_name, approx_smoother_name, *args):
+    
+    key, num_particles = args
 
-def plot_smoothing_wrt_seq_length_nonlinear(key, ref_smoother, approx_smoother, ref_params, approx_params, seq_length, step, ref_smoother_name, approx_smoother_name, prior_keys, resampling_keys, proposal_keys, backwd_sampling_keys):
     timesteps = range(2, seq_length, step)
 
-    compute_ref_filt_seq = lambda obs_seq: ref_smoother.compute_filt_seq(obs_seq, ref_params)
+    compute_ref_filt_seq = jit(lambda obs_seq: ref_smoother.compute_filt_seq(obs_seq, ref_params, key, num_particles))
+    ref_backwd_pass = lambda filt_seq: ref_smoother.backwd_pass(filt_seq, ref_params, key)
+
     compute_approx_filt_seq = lambda obs_seq: approx_smoother.compute_filt_seq(obs_seq, approx_params)
     compute_approx_backwd_seq = lambda filt_seq: approx_smoother.compute_backwd_seq(filt_seq, approx_params)
-    
     approx_backwd_pass = approx_smoother.backwd_pass
+
 
     def results_for_single_seq(state_seq, obs_seq):
 
         ref_filt_seq, approx_filt_seq = compute_ref_filt_seq(obs_seq), compute_approx_filt_seq(obs_seq)
-        ref_backwd_seq, approx_backwd_seq = compute_ref_backwd_seq(ref_filt_seq), compute_approx_backwd_seq(approx_filt_seq)
+        approx_backwd_seq = compute_approx_backwd_seq(approx_filt_seq)
         kalman_wrt_states, vi_wrt_states, vi_vs_kalman = [], [], []
 
         def result_up_to_length(length):
 
-            ref_smoothed_means = ref_backwd_pass(tree_get_idx(length, ref_filt_seq), tree_get_slice(0,length-1, ref_backwd_seq))[0]
+            ref_smoothed_means = ref_backwd_pass(tree_get_slice(0, length, ref_filt_seq))[0]
             approx_smoothed_means = approx_backwd_pass(tree_get_idx(length, approx_filt_seq), tree_get_slice(0,length-1, approx_backwd_seq))[0]
             
             kalman_wrt_states = jnp.abs(jnp.sum(ref_smoothed_means - state_seq[:length], axis=0))
@@ -342,20 +346,20 @@ def plot_smoothing_wrt_seq_length_nonlinear(key, ref_smoother, approx_smoother, 
 
             return kalman_wrt_states, vi_wrt_states, vi_vs_kalman
         
-        for length in timesteps: 
+        for length in tqdm(timesteps): 
             result = result_up_to_length(length)
             kalman_wrt_states.append(result[0])
             vi_wrt_states.append(result[1])
             vi_vs_kalman.append(result[2])
 
-        ref_smoothed_means = ref_backwd_pass(tree_get_idx(-1, ref_filt_seq), tree_get_slice(0,-1, ref_backwd_seq))[0]
-        approx_smoothed_means = approx_backwd_pass(tree_get_idx(-1, approx_filt_seq), tree_get_slice(0,-1, approx_backwd_seq))[0]
+        ref_smoothed_means = ref_backwd_pass(ref_filt_seq)[0]
+        approx_smoothed_means = approx_backwd_pass(tree_get_idx(-1, approx_filt_seq), approx_backwd_seq)[0]
         vi_vs_kalman_marginals = jnp.abs(ref_smoothed_means - approx_smoothed_means)[jnp.array(timesteps)]
 
         return kalman_wrt_states, vi_wrt_states, vi_vs_kalman, vi_vs_kalman_marginals
 
 
-    state_seqs, obs_seqs = vmap(ref_smoother.sample_seq, in_axes=(0,None,None))(random.split(key, 5), ref_params, seq_length)
+    state_seqs, obs_seqs = vmap(ref_smoother.sample_seq, in_axes=(0,None,None))(random.split(key, 2), ref_params, seq_length)
 
     fig, (ax0, ax1, ax2, ax3) = plt.subplots(1,4)
 

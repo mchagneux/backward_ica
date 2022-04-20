@@ -406,30 +406,33 @@ class NonLinearGaussianHMM(GaussianHMM):
 
         GaussianHMM.__init__(self, state_dim, obs_dim, transition_kernel_type, emission_kernel_type)
 
-    def likelihood_seq(self, obs_seq, params, prior_keys, resampling_keys, proposal_keys, num_particles):
+    def likelihood_seq(self, obs_seq, params, key, num_particles):
 
-        return smc_filter_seq(prior_keys, 
-                            resampling_keys, 
-                            proposal_keys, 
+        return smc_filter_seq(key, 
                             obs_seq, 
+                            self.format_params(params),
                             self.prior_sampler, 
                             self.transition_kernel, 
-                            self.emission_kernel, 
-                            self.format_params(params),
+                            self.emission_kernel,
                             num_particles)[-1]
-        
-    def smooth_seq(self, obs_seq, params, prior_keys, resampling_keys, proposal_keys, backwd_proposal_keys, num_particles):
-        formatted_params = self.format_params(params)
-        filt_seq = smc_compute_filt_seq(prior_keys, 
-                                resampling_keys, 
-                                proposal_keys, 
+    
+    def compute_filt_seq(self, obs_seq, params, key, num_particles):
+
+        return smc_compute_filt_seq(key, 
                                 obs_seq, 
+                                self.format_params(params), 
                                 self.prior_sampler, 
                                 self.transition_kernel, 
                                 self.emission_kernel, 
-                                formatted_params, 
                                 num_particles)
-        return smc_smooth_from_filt_seq(filt_seq, self.transition_kernel, backwd_proposal_keys, formatted_params)
+        
+    def backwd_pass(self, filt_seq, params, key):
+        formatted_params = self.format_params(params)
+        return smc_smooth_from_filt_seq(key, filt_seq, formatted_params, self.transition_kernel)
+    
+    def smooth_seq(self, obs_seq, params, key, num_particles):
+        filt_seq = self.compute_filt_seq(obs_seq, params, key, num_particles)
+        return self.backwd_pass(filt_seq, params, key)
 
 class NeuralBackwardSmoother(LinearBackwardSmoother):
 
