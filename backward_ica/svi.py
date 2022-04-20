@@ -278,7 +278,7 @@ class SVITrainer:
 
         # schedule_fn = optax.piecewise_constant_schedule(1., {100*: decay_rate})
         # self.optimizer = optax.chain(optimizer(learning_rate), optax.scale_by_schedule(schedule_fn))
-        self.optimizer = optimizer(learning_rate)
+        self.optimizer = optax.chain(optax.clip(10.0), optimizer(learning_rate))
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.q = q 
