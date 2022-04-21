@@ -2,3 +2,5 @@ optax
 pandas
 matplotlib
 pykalman
+tqdm
+haiku-dm

@@ -352,6 +352,37 @@ class SVITrainer:
         
         return params, avg_elbos
 
+    def profile(self, key, data, theta):
+
+        params_key, monte_carlo_key = jax.random.split(key, 2)
+        phi = self.q.get_random_params(params_key)
+
+        if self.use_johnson: 
+            aux_params = self.aux_init_params(params_key, data[0][0])
+        else:
+            aux_params = None        
+        if self.use_johnson: 
+            loss = lambda seq, key, phi, aux_params: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), aux_params)
+            params = (phi, aux_params)
+        else: 
+            loss = lambda seq, key, phi: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), None)
+            params = phi
+
+        num_seqs = data.shape[0]
+        subkeys = self.get_montecarlo_keys(monte_carlo_key, num_seqs, 1).squeeze()
+
+        @jit
+        def step(params, batch, keys):
+            return jax.vmap(jax.grad(loss, argnums=2), in_axes=(0,0,None))(batch, keys, params)
+
+        step(params, data[:self.batch_size], subkeys[:self.batch_size])
+
+        with jax.profiler.trace('./profiling/'):
+            print(step(params, data[:self.batch_size], subkeys[:self.batch_size]))
+
+
+
+        
     def multi_fit(self, key, data, theta, num_fits=1):
 
         all_avg_elbos = []
