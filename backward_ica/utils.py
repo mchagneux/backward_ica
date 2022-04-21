@@ -155,7 +155,7 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
     ax.set_xlabel('t')
 
 
-def plot_training_curves(avg_elbos, avg_evidence=None):
+def plot_training_curves(avg_elbos, figname, avg_evidence=None):
 
 
     num_fits = len(avg_elbos)
@@ -168,9 +168,11 @@ def plot_training_curves(avg_elbos, avg_evidence=None):
         axes[fit_nb].set_xlabel('Epoch') 
         axes[fit_nb].set_title(f'Fit {fit_nb+1}')
         axes[fit_nb].legend()
-    
+    plt.savefig(figname)
+    plt.clf()
 
-def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb, *args):
+
+def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb, figname, *args):
 
     fig, (ax0, ax1) = plt.subplots(1,2, sharey=True, figsize=(20,10))
     plot_relative_errors_1D(ax0, state_seqs[seq_nb], *p.smooth_seq(obs_seqs[seq_nb], theta, *args))
@@ -181,62 +183,9 @@ def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb,
 
     plt.tight_layout()
     plt.autoscale(True)
+    plt.savefig(figname)
+    plt.clf()
 
-
-
-def plot_fit_results_1D(q, q_params, state_seqs, obs_seqs, avg_elbos, avg_evidence, seq_nb, *aux):
-    fig = plt.figure(figsize=(15,5))
-
-    ax0 = fig.add_subplot(131)
-    ax0.plot(avg_elbos, label='$\mathcal{L}(\\theta,\\phi)$')
-    ax0.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
-
-    ax0.set_xlabel('Epoch') 
-    ax0.set_title('Training')
-    ax0.legend()
-
-    ax1 = fig.add_subplot(132)
-    plot_relative_errors_1D(ax1, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], q_params))
-    ax1.set_title('Example sequence backward variational')
-
-    ax2 = fig.add_subplot(133)
-    ax2.set_title('Associated observations')
-    ax2.plot(obs_seqs[seq_nb], marker='.', linestyle='dotted', label='x')
-    ax2.set_xlabel('t')
-
-    plt.tight_layout()
-    plt.autoscale(True)
-    plt.legend()
-    plt.show()
-
-
-def smoothing_results_mse_with_aux(state_seqs, obs_seqs, smoother, params, *aux):
-    prior_keys, resampling_keys, proposal_keys, num_particles = aux
-    squared_error_on_seq = vmap(lambda state_seq, obs_seq, prior_keys, resampling_keys, proposal_keys: (smoother.smooth_sum_of_means(obs_seq, params, prior_keys, resampling_keys, proposal_keys, num_particles) - jnp.sum(state_seq))**2)
-    return jnp.sum(squared_error_on_seq(state_seqs, obs_seqs, prior_keys, resampling_keys, proposal_keys)) / (state_seqs.shape[0] * state_seqs.shape[1])
-
-
-def smoothing_results_mse(state_seqs, obs_seqs, smoother, params):
-    squared_error_on_seq = vmap(lambda state_seq, obs_seq: (jnp.abs(smoother.smooth_sum_of_means(obs_seq, params) - jnp.sum(state_seq, axis=0))))
-    return jnp.sum(squared_error_on_seq(state_seqs, obs_seqs)) / (state_seqs.shape[0] * state_seqs.shape[1])
-
-def smoothing_results_mse_different_lengths(state_seqs, obs_seqs, smoother, params, step):
-    
-    additive = []
-    for length in range(2, state_seqs.shape[1], step):
-        additive.append(smoothing_results_mse(state_seqs[:,:length,:], obs_seqs[:,:length,:], smoother, params))
-
-
-    return additive
-
-def compare_mse_for_different_lengths(q, q_params, state_seqs, obs_seqs, step=4):
-    results_fitted_params = smoothing_results_mse_different_lengths(state_seqs, obs_seqs, q, q_params, step)
-    seq_lengths = np.arange(2, state_seqs.shape[1], step)
-    plt.plot(seq_lengths, results_fitted_params, c='b', label='Backward variational', marker='.', linestyle='dotted')
-    plt.xlabel('Sequence length')
-    plt.ylabel('MSE between smoothed means and true states')
-    plt.legend()
-    plt.show()    
 
 
 def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref_params, approx_params, seq_length, step, ref_smoother_name, approx_smoother_name):
@@ -244,6 +193,7 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
 
     compute_ref_filt_seq = lambda obs_seq: ref_smoother.compute_filt_seq(obs_seq, ref_params)
     compute_ref_backwd_seq = lambda filt_seq: ref_smoother.compute_backwd_seq(filt_seq, ref_params)
+
     compute_approx_filt_seq = lambda obs_seq: approx_smoother.compute_filt_seq(obs_seq, approx_params)
     compute_approx_backwd_seq = lambda filt_seq: approx_smoother.compute_backwd_seq(filt_seq, approx_params)
     
@@ -314,86 +264,122 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
     plt.tight_layout()
 
 
-def plot_smoothing_wrt_seq_length_nonlinear(ref_smoother, approx_smoother, ref_params, approx_params, seq_length, step, ref_smoother_name, approx_smoother_name, *args):
+def multiple_length_ffbsi_smoothing(obs_seqs, smoother, params, timesteps, key, num_particles):
     
-    key, num_particles = args
-
-    timesteps = range(2, seq_length, step)
-
-    compute_ref_filt_seq = jit(lambda obs_seq: ref_smoother.compute_filt_seq(obs_seq, ref_params, key, num_particles))
-    ref_backwd_pass = lambda filt_seq: ref_smoother.backwd_pass(filt_seq, ref_params, key)
-
-    compute_approx_filt_seq = lambda obs_seq: approx_smoother.compute_filt_seq(obs_seq, approx_params)
-    compute_approx_backwd_seq = lambda filt_seq: approx_smoother.compute_backwd_seq(filt_seq, approx_params)
-    approx_backwd_pass = approx_smoother.backwd_pass
+    key, subkey = random.split(key, 2)
+    compute_filt_seq = jit(lambda obs_seq: smoother.compute_filt_seq(obs_seq, params, key, num_particles))
+    backwd_pass = lambda filt_seq: smoother.backwd_pass(filt_seq, params, subkey)
 
 
-    def results_for_single_seq(state_seq, obs_seq):
+    def results_for_single_seq(obs_seq):
 
-        ref_filt_seq, approx_filt_seq = compute_ref_filt_seq(obs_seq), compute_approx_filt_seq(obs_seq)
-        approx_backwd_seq = compute_approx_backwd_seq(approx_filt_seq)
-        ref_vs_states_additive, vi_vs_states_additive, vi_vs_ref_additive = [], [], []
+        filt_seq = compute_filt_seq(obs_seq)
 
-        def result_up_to_length(length):
-
-            ref_smoothed_means = ref_backwd_pass(tree_get_slice(0, length, ref_filt_seq))[0]
-            approx_smoothed_means = approx_backwd_pass(tree_get_idx(length, approx_filt_seq), tree_get_slice(0,length-1, approx_backwd_seq))[0]
-            
-            ref_vs_states_additive = jnp.abs(jnp.sum(ref_smoothed_means - state_seq[:length], axis=0))
-            vi_vs_states_additive = jnp.abs(jnp.sum(approx_smoothed_means - state_seq[:length], axis=0))
-            vi_vs_ref_additive = jnp.abs(jnp.sum(approx_smoothed_means - ref_smoothed_means, axis=0))
-
-            return ref_vs_states_additive, vi_vs_states_additive, vi_vs_ref_additive
+        results = []
         
         for length in tqdm(timesteps): 
-            result = result_up_to_length(length)
-            ref_vs_states_additive.append(result[0])
-            vi_vs_states_additive.append(result[1])
-            vi_vs_ref_additive.append(result[2])
+            results.append(backwd_pass(tree_get_slice(0, length, filt_seq))[0])
 
-        ref_smoothed_means = ref_backwd_pass(ref_filt_seq)[0]
-        approx_smoothed_means = approx_backwd_pass(tree_get_idx(-1, approx_filt_seq), approx_backwd_seq)[0]
+        results.append(backwd_pass(filt_seq))
 
-        vi_vs_ref_marginals = jnp.abs(ref_smoothed_means - approx_smoothed_means)
 
-        return ref_vs_states_additive, vi_vs_states_additive, vi_vs_ref_additive, vi_vs_ref_marginals
+        return results
 
-    num_seqs = 5
-    state_seqs, obs_seqs = vmap(ref_smoother.sample_seq, in_axes=(0,None,None))(random.split(key, num_seqs), ref_params, seq_length)
+    results = []
+    for obs_seq in tqdm(obs_seqs):
+        results.append(results_for_single_seq(obs_seq))
 
-    fig, (ax0, ax1, ax2, ax3) = plt.subplots(1,4, figsize=(20,10))
 
-    marginal_averages = []
-    for seq_nb, (state_seq, obs_seq) in tqdm(enumerate(zip(state_seqs, obs_seqs))):
-        ref_vs_states_additive, vi_vs_states_additive, vi_vs_ref_additive, vi_vs_ref_marginals = results_for_single_seq(state_seq, obs_seq)
-        ax0.plot(timesteps, ref_vs_states_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-        ax1.plot(timesteps, vi_vs_states_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-        ax2.plot(timesteps, vi_vs_ref_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-        ax3.plot(vi_vs_ref_marginals, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-        marginal_averages.append(jnp.mean(vi_vs_ref_marginals))
+
+    return results 
+
+def multiple_length_linear_backward_smoothing(obs_seqs, smoother, params, timesteps):
+    
+    compute_filt_seq = lambda obs_seq: smoother.compute_filt_seq(obs_seq, params)
+    compute_backwd_seq = lambda filt_seq: smoother.compute_backwd_seq(filt_seq, params)
+    backwd_pass = smoother.backwd_pass
+
+    def results_for_single_seq(obs_seq):
+
+        filt_seq = compute_filt_seq(obs_seq)
+        backwd_seq = compute_backwd_seq(filt_seq)
+
+        results = []
+        
+        for length in tqdm(timesteps): 
+        
+            results.append(backwd_pass(tree_get_idx(length, filt_seq), tree_get_slice(0,length-1, backwd_seq))[0])
+
+        results.append(backwd_pass(tree_get_idx(-1, filt_seq), backwd_seq))
+
+
+        return results
+
+    results = []
+    for obs_seq in tqdm(obs_seqs):
+        results.append(results_for_single_seq(obs_seq))
+
+
+
+    return results 
+
+
+
+def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, timesteps, ref_name, approx_name, figname):
+
+
+
+    fig, ((ax0, ax1, ax2), (ax3, ax4, ax5)) = plt.subplots(2,3, figsize=(20,15))
 
     
-    ax0.set_title(f'{ref_smoother_name} vs states (additive)')
+    for seq_nb, (ref_state_seq, ref_results_seq, approx_results_seq) in enumerate(zip(ref_state_seqs, ref_results, approx_results)):
+        ref_vs_states_additive =  []
+        approx_vs_states_additive = []
+        ref_vs_approx_additive = []
+
+
+        for i, length in enumerate(timesteps):
+            ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[i] - ref_state_seq[:length], axis=0)))
+            approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_state_seq[:length], axis=0)))
+            ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_results_seq[i], axis=0)))
+
+        ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[-1][0] - ref_state_seq, axis=0)))
+        approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_state_seq, axis=0)))
+        ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_results_seq[-1][0], axis=0)))
+        ref_vs_approx_marginals = jnp.abs(ref_results_seq[-1][0] - approx_results_seq[-1][0])
+
+        xaxis = list(timesteps) + [len(ref_state_seq)]
+        ax0.plot(xaxis, ref_vs_states_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+        ax1.plot(xaxis, approx_vs_states_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+        ax2.plot(xaxis, ref_vs_approx_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+        ax3.plot(ref_vs_approx_marginals, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+
+    
+    ax0.set_title(f'{ref_name} vs states (additive)')
     ax0.set_xlabel('Sequence length')
     ax0.legend()
 
-    ax1.set_title(f'{approx_smoother_name} vs states (additive)')
+    ax1.set_title(f'{approx_name} vs states (additive)')
     ax1.set_xlabel('Sequence length')
     ax1.legend()
 
 
-    ax2.set_title(f'{approx_smoother_name} vs {ref_smoother_name} (additive)')
+    ax2.set_title(f'{approx_name} vs {ref_name} (additive)')
     ax2.set_xlabel('Sequence length')
     ax2.legend()
 
 
-    ax3.set_title(f'{approx_smoother_name} vs {ref_smoother_name} (marginals)')
+    ax3.set_title(f'{approx_name} vs {ref_name} (marginals)')
     ax3.set_xlabel('Sequence length')
     ax3.legend()
-    plt.suptitle(f'Mean marginal error {approx_smoother_name} vs {ref_smoother_name}: {jnp.mean(jnp.array(marginal_averages)):4f}')
-    plt.autoscale(True)
+
+    plot_relative_errors_1D(ax4, ref_state_seqs[0], *ref_results[0][-1])
+    ax4.set_title(f'{ref_name} example smoothing')
+
+    plot_relative_errors_1D(ax5, ref_state_seqs[0], *approx_results[0][-1])
+    ax5.set_title(f'{approx_name} example smoothing')
+
     plt.tight_layout()
-
-
-
+    plt.savefig(figname)
+    plt.clf()
 

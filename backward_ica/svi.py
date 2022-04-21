@@ -270,15 +270,15 @@ class LinearGaussianELBO:
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \
                     + 0.5*self.p.state_dim
     
-
-
 class SVITrainer:
 
     def __init__(self, p:GaussianHMM, q:LinearBackwardSmoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, use_johnson=False):
 
+
+        schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
         # schedule_fn = optax.piecewise_constant_schedule(1., {100*: decay_rate})
         # self.optimizer = optax.chain(optimizer(learning_rate), optax.scale_by_schedule(schedule_fn))
-        self.optimizer = optax.chain(optax.clip(10.0), optimizer(learning_rate))
+        self.optimizer = lambda num_batches: optimizer(schedule(num_batches))
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.q = q 
@@ -308,9 +308,11 @@ class SVITrainer:
         else: 
             loss = lambda seq, key, phi: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), None)
             params = phi
-        
-        opt_state = self.optimizer.init(params)
+
         num_seqs = data.shape[0]
+        optimizer = self.optimizer(num_seqs // self.batch_size)
+
+        opt_state = optimizer.init(params)
         subkeys = self.get_montecarlo_keys(subkey_montecarlo, num_seqs, self.num_epochs)
 
 
@@ -320,7 +322,7 @@ class SVITrainer:
             def step(params, opt_state, batch, keys):
                 neg_elbo_values, grads = jax.vmap(jax.value_and_grad(loss, argnums=2), in_axes=(0,0,None))(batch, keys, params)
                 avg_grads = jax.tree_util.tree_map(jnp.mean, grads)
-                updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
+                updates, opt_state = optimizer.update(avg_grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
                 return params, opt_state, jnp.mean(-neg_elbo_values)
 
