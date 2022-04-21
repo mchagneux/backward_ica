@@ -91,6 +91,8 @@ def get_tractable_emission_term_from_natparams(emission_natparams):
                     v=eta1, 
                     c=const)
 
+
+
 class GeneralELBO:
 
     def __init__(self, p:GaussianHMM, q:LinearBackwardSmoother, num_samples=200):
@@ -135,26 +137,41 @@ class GeneralELBO:
 
         kl_term, (q_last_filt_state, q_backwd_state_seq) = compute_kl_term(obs_seq)
 
+        means, covs = q_last_filt_state.mean, q_last_filt_state.cov 
+        A_backs, a_backs, cov_backs = q_backwd_state_seq.matrix, q_backwd_state_seq.bias, q_backwd_state_seq.cov
+        marginal_means, marginal_covs = self.q.backwd_pass((means, covs), (A_backs, a_backs, cov_backs))
+        
+        def sample_from_marginal(normal_sample, marginal_mean, marginal_cov_chol, obs, theta):
+            common_term = obs - self.p.emission_kernel.map(marginal_mean + marginal_cov_chol @ normal_sample, theta.emission).squeeze()
+            return -0.5 * (common_term.T @ theta.emission.prec @ common_term)
+
+
+        # def _sample_step(carry, x):
+        #     next_state_sample = carry
+        #     matrix, bias, cov, obs, normal_sample = x
+        #     current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
+        #     common_term = obs - self.p.emission_kernel.map(jnp.atleast_2d(current_state_sample), theta.emission).squeeze()
+        #     return current_state_sample, -0.5 * (common_term.T @ theta.emission.prec @ common_term)
+            
+        # matrices = jnp.concatenate((q_backwd_state_seq.matrix, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
+        # biases = jnp.concatenate((q_backwd_state_seq.bias, q_last_filt_state.mean[None,:]))
+        # covs = jnp.concatenate((q_backwd_state_seq.cov, q_last_filt_state.cov[None,:]))
+
+        # sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
+        #                                                 init=jnp.empty((self.p.state_dim,)), 
+        #                                                 xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
+        #                                                 reverse=True)[1]
+
         normal_samples = normal(key, shape=(self.num_samples, obs_seq.shape[0], self.p.state_dim))
 
-        def _sample_step(carry, x):
-            next_state_sample = carry
-            matrix, bias, cov, obs, normal_sample = x
-            current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
-            common_term = obs - self.p.emission_kernel.map(jnp.atleast_2d(current_state_sample), theta.emission).squeeze()
-            return current_state_sample, -0.5 * (common_term.T @ theta.emission.prec @ common_term)
-            
-        matrices = jnp.concatenate((q_backwd_state_seq.matrix, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
-        biases = jnp.concatenate((q_backwd_state_seq.bias, q_last_filt_state.mean[None,:]))
-        covs = jnp.concatenate((q_backwd_state_seq.cov, q_last_filt_state.cov[None,:]))
+        marginal_covs_chol = jnp.linalg.cholesky(marginal_covs)
+        monte_carlo_samples = vmap(vmap(sample_from_marginal, in_axes=(0,0,0,0,None)), in_axes=(0,None,None,None,None))(normal_samples, marginal_means, marginal_covs_chol, obs_seq, theta)
+        
+        reconstruction_term = jnp.sum(jnp.mean(monte_carlo_samples, axis=0)) + \
+             obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.cov.shape[0], theta.emission.log_det)
 
-        sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
-                                                        init=jnp.empty((self.p.state_dim,)), 
-                                                        xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
-                                                        reverse=True)[1]
-
-        reconstruction_term = jnp.sum(jnp.mean(jax.vmap(sample_path)(normal_samples), axis=0)) \
-                            + obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.cov.shape[0], theta.emission.log_det)
+        # reconstruction_term = jnp.sum(jnp.mean(jax.vmap(sample_path)(normal_samples), axis=0)) \
+        #                     + obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.cov.shape[0], theta.emission.log_det)
 
                         
         return reconstruction_term + kl_term
@@ -270,15 +287,17 @@ class LinearGaussianELBO:
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \
                     + 0.5*self.p.state_dim
     
+
+
 class SVITrainer:
 
     def __init__(self, p:GaussianHMM, q:LinearBackwardSmoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, use_johnson=False):
 
 
-        schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
+        # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
         # schedule_fn = optax.piecewise_constant_schedule(1., {100*: decay_rate})
         # self.optimizer = optax.chain(optimizer(learning_rate), optax.scale_by_schedule(schedule_fn))
-        self.optimizer = lambda num_batches: optimizer(schedule(num_batches))
+        self.optimizer = lambda num_batches: optimizer(learning_rate)
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.q = q 
@@ -373,12 +392,12 @@ class SVITrainer:
 
         @jit
         def step(params, batch, keys):
-            return jax.vmap(jax.grad(loss, argnums=2), in_axes=(0,0,None))(batch, keys, params)
+            return jax.vmap(loss, in_axes=(0,0,None))(batch, keys, params)
 
         step(params, data[:self.batch_size], subkeys[:self.batch_size])
 
         with jax.profiler.trace('./profiling/'):
-            print(step(params, data[:self.batch_size], subkeys[:self.batch_size]))
+            print(step(params, data[:2], subkeys[:2]))
 
 
 
@@ -404,6 +423,7 @@ class SVITrainer:
         best_optim = jnp.argmax(array_to_sort)
         print(f'Best fit is {best_optim+1}.')
         return all_fitted_params[best_optim], all_avg_elbos
+
 
 def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, theta):
     evidence_via_elbo_on_seq = lambda seq: LinearGaussianELBO(p,p)(seq, p.format_params(theta), p.format_params(theta))
