@@ -1,5 +1,6 @@
 from collections import namedtuple
 from dataclasses import dataclass
+from distutils import log
 from queue import PriorityQueue
 from typing import Any
 from jax import disable_jit, numpy as jnp, vmap, config, random, lax, jit
@@ -13,6 +14,7 @@ import numpy as np
 import json
 import os 
 import pickle 
+import argparse
 # Containers for parameters of various objects 
 
 GaussianKernelBaseParams = namedtuple('GaussianKernelBaseParams', ['map_params', 'cov_base'])
@@ -28,6 +30,8 @@ HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
 NeuralSmootherParams = namedtuple('NeuralSmootherParams', ['prior', 'shared', 'filt_predict', 'filt_update', 'backwd_update'])
 
+FiltParams = namedtuple('FiltParams', ['state', 'mean', 'cov', 'log_det'])
+BackwardParams = namedtuple('BackwardParams', ['matrix', 'bias', 'cov', 'log_det'])
 
 
 def tree_prepend(prep, tree):
@@ -82,9 +86,12 @@ def inv_from_chol(mat_chol):
     return cho_solve(c_and_lower=(mat_chol,True), 
                 b=jnp.eye(mat_chol.shape[0]))
 
+
+def log_det_from_cov(cov):
+    return log_det_from_chol(jnp.linalg.cholesky(cov))
+
 def log_det_from_chol(chol):
     return jnp.sum(jnp.log(jnp.diagonal(chol)**2))
-
 
 def cov_params_from_cov_chol(cov_chol):
     cov = cov_chol @ cov_chol.T 
@@ -151,20 +158,32 @@ class QuadTerm:
 
 
 def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
-    true_sequence, pred_means, pred_covs = true_sequence.squeeze(), pred_means.squeeze(), pred_covs.squeeze()
-    time_axis = range(len(true_sequence))
+    true_sequence, pred_means, pred_covs = true_sequence.squeeze()[:64], pred_means.squeeze()[:64], pred_covs.squeeze()[:64]
+    time_axis = range(len(true_sequence))[:64]
     ax.errorbar(x=time_axis, fmt = '_', y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), label='Smoothed z, $1.96\\sigma$')
     ax.scatter(x=time_axis, marker = '_', y=true_sequence, c='r', label='True z')
     ax.set_xlabel('t')
 
-def save_args(args, save_dir):
-    with open(os.path.join(save_dir, 'args.json'), 'w') as f:
+def save_args(args, name, save_dir):
+    with open(os.path.join(save_dir, f'{name}.json'), 'w') as f:
         args_dict = vars(args)
         json.dump(args_dict, f)
 
+def load_args(name, save_dir):
+    with open(os.path.join(save_dir, f'{name}.json'), 'r') as f:
+        args_dict = json.load(f)
+    args = argparse.Namespace()
+    for k,v in args_dict.items():setattr(args, k, v)
+    return args
+        
 def save_params(params, name, save_dir):
     with open(os.path.join(save_dir,name), 'wb') as f: 
         pickle.dump(params, f)
+
+def load_params(name, save_dir):
+    with open(os.path.join(save_dir, name), 'rb') as f: 
+        params = pickle.load(f)
+    return params
         
 def plot_training_curves(avg_elbos, experiments_folder, avg_evidence=None):
 
@@ -336,61 +355,90 @@ def multiple_length_linear_backward_smoothing(obs_seqs, smoother, params, timest
 
 
 
-def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, timesteps, ref_name, approx_name, figname):
+def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, timesteps, ref_name, approx_name, save_dir):
 
-
+    colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
 
     fig, ((ax0, ax1, ax2), (ax3, ax4, ax5)) = plt.subplots(2,3, figsize=(20,15))
+    xaxis = list(timesteps) + [len(ref_state_seqs[0])]
 
-    
-    for seq_nb, (ref_state_seq, ref_results_seq, approx_results_seq) in enumerate(zip(ref_state_seqs, ref_results, approx_results)):
+    for seq_nb, (ref_state_seq, ref_results_seq) in enumerate(zip(ref_state_seqs, ref_results)):
         ref_vs_states_additive =  []
-        approx_vs_states_additive = []
-        ref_vs_approx_additive = []
-
-
         for i, length in enumerate(timesteps):
             ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[i] - ref_state_seq[:length], axis=0)))
-            approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_state_seq[:length], axis=0)))
-            ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_results_seq[i], axis=0)))
-
         ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[-1][0] - ref_state_seq, axis=0)))
-        approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_state_seq, axis=0)))
-        ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_results_seq[-1][0], axis=0)))
-        ref_vs_approx_marginals = jnp.abs(ref_results_seq[-1][0] - approx_results_seq[-1][0])
+        ax0.plot(xaxis, ref_vs_states_additive, linestyle='dotted', marker='.', c='k')
 
-        xaxis = list(timesteps) + [len(ref_state_seq)]
-        ax0.plot(xaxis, ref_vs_states_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-        ax1.plot(xaxis, approx_vs_states_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-        ax2.plot(xaxis, ref_vs_approx_additive, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-        ax3.plot(ref_vs_approx_marginals, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
+
+    if isinstance(approx_results, dict):
+        idx_color = 0
+        handles = []
+        for epoch_nb, approx_results_at_epoch in approx_results.items():
+            c = colors[idx_color]
+            for seq_nb, (ref_state_seq, ref_results_seq, approx_results_seq) in enumerate(zip(ref_state_seqs, ref_results, approx_results_at_epoch)):
+                approx_vs_states_additive = []
+                ref_vs_approx_additive = []
+
+                for i, length in enumerate(timesteps):
+                    approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_state_seq[:length], axis=0)))
+                    ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_results_seq[i], axis=0)))
+
+                approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_state_seq, axis=0)))
+                ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_results_seq[-1][0], axis=0)))
+                ref_vs_approx_marginals = jnp.abs(ref_results_seq[-1][0] - approx_results_seq[-1][0])
+
+                ax1.plot(xaxis, approx_vs_states_additive, linestyle='dotted', marker='.', c=c, label=f'Epoch {epoch_nb}')
+                ax2.plot(xaxis, ref_vs_approx_additive, linestyle='dotted', marker='.', c=c, label=f'Epoch {epoch_nb}')
+                handle, = ax3.plot(ref_vs_approx_marginals, linestyle='dotted', marker='.', c=c, label=f'Epoch {epoch_nb}')
+            handles.append(handle)
+            idx_color+=1
+
+        ax1.legend(handles=handles)
+        ax2.legend(handles=handles)
+        ax3.legend(handles=handles)
+
+    else: 
+        for seq_nb, (ref_state_seq, ref_results_seq, approx_results_seq) in enumerate(zip(ref_state_seqs, ref_results, approx_results)):
+            approx_vs_states_additive = []
+            ref_vs_approx_additive = []
+
+            for i, length in enumerate(timesteps):
+                approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_state_seq[:length], axis=0)))
+                ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_results_seq[i], axis=0)))
+
+            approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_state_seq, axis=0)))
+            ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_results_seq[-1][0], axis=0)))
+            ref_vs_approx_marginals = jnp.abs(ref_results_seq[-1][0] - approx_results_seq[-1][0])
+
+            ax1.plot(xaxis, approx_vs_states_additive, linestyle='dotted', marker='.', label=f'Seq {seq_nb}')
+            ax2.plot(xaxis, ref_vs_approx_additive, linestyle='dotted', marker='.', label=f'Seq {seq_nb}')
+            handle, = ax3.plot(ref_vs_approx_marginals, linestyle='dotted', marker='.',label=f'Seq {seq_nb}')
+
+        ax1.legend()
+        ax2.legend()
+        ax3.legend()
 
     
+
     ax0.set_title(f'{ref_name} vs states (additive)')
     ax0.set_xlabel('Sequence length')
-    ax0.legend()
 
     ax1.set_title(f'{approx_name} vs states (additive)')
     ax1.set_xlabel('Sequence length')
-    ax1.legend()
-
 
     ax2.set_title(f'{approx_name} vs {ref_name} (additive)')
     ax2.set_xlabel('Sequence length')
-    ax2.legend()
-
 
     ax3.set_title(f'{approx_name} vs {ref_name} (marginals)')
     ax3.set_xlabel('Sequence length')
-    ax3.legend()
 
     plot_relative_errors_1D(ax4, ref_state_seqs[0], *ref_results[0][-1])
     ax4.set_title(f'{ref_name} example smoothing')
 
-    plot_relative_errors_1D(ax5, ref_state_seqs[0], *approx_results[0][-1])
-    ax5.set_title(f'{approx_name} example smoothing')
+    plot_relative_errors_1D(ax5, ref_state_seqs[0], *approx_results_at_epoch[0][-1])
+    ax5.set_title(f'{approx_name} smoothing with fully fitted params')
 
     plt.tight_layout()
-    plt.savefig(figname)
+    plt.savefig(os.path.join(save_dir, 'smoothing_results'))
     plt.clf()
 

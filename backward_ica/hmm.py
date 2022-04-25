@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+from tkinter import N
 from .utils import *
 from jax import numpy as jnp, random
 from backward_ica.kalman import kalman_init, kalman_predict, kalman_update, kalman_filter_seq
@@ -35,49 +36,50 @@ def linear_map(input, params):
 def nonlinear_map(input, params):
     return params[0]*input + jnp.sin(params[1]*jnp.exp(-(input-params[2])**params[3]))
 
-def neural_map(input, out_dim):
-    net = hk.nets.MLP((2,2,2,out_dim,), activate_final=False, activation = nn.sigmoid)
+
+def xtanh(slope):
+    return lambda x: jnp.tanh(x) + slope*x
+
+
+def neural_map(input, hidden_layer_sizes, slope, out_dim):
+
+    net = hk.nets.MLP((*hidden_layer_sizes, out_dim), 
+                    with_bias=False, 
+                    activate_final=False, 
+                    w_init=hk.initializers.Orthogonal(),
+                    activation=xtanh(slope))
+
     return net(input)
 
 def filt_predict_forward(shared_params, filt_state, out_dim):
-    filt_mean, filt_cov = filt_state
-    net = hk.nets.MLP([8, out_dim])
-    out = net(jnp.concatenate((shared_params, filt_mean, jnp.tril(filt_cov).flatten())))
-    return out
+    net = hk.nets.MLP([8, out_dim], w_init=hk.initializers.Orthogonal())
+    return net(jnp.concatenate((shared_params, filt_state)))
 
-def filt_update_forward(pred_state, obs, d):
-    net = hk.nets.MLP([8, d + d*(d+1) // 2])
-    out = net(jnp.concatenate((obs, pred_state)))
-    mean = out[:d]
-    cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
-    return mean, cov_chol @ cov_chol.T
+def filt_update_forward(pred_state, obs, out_dim):
+    net = hk.nets.MLP([8, out_dim], w_init=hk.initializers.Orthogonal())
+    return net(jnp.concatenate((pred_state, obs)))
 
-def backwd_update_forward(shared_params, filt_state, d):
-    filt_mean, filt_cov = filt_state
-    net = hk.nets.MLP([8, d**2 + d + d*(d+1) // 2])
-    out = net(jnp.concatenate((shared_params, filt_mean, jnp.tril(filt_cov).flatten())))
-    A = out[:d**2].reshape((d,d))
-    a = out[d**2:d**2+d]
-    cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d**2+d:])
-    return A, a, cov_chol @ cov_chol.T
+def backwd_update_forward(shared_params, filt_state, out_dim):
+    net = hk.nets.MLP([8, out_dim], w_init=hk.initializers.Orthogonal())
+    return net(jnp.concatenate((shared_params, filt_state)))
 
 
 
 @register_pytree_node_class
 class GaussianKernel:
 
-    def __init__(self, in_dim, out_dim):
+    def __init__(self, in_dim, out_dim, hidden_layer_sizes, slope):
 
         self.in_dim = in_dim
         self.out_dim = out_dim 
 
-        # self.map_init_params, self.map_apply = hk.without_apply_rng(hk.transform(partial(neural_map, out_dim=self.out_dim)))
-        # self.map_init_params = Partial(self.map_init_params)
-        # self.map_apply = Partial(self.map_apply)
-        self.map_apply = Partial(vmap(nonlinear_map, in_axes=(0,None)))
+        self.map_init_params, self.map_apply = hk.without_apply_rng(hk.transform(partial(neural_map, hidden_layer_sizes=hidden_layer_sizes, slope=slope, out_dim=self.out_dim)))
+        self.map_init_params = Partial(self.map_init_params)
+        self.map_apply = Partial(self.map_apply)
+        # self.map_apply = Partial(vmap(nonlinear_map, in_axes=(0,None)))  
 
     def map(self, state, params):
-        return self.map_apply(state, params.map_params)
+        return self.map_apply(params.map_params, state)
     
     def sample(self, key, mapped_state, params):
         return random.multivariate_normal(key, mapped_state, params.cov)
@@ -87,7 +89,7 @@ class GaussianKernel:
 
     def get_random_params(self, key, default_cov_base=None):
         subkeys = random.split(key, 2)
-        return GaussianKernelBaseParams(map_params=(4, 10, 0.8, 2),
+        return GaussianKernelBaseParams(map_params=self.map_init_params(subkeys[0], jnp.empty((self.in_dim,))),
                                         cov_base=default_cov_base * jnp.ones((self.out_dim,)))
     
     def format_params(self, params):
@@ -126,7 +128,7 @@ class LinearGaussianKernel:
         subkeys = random.split(key, 3)
 
         if self.matrix_conditionning == 'diagonal':
-            matrix = random.uniform(subkeys[0], shape=(self.in_dim,))
+            matrix = random.uniform(subkeys[0], shape=(self.in_dim,), minval=-1, maxval=1)
         else: 
             matrix = random.uniform(subkeys[0], shape=(self.out_dim, self.in_dim))
 
@@ -168,7 +170,7 @@ class GaussianHMM:
     def get_random_params(self, key):
 
         key, *subkeys = random.split(key, 3)
-        prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,)), 
+        prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,), minval=-2, maxval=2), 
                                     cov_base=GaussianHMM.default_prior_cov_base * jnp.ones((self.state_dim,)))
         subkeys = random.split(key, 2)
 
@@ -285,13 +287,13 @@ class LinearGaussianHMM(GaussianHMM, LinearBackwardSmoother):
 
         mean, cov =  kalman_init(obs, params.prior.mean, params.prior.cov, params.emission)
 
-        return GaussianParams(mean, *cov_params_from_cov(cov))
+        return FiltParams(None, mean, cov, log_det_from_cov(cov))
 
     def new_filt_state(self, obs, filt_state, params):
         pred_mean, pred_cov = kalman_predict(filt_state.mean, filt_state.cov, params.transition)
         mean, cov = kalman_update(pred_mean, pred_cov, obs, params.emission)
 
-        return GaussianParams(mean, *cov_params_from_cov(cov))
+        return FiltParams(None, mean, cov, log_det_from_cov(cov))
 
     def new_backwd_state(self, filt_state:GaussianParams, params):
 
@@ -308,7 +310,7 @@ class LinearGaussianHMM(GaussianHMM, LinearBackwardSmoother):
         a_back = mu @ C - K @ a
         cov_back = C @ Sigma
 
-        return LinearGaussianKernelParams(A_back, a_back, *cov_params_from_cov(cov_back))
+        return BackwardParams(A_back, a_back, cov_back, log_det_from_cov(cov_back))
 
     def likelihood_seq(self, obs_seq, params, *args):
         return kalman_filter_seq(obs_seq, self.format_params(params))[-1]
@@ -399,10 +401,12 @@ class NonLinearGaussianHMM(GaussianHMM):
     def __init__(self, 
                 state_dim, 
                 obs_dim, 
-                transition_matrix_conditionning):
+                transition_matrix_conditionning,
+                hidden_layer_sizes,
+                slope):
 
         transition_kernel_type = lambda state_dim: LinearGaussianKernel(state_dim, state_dim, transition_matrix_conditionning)
-        emission_kernel_type = GaussianKernel
+        emission_kernel_type = lambda state_dim, obs_dim:GaussianKernel(state_dim, obs_dim, hidden_layer_sizes, slope)
 
         GaussianHMM.__init__(self, state_dim, obs_dim, transition_kernel_type, emission_kernel_type)
 
@@ -440,45 +444,59 @@ class NeuralBackwardSmoother(LinearBackwardSmoother):
 
         self.state_dim, self.obs_dim = state_dim, obs_dim 
         d = self.state_dim
+        self.d = d 
         self.shared_param_shape = 2*d + d*(d+1) // 2 
         self.prior_param_shape = d + d*(d+1) // 2 
+        self.filt_state_shape = self.prior_param_shape
 
         self.filt_predict_init_params, self.filt_predict_apply = hk.without_apply_rng(hk.transform(partial(filt_predict_forward, out_dim=self.prior_param_shape)))
-        self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(filt_update_forward, d=d)))
-        self.backwd_update_init_params, self.backwd_update_apply = hk.without_apply_rng(hk.transform(partial(backwd_update_forward, d=d)))
+        self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(filt_update_forward, out_dim=self.filt_state_shape)))
+        self.backwd_update_init_params, self.backwd_update_apply = hk.without_apply_rng(hk.transform(partial(backwd_update_forward, out_dim=d**2 + self.filt_state_shape)))
 
-        
     def get_random_params(self, key):
 
         subkeys = random.split(key, 5)
         prior_params = random.uniform(subkeys[0], shape=(self.prior_param_shape,))
         shared_params = random.uniform(subkeys[1], shape=(self.shared_param_shape,))
-        dummy_mean = jnp.empty((self.state_dim,))
-        dummy_cov = jnp.empty((self.state_dim, self.state_dim))
+
+        dummy_filt_state = jnp.empty((self.filt_state_shape,))
         dummy_obs = jnp.empty((self.obs_dim,))
 
-        filt_predict_params = self.filt_predict_init_params(subkeys[2], shared_params, (dummy_mean, dummy_cov))
+        filt_predict_params = self.filt_predict_init_params(subkeys[2], shared_params, dummy_filt_state)
         filt_update_params = self.filt_update_init_params(subkeys[3], prior_params, dummy_obs)
-        backwd_update_params = self.backwd_update_init_params(subkeys[4], shared_params, (dummy_mean, dummy_cov))
+        backwd_update_params = self.backwd_update_init_params(subkeys[4], shared_params, dummy_filt_state)
 
         return NeuralSmootherParams(prior_params, shared_params, filt_predict_params, filt_update_params, backwd_update_params)
 
 
     def init_filt_state(self, obs, params):
 
-        mean, cov = self.filt_update_apply(params.filt_update, params.prior, obs)
-        return GaussianParams(mean, *cov_params_from_cov(cov))
+        state = self.filt_update_apply(params.filt_update, params.prior, obs)
+
+        mean = state[:self.d]
+        cov_chol = jnp.zeros((self.d,self.d)).at[jnp.tril_indices(self.d)].set(state[self.d:])
+
+        return FiltParams(state, mean, cov_chol @ cov_chol.T, log_det_from_chol(cov_chol))
 
     def new_filt_state(self, obs, filt_state, params):
-        pred_state = self.filt_predict_apply(params.filt_predict, params.shared, (filt_state.mean, filt_state.cov))
-        mean, cov = self.filt_update_apply(params.filt_update, pred_state, obs)
-        return GaussianParams(mean, *cov_params_from_cov(cov))
+
+        pred_state = self.filt_predict_apply(params.filt_predict, params.shared, filt_state.state)
+        state = self.filt_update_apply(params.filt_update, pred_state, obs)
+
+        mean = state[:self.d]
+        cov_chol = jnp.zeros((self.d,self.d)).at[jnp.tril_indices(self.d)].set(state[self.d:])
+
+        return FiltParams(state, mean, cov_chol @ cov_chol.T, log_det_from_chol(cov_chol))
     
     def new_backwd_state(self, filt_state, params):
 
-        A_back, a_back, cov_back = self.backwd_update_apply(params.backwd_update, params.shared, (filt_state.mean, filt_state.cov))
+        state = self.backwd_update_apply(params.backwd_update, params.shared, filt_state.state)
 
-        return LinearGaussianKernelParams(A_back, a_back, *cov_params_from_cov(cov_back))
+        A_back = state[:self.d**2].reshape((self.d,self.d))
+        a_back = state[self.d**2:self.d**2+self.d]
+        cov_chol_back = jnp.zeros((self.d,self.d)).at[jnp.tril_indices(self.d)].set(state[self.d**2+self.d:])
+
+        return BackwardParams(A_back, a_back, cov_chol_back @ cov_chol_back.T, log_det_from_chol(cov_chol_back))
 
     def compute_filt_seq(self, obs_seq, params):
 

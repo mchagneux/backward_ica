@@ -10,7 +10,6 @@ from backward_ica.svi import SVITrainer, check_linear_gaussian_elbo
 
 
 def main(args, save_dir):
-    import sys 
     key_theta = jax.random.PRNGKey(args.seed_theta)
     key_phi = jax.random.PRNGKey(args.seed_phi)
 
@@ -68,6 +67,6 @@ if __name__ == '__main__':
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
 
-    utils.save_args(args, save_dir)
+    utils.save_args(args, 'train_args', save_dir)
     main(args, save_dir)
 
