@@ -362,15 +362,17 @@ def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, 
     fig, ((ax0, ax1, ax2), (ax3, ax4, ax5)) = plt.subplots(2,3, figsize=(20,15))
     xaxis = list(timesteps) + [len(ref_state_seqs[0])]
 
-    for seq_nb, (ref_state_seq, ref_results_seq) in enumerate(zip(ref_state_seqs, ref_results)):
-        ref_vs_states_additive =  []
-        for i, length in enumerate(timesteps):
-            ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[i] - ref_state_seq[:length], axis=0)))
-        ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[-1][0] - ref_state_seq, axis=0)))
-        ax0.plot(xaxis, ref_vs_states_additive, linestyle='dotted', marker='.', c='k')
+
 
 
     if isinstance(approx_results, dict):
+        for seq_nb, (ref_state_seq, ref_results_seq) in enumerate(zip(ref_state_seqs, ref_results)):
+            ref_vs_states_additive =  []
+            for i, length in enumerate(timesteps):
+                ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[i] - ref_state_seq[:length], axis=0)))
+            ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[-1][0] - ref_state_seq, axis=0)))
+            ax0.plot(xaxis, ref_vs_states_additive, linestyle='dotted', marker='.', c='k')
+
         idx_color = 0
         handles = []
         for epoch_nb, approx_results_at_epoch in approx_results.items():
@@ -397,7 +399,38 @@ def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, 
         ax2.legend(handles=handles)
         ax3.legend(handles=handles)
 
+        ax0.set_title(f'{ref_name} vs states (additive)')
+        ax0.set_xlabel('Sequence length')
+
+        ax1.set_title(f'{approx_name} vs states (additive)')
+        ax1.set_xlabel('Sequence length')
+
+        ax2.set_title(f'{approx_name} vs {ref_name} (additive)')
+        ax2.set_xlabel('Sequence length')
+
+        ax3.set_title(f'{approx_name} vs {ref_name} (marginals)')
+        ax3.set_xlabel('Sequence length')
+
+        plot_relative_errors_1D(ax4, ref_state_seqs[0], *ref_results[0][-1])
+        ax4.set_title(f'{ref_name} example smoothing')
+
+        plot_relative_errors_1D(ax5, ref_state_seqs[0], *approx_results_at_epoch[0][-1])
+        ax5.set_title(f'{approx_name} smoothing with fully fitted params')
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 'smoothing_results'))
+        plt.clf()
+
     else: 
+
+        for seq_nb, (ref_state_seq, ref_results_seq) in enumerate(zip(ref_state_seqs, ref_results)):
+            ref_vs_states_additive =  []
+            for i, length in enumerate(timesteps):
+                ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[i] - ref_state_seq[:length], axis=0)))
+            ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[-1][0] - ref_state_seq, axis=0)))
+            ax0.plot(xaxis, ref_vs_states_additive, linestyle='dotted', marker='.', label=f'Seq {seq_nb}')
+
+
         for seq_nb, (ref_state_seq, ref_results_seq, approx_results_seq) in enumerate(zip(ref_state_seqs, ref_results, approx_results)):
             approx_vs_states_additive = []
             ref_vs_approx_additive = []
@@ -414,31 +447,32 @@ def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, 
             ax2.plot(xaxis, ref_vs_approx_additive, linestyle='dotted', marker='.', label=f'Seq {seq_nb}')
             handle, = ax3.plot(ref_vs_approx_marginals, linestyle='dotted', marker='.',label=f'Seq {seq_nb}')
 
+        ax0.legend()
         ax1.legend()
         ax2.legend()
         ax3.legend()
 
     
 
-    ax0.set_title(f'{ref_name} vs states (additive)')
-    ax0.set_xlabel('Sequence length')
+        ax0.set_title(f'{ref_name} vs states (additive)')
+        ax0.set_xlabel('Sequence length')
 
-    ax1.set_title(f'{approx_name} vs states (additive)')
-    ax1.set_xlabel('Sequence length')
+        ax1.set_title(f'{approx_name} vs states (additive)')
+        ax1.set_xlabel('Sequence length')
 
-    ax2.set_title(f'{approx_name} vs {ref_name} (additive)')
-    ax2.set_xlabel('Sequence length')
+        ax2.set_title(f'{approx_name} vs {ref_name} (additive)')
+        ax2.set_xlabel('Sequence length')
 
-    ax3.set_title(f'{approx_name} vs {ref_name} (marginals)')
-    ax3.set_xlabel('Sequence length')
+        ax3.set_title(f'{approx_name} vs {ref_name} (marginals)')
+        ax3.set_xlabel('Sequence length')
 
-    plot_relative_errors_1D(ax4, ref_state_seqs[0], *ref_results[0][-1])
-    ax4.set_title(f'{ref_name} example smoothing')
+        plot_relative_errors_1D(ax4, ref_state_seqs[0], *ref_results[0][-1])
+        ax4.set_title(f'{ref_name} example smoothing')
 
-    plot_relative_errors_1D(ax5, ref_state_seqs[0], *approx_results_at_epoch[0][-1])
-    ax5.set_title(f'{approx_name} smoothing with fully fitted params')
+        plot_relative_errors_1D(ax5, ref_state_seqs[0], *approx_results[0][-1])
+        ax5.set_title(f'{approx_name} smoothing with fully fitted params')
 
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'smoothing_results'))
-    plt.clf()
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 'smoothing_results'))
+        plt.clf()
 

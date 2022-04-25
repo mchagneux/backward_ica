@@ -32,7 +32,7 @@ def main(args, save_dir):
     import matplotlib.pyplot as plt 
     test_points = jnp.linspace(state_seqs.min(),state_seqs.max(), 100).reshape(-1, args.state_dim)
     plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission))
-    plt.show()
+    plt.savefig(os.path.join(save_dir,'emission_map_on_support_of_all_states'))
 
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
@@ -44,28 +44,32 @@ def main(args, save_dir):
 
     print('Avg evidence:', avg_evidence)
 
-    # q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
-    #                         obs_dim=args.obs_dim,
-    #                         transition_matrix_conditionning=args.transition_matrix_conditionning)
+    q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
+                            obs_dim=args.obs_dim,
+                            transition_matrix_conditionning=args.transition_matrix_conditionning)
 
 
     # q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
     #                             obs_dim=args.obs_dim,
     #                             transition_matrix_conditionning=args.transition_matrix_conditionning)
 
-    q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, obs_dim=args.obs_dim)
+    # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, obs_dim=args.obs_dim)
 
     trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, args.num_samples)
-    phi, avg_elbos = trainer.multi_fit(key_phi, obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
+    params, avg_elbos = trainer.multi_fit(key_phi, obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
     utils.plot_training_curves(avg_elbos, save_dir, avg_evidence)
+    utils.save_params(params, f'phi_every_{args.store_every}_epochs', save_dir)
 
 if __name__ == '__main__':
 
+
+
     import argparse
     import os 
+
     args = argparse.Namespace()
 
-    experiment_name = 'nonlinear_model_nonlinear_var_3'
+    experiment_name = 'nonlinear_model_linear_var'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     os.mkdir(save_dir)
 
@@ -84,13 +88,15 @@ if __name__ == '__main__':
     args.optimizer = 'adam'
     args.batch_size = 64
     args.learning_rate = 1e-2
-    args.num_epochs = 300
+    args.num_epochs = 200
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     
 
     args.num_particles = 1000
-    args.num_samples = 10
+    args.num_samples = 1
+
+    # os.environ["XLA_FLAGS"] = f'--xla_force_host_platform_device_count={args.batch_size}'
 
 
     utils.save_args(args, 'train_args', save_dir)
