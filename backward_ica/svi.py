@@ -297,7 +297,7 @@ class SVITrainer:
         # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
         # schedule_fn = optax.piecewise_constant_schedule(1., {100*: decay_rate})
         # self.optimizer = optax.chain(optimizer(learning_rate), optax.scale_by_schedule(schedule_fn))
-        self.optimizer = lambda num_batches: optimizer(learning_rate)
+        self.optimizer = lambda num_batches: getattr(optax, optimizer)(learning_rate)
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.q = q 
@@ -319,7 +319,7 @@ class SVITrainer:
         
         self.loss = lambda seq, key, theta, phi, aux_params: -elbo(seq, theta, phi, aux_params, key)
         
-    def fit(self, data, theta, phi, aux_params=None, subkey_montecarlo=None):
+    def fit(self, data, theta, phi, aux_params, subkey_montecarlo, store_every):
 
         if self.use_johnson: 
             loss = lambda seq, key, phi, aux_params: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), aux_params)
@@ -352,24 +352,24 @@ class SVITrainer:
             params, opt_state, avg_elbo_batch = step(params, opt_state, batch_obs_seq, batch_keys)
             return (params, opt_state, subkeys_epoch), avg_elbo_batch
 
-        def epoch_step(carry, x):
-            params, opt_state = carry
-            subkeys_epoch = x
+
+        avg_elbos = []
+        all_params = dict()
+        for epoch_nb in range(self.num_epochs):
+            subkeys_epoch = subkeys[epoch_nb]
             batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
         
-
-            (params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step, #                         obs_dim=obs_dim, 
-#                         transition_matrix_conditionning=None) # specify the structure of the true model, but init params are sampled during optimisiation     
-
+            (params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
                                                                 init=(params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
+            if epoch_nb % store_every == 0:
+                all_params[epoch_nb] = params
 
-            return (params, opt_state), jnp.mean(avg_elbo_batches)
-
-
-        (params, _), avg_elbos = jax.lax.scan(epoch_step, init=(params, opt_state), xs=subkeys)
+            avg_elbos.append(jnp.mean(avg_elbo_batches))
         
-        return params, avg_elbos
+        all_params[epoch_nb] = params
+                    
+        return all_params, avg_elbos
 
     def profile(self, key, data, theta):
 
@@ -400,21 +400,23 @@ class SVITrainer:
             print(step(params, data[:2], subkeys[:2]))
 
 
+    def multi_fit(self, key, data, theta, num_fits, store_every=None):
 
-        
-    def multi_fit(self, key, data, theta, num_fits=1):
+        if store_every is None: 
+            store_every = self.num_epochs
 
         all_avg_elbos = []
-        all_fitted_params = []
+        all_params = []
         for fit_nb, key in enumerate(jax.random.split(key, num_fits)):
             params_key, monte_carlo_key = jax.random.split(key, 2)
             if self.use_johnson: 
                 aux_params = self.aux_init_params(params_key, data[0][0])
             else:
                 aux_params = None
-            fitted_params, avg_elbos = self.fit(data, theta, self.q.get_random_params(params_key), aux_params, monte_carlo_key)
+            params, avg_elbos = self.fit(data, theta, self.q.get_random_params(params_key), aux_params, monte_carlo_key, store_every)
             all_avg_elbos.append(avg_elbos)
-            all_fitted_params.append(fitted_params)
+            all_params.append(params)
+
             print(f'End of fit {fit_nb+1}/{num_fits}, final ELBO {avg_elbos[-1]:.3f}')
 
 
@@ -422,7 +424,8 @@ class SVITrainer:
         array_to_sort[np.isnan(array_to_sort)] = -np.inf
         best_optim = jnp.argmax(array_to_sort)
         print(f'Best fit is {best_optim+1}.')
-        return all_fitted_params[best_optim], all_avg_elbos
+        return all_params[best_optim], all_avg_elbos
+
 
 
 def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, theta):

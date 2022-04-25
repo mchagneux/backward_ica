@@ -10,6 +10,9 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 config.update('jax_enable_x64',True)
 import numpy as np 
+import json
+import os 
+import pickle 
 # Containers for parameters of various objects 
 
 GaussianKernelBaseParams = namedtuple('GaussianKernelBaseParams', ['map_params', 'cov_base'])
@@ -154,12 +157,20 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
     ax.scatter(x=time_axis, marker = '_', y=true_sequence, c='r', label='True z')
     ax.set_xlabel('t')
 
+def save_args(args, save_dir):
+    with open(os.path.join(save_dir, 'args.json'), 'w') as f:
+        args_dict = vars(args)
+        json.dump(args_dict, f)
 
-def plot_training_curves(avg_elbos, figname, avg_evidence=None):
+def save_params(params, name, save_dir):
+    with open(os.path.join(save_dir,name), 'wb') as f: 
+        pickle.dump(params, f)
+        
+def plot_training_curves(avg_elbos, experiments_folder, avg_evidence=None):
 
 
     num_fits = len(avg_elbos)
-    fig, axes = plt.subplots(1,num_fits, sharey=True, figsize=(20,10))
+    fig, axes = plt.subplots(1, num_fits, figsize=(20,10))
     for fit_nb in range(num_fits):
         axes[fit_nb].set_yscale('symlog')
         axes[fit_nb].plot(avg_elbos[fit_nb], label='$\mathcal{L}(\\theta,\\phi)$')
@@ -168,7 +179,7 @@ def plot_training_curves(avg_elbos, figname, avg_evidence=None):
         axes[fit_nb].set_xlabel('Epoch') 
         axes[fit_nb].set_title(f'Fit {fit_nb+1}')
         axes[fit_nb].legend()
-    plt.savefig(figname)
+    plt.savefig(os.path.join(experiments_folder, 'training_curves'))
     plt.clf()
 
 
