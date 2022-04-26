@@ -1,6 +1,4 @@
 from abc import ABCMeta, abstractmethod
-from tkinter import N
-from .utils import *
 from jax import numpy as jnp, random
 from backward_ica.kalman import kalman_init, kalman_predict, kalman_update, kalman_filter_seq
 from backward_ica.smc import smc_compute_filt_seq, smc_filter_seq, smc_smooth_from_filt_seq
@@ -128,7 +126,7 @@ class LinearGaussianKernel:
         subkeys = random.split(key, 3)
 
         if self.matrix_conditionning == 'diagonal':
-            matrix = random.uniform(subkeys[0], shape=(self.in_dim,), minval=-1, maxval=1)
+            matrix = random.uniform(subkeys[0], shape=(self.in_dim,))
         else: 
             matrix = random.uniform(subkeys[0], shape=(self.out_dim, self.in_dim))
 
@@ -170,7 +168,7 @@ class GaussianHMM:
     def get_random_params(self, key):
 
         key, *subkeys = random.split(key, 3)
-        prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,), minval=-2, maxval=2), 
+        prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,)), 
                                     cov_base=GaussianHMM.default_prior_cov_base * jnp.ones((self.state_dim,)))
         subkeys = random.split(key, 2)
 
@@ -295,7 +293,7 @@ class LinearGaussianHMM(GaussianHMM, LinearBackwardSmoother):
 
         return FiltParams(None, mean, cov, log_det_from_cov(cov))
 
-    def new_backwd_state(self, filt_state:GaussianParams, params):
+    def new_backwd_state(self, filt_state, params):
 
         A, a, Q = params.transition.matrix, params.transition.bias, params.transition.cov
         mu, Sigma = filt_state.mean, filt_state.cov

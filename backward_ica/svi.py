@@ -399,7 +399,6 @@ class SVITrainer:
         with jax.profiler.trace('./profiling/'):
             print(step(params, data[:2], subkeys[:2]))
 
-
     def multi_fit(self, key, data, theta, num_fits, store_every=None):
 
         if store_every is None: 
@@ -424,7 +423,8 @@ class SVITrainer:
         array_to_sort[np.isnan(array_to_sort)] = -np.inf
         best_optim = jnp.argmax(array_to_sort)
         print(f'Best fit is {best_optim+1}.')
-        return all_params[best_optim], all_avg_elbos
+        best_params = all_params[best_optim]
+        return best_params, (best_optim, list(best_params.keys()), all_avg_elbos)
 
 
 

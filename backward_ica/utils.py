@@ -1,8 +1,5 @@
 from collections import namedtuple
 from dataclasses import dataclass
-from distutils import log
-from queue import PriorityQueue
-from typing import Any
 from jax import disable_jit, numpy as jnp, vmap, config, random, lax, jit
 from functools import partial
 from jax.tree_util import register_pytree_node_class, tree_multimap, tree_map
@@ -185,22 +182,37 @@ def load_params(name, save_dir):
         params = pickle.load(f)
     return params
         
-def plot_training_curves(avg_elbos, experiments_folder, avg_evidence=None):
+def save_train_logs(train_logs, save_dir, plot=True):
+    with open(os.path.join(save_dir, 'train_logs'), 'wb') as f: 
+        pickle.dump(train_logs, f)
+    if plot: 
+        plot_training_curves(*train_logs, save_dir)
+
+def load_train_logs(save_dir):
+    with open(os.path.join(save_dir, 'train_logs'), 'rb') as f: 
+        train_logs = pickle.load(f)
+    return train_logs
+        
+
+def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, save_dir):
 
 
     num_fits = len(avg_elbos)
-    fig, axes = plt.subplots(1, num_fits, figsize=(20,10))
     for fit_nb in range(num_fits):
-        axes[fit_nb].set_yscale('symlog')
-        axes[fit_nb].plot(avg_elbos[fit_nb], label='$\mathcal{L}(\\theta,\\phi)$')
-        if avg_evidence is not None:
-            axes[fit_nb].axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
-        axes[fit_nb].set_xlabel('Epoch') 
-        axes[fit_nb].set_title(f'Fit {fit_nb+1}')
-        axes[fit_nb].legend()
-    plt.savefig(os.path.join(experiments_folder, 'training_curves'))
-    plt.clf()
+        plt.yscale('symlog')
+        plt.plot(avg_elbos[fit_nb], label='$\mathcal{L}(\\theta,\\phi)$')
+        plt.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
+        for epoch_nb in stored_epoch_nbs[len(stored_epoch_nbs)-2:]:
+            plt.axvline(x=epoch_nb, c='b', linestyle='dashed')
 
+        plt.xlabel('Epoch') 
+        if fit_nb == best_fit_idx: plt.title(f'Fit {fit_nb}, best')
+        else: plt.title(f'Fit {fit_nb}')
+
+        plt.legend()
+        if fit_nb == best_fit_idx: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}(best)'))
+        else: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}'))
+        plt.clf()
 
 def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb, figname, *args):
 

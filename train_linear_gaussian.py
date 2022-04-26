@@ -36,8 +36,8 @@ def main(args, save_dir):
     trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size)
 
 
-    params, avg_elbos = trainer.multi_fit(key_phi, obs_seqs, theta, args.num_fits, store_every=args.store_every) # returns the best fit (based on the last value of the elbo)
-    utils.plot_training_curves(avg_elbos, save_dir, avg_evidence)
+    params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_phi, obs_seqs, theta, args.num_fits, store_every=args.store_every) # returns the best fit (based on the last value of the elbo)
+    utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
     utils.save_params(params, f'phi_every_{args.store_every}_epochs', save_dir)
 
 if __name__ == '__main__':
@@ -46,7 +46,7 @@ if __name__ == '__main__':
     import os 
     args = argparse.Namespace()
 
-    experiment_name = 'linear_model_2'
+    experiment_name = 'linear_model'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     os.mkdir(save_dir)
 
