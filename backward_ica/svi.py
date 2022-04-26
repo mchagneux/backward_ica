@@ -128,6 +128,7 @@ class GeneralELBO:
                                                             init=(q_filt_state, kl_term), 
                                                             xs=obs_seq[1:])
 
+            q_last_filt_state = self.q.gaussianize_filt_state(q_last_filt_state, phi)
 
             kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state) \
                         - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \

@@ -25,7 +25,7 @@ GaussianParams = namedtuple('GaussianParams', ['mean', 'cov_chol','cov','prec','
 
 HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
-NeuralSmootherParams = namedtuple('NeuralSmootherParams', ['prior', 'shared', 'filt_predict', 'filt_update', 'backwd_update'])
+NeuralSmootherParams = namedtuple('NeuralSmootherParams', ['prior','transition', 'filt_update'])
 
 FiltParams = namedtuple('FiltParams', ['state', 'mean', 'cov', 'log_det'])
 BackwardParams = namedtuple('BackwardParams', ['matrix', 'bias', 'cov', 'log_det'])

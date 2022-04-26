@@ -29,13 +29,13 @@ def main(args, save_dir):
 
     state_seqs, obs_seqs = hmm.sample_multiple_sequences(key_gen, p.sample_seq, theta, args.num_seqs, args.seq_length)
 
-    import matplotlib.pyplot as plt 
-    test_points = jnp.linspace(state_seqs.min(),state_seqs.max(), 100).reshape(-1, args.state_dim)
-    plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission))
-    # plt.savefig(os.path.join(save_dir,'emission_map_on_support_of_all_states'))
-    plt.show()
-    plt.scatter(range(args.seq_length), state_seqs[0])
-    plt.show()
+    # import matplotlib.pyplot as plt 
+    # test_points = jnp.linspace(state_seqs.min(),state_seqs.max(), 100).reshape(-1, args.state_dim)
+    # plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission))
+    # # plt.savefig(os.path.join(save_dir,'emission_map_on_support_of_all_states'))
+    # plt.show()
+    # plt.scatter(range(args.seq_length), state_seqs[0])
+    # plt.show()
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
     avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(obs_seq, 
@@ -46,14 +46,10 @@ def main(args, save_dir):
 
     print('Avg evidence:', avg_evidence)
 
+
     q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
-                            obs_dim=args.obs_dim,
-                            transition_matrix_conditionning=args.transition_matrix_conditionning)
-
-
-    # q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
-    #                             obs_dim=args.obs_dim,
-    #                             transition_matrix_conditionning=args.transition_matrix_conditionning)
+                                obs_dim=args.obs_dim,
+                                transition_matrix_conditionning=args.transition_matrix_conditionning)
 
     # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, obs_dim=args.obs_dim)
 
@@ -63,8 +59,6 @@ def main(args, save_dir):
     utils.save_params(params, f'phi_every_{args.store_every}_epochs', save_dir)
 
 if __name__ == '__main__':
-
-
 
     import argparse
     import os 
@@ -84,13 +78,13 @@ if __name__ == '__main__':
     args.hidden_layer_sizes = ()
     args.slope = 0
 
-    args.seq_length = 32
-    args.num_seqs = 12800
+    args.seq_length = 16
+    args.num_seqs = 6400
 
     args.optimizer = 'adam'
     args.batch_size = 64
     args.learning_rate = 1e-2
-    args.num_epochs = 400
+    args.num_epochs = 200
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     

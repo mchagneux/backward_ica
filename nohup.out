@@ -1,0 +1,20 @@
+WARNING:absl:No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
+/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/tree_util.py:188: FutureWarning: jax.tree_util.tree_multimap() is deprecated. Please use jax.tree_util.tree_map() instead as a drop-in replacement.
+  warnings.warn('jax.tree_util.tree_multimap() is deprecated. Please use jax.tree_util.tree_map() '
+Avg evidence: 15.171659731626583
+End of fit 1/15, final ELBO 10.210
+End of fit 2/15, final ELBO 10.324
+End of fit 3/15, final ELBO 10.313
+End of fit 4/15, final ELBO 10.171
+End of fit 5/15, final ELBO 10.226
+End of fit 6/15, final ELBO 10.225
+End of fit 7/15, final ELBO 10.213
+End of fit 8/15, final ELBO 10.293
+End of fit 9/15, final ELBO 10.301
+End of fit 10/15, final ELBO 10.362
+End of fit 11/15, final ELBO 10.262
+End of fit 12/15, final ELBO 10.277
+End of fit 13/15, final ELBO 10.237
+End of fit 14/15, final ELBO 10.337
+End of fit 15/15, final ELBO 10.184
+Best fit is 10.
