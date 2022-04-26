@@ -32,8 +32,10 @@ def main(args, save_dir):
     import matplotlib.pyplot as plt 
     test_points = jnp.linspace(state_seqs.min(),state_seqs.max(), 100).reshape(-1, args.state_dim)
     plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission))
-    plt.savefig(os.path.join(save_dir,'emission_map_on_support_of_all_states'))
-
+    # plt.savefig(os.path.join(save_dir,'emission_map_on_support_of_all_states'))
+    plt.show()
+    plt.scatter(range(args.seq_length), state_seqs[0])
+    plt.show()
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
     avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(obs_seq, 
@@ -56,8 +58,8 @@ def main(args, save_dir):
     # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, obs_dim=args.obs_dim)
 
     trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, args.num_samples)
-    params, avg_elbos = trainer.multi_fit(key_phi, obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
-    utils.plot_training_curves(avg_elbos, save_dir, avg_evidence)
+    params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_phi, obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
+    utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
     utils.save_params(params, f'phi_every_{args.store_every}_epochs', save_dir)
 
 if __name__ == '__main__':
@@ -69,26 +71,26 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'nonlinear_model_linear_var'
+    experiment_name = 'nonlinear_linearVI'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     os.mkdir(save_dir)
 
 
-    args.seed_theta = 1327
+    args.seed_theta = 1330
     args.seed_phi = 4569
 
     args.state_dim, args.obs_dim = 1,1 
     args.transition_matrix_conditionning = 'diagonal'
-    args.hidden_layer_sizes = (4,4,4,4)
-    args.slope = 0.8
+    args.hidden_layer_sizes = ()
+    args.slope = 0
 
-    args.seq_length = 16
-    args.num_seqs = 6400
+    args.seq_length = 32
+    args.num_seqs = 12800
 
     args.optimizer = 'adam'
     args.batch_size = 64
     args.learning_rate = 1e-2
-    args.num_epochs = 200
+    args.num_epochs = 400
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     

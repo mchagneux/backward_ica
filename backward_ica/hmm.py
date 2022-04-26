@@ -31,9 +31,8 @@ _conditionnings = {'diagonal':lambda param: jnp.diag(param),
 def linear_map(input, params):
     return params.matrix @ input + params.bias 
 
-def nonlinear_map(input, params):
-    return params[0]*input + jnp.sin(params[1]*jnp.exp(-(input-params[2])**params[3]))
-
+def nonlinear_map(params, input):
+    return xtanh(params)(input)
 
 def xtanh(slope):
     return lambda x: jnp.tanh(x) + slope*x
@@ -43,7 +42,7 @@ def neural_map(input, hidden_layer_sizes, slope, out_dim):
 
     net = hk.nets.MLP((*hidden_layer_sizes, out_dim), 
                     with_bias=False, 
-                    activate_final=False, 
+                    activate_final=True, 
                     w_init=hk.initializers.Orthogonal(),
                     activation=xtanh(slope))
 
@@ -71,10 +70,15 @@ class GaussianKernel:
         self.in_dim = in_dim
         self.out_dim = out_dim 
 
+        # if hidden_layer_sizes == 0: 
+        #     self.map_apply = vmap(nonlinear_map, in_axes=(None,0))
+        #     self.map_init_params = lambda key, input: slope
+        # else: 
         self.map_init_params, self.map_apply = hk.without_apply_rng(hk.transform(partial(neural_map, hidden_layer_sizes=hidden_layer_sizes, slope=slope, out_dim=self.out_dim)))
+        
         self.map_init_params = Partial(self.map_init_params)
         self.map_apply = Partial(self.map_apply)
-        # self.map_apply = Partial(vmap(nonlinear_map, in_axes=(0,None)))  
+
 
     def map(self, state, params):
         return self.map_apply(params.map_params, state)
@@ -126,7 +130,7 @@ class LinearGaussianKernel:
         subkeys = random.split(key, 3)
 
         if self.matrix_conditionning == 'diagonal':
-            matrix = random.uniform(subkeys[0], shape=(self.in_dim,))
+            matrix = random.uniform(subkeys[0], shape=(self.in_dim,), minval=-1, maxval=1)
         else: 
             matrix = random.uniform(subkeys[0], shape=(self.out_dim, self.in_dim))
 
@@ -168,7 +172,7 @@ class GaussianHMM:
     def get_random_params(self, key):
 
         key, *subkeys = random.split(key, 3)
-        prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,)), 
+        prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,), minval=-2, maxval=2), 
                                     cov_base=GaussianHMM.default_prior_cov_base * jnp.ones((self.state_dim,)))
         subkeys = random.split(key, 2)
 

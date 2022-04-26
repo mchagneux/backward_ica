@@ -196,20 +196,22 @@ def load_train_logs(save_dir):
 
 def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, save_dir):
 
+    colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
 
     num_fits = len(avg_elbos)
     for fit_nb in range(num_fits):
         plt.yscale('symlog')
-        plt.plot(avg_elbos[fit_nb], label='$\mathcal{L}(\\theta,\\phi)$')
-        plt.axhline(y=avg_evidence, c='red', label = '$log p_{\\theta}(x)$')
-        for epoch_nb in stored_epoch_nbs[len(stored_epoch_nbs)-2:]:
-            plt.axvline(x=epoch_nb, c='b', linestyle='dashed')
+        ydata = avg_elbos[fit_nb]
+        plt.plot(range(1,len(ydata)), ydata[1:], label='$\mathcal{L}(\\theta,\\phi)$', c='black')
+        plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
+        idx_color = 0
+        for epoch_nb in stored_epoch_nbs[len(stored_epoch_nbs)-3:]:
+            plt.axvline(x=epoch_nb, linestyle='dashed', c=colors[idx_color])
+            idx_color+=1
 
         plt.xlabel('Epoch') 
-        if fit_nb == best_fit_idx: plt.title(f'Fit {fit_nb}, best')
-        else: plt.title(f'Fit {fit_nb}')
-
         plt.legend()
+        
         if fit_nb == best_fit_idx: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}(best)'))
         else: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}'))
         plt.clf()

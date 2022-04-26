@@ -17,11 +17,12 @@ def main(args, save_dir):
                             obs_dim=args.obs_dim, 
                             transition_matrix_conditionning=args.transition_matrix_conditionning) # specify the structure of the true model
                         
-    key_params, key_gen = jax.random.split(key_theta, 2)
-    theta = p.get_random_params(key_params) # sample params randomly (but covariances are fixed to default values)
+    key, subkey = jax.random.split(key_theta, 2)
+    theta = p.get_random_params(subkey) # sample params randomly (but covariances are fixed to default values)
     utils.save_params(theta, 'theta', save_dir)
 
-    obs_seqs = hmm.sample_multiple_sequences(key_gen, p.sample_seq, theta, args.num_seqs, args.seq_length)[1]
+    key, subkey = jax.random.split(key, 2)
+    obs_seqs = hmm.sample_multiple_sequences(subkey, p.sample_seq, theta, args.num_seqs, args.seq_length)[1]
 
     check_linear_gaussian_elbo(obs_seqs, p, theta)
     avg_evidence = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta))(obs_seqs))

@@ -31,7 +31,7 @@ def main(train_args, eval_args, save_dir):
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning)
 
     phi_at_multiple_epochs = utils.load_params(f'phi_every_{train_args.store_every}_epochs', save_dir)
-    phi_at_multiple_epochs = {k:v for k,v in phi_at_multiple_epochs.items() if k > 91}
+    phi_at_multiple_epochs = {k:v for k,v in phi_at_multiple_epochs.items() if k > 60}
 
     smoothing_q_phi = dict()
     for epoch_nb, phi in phi_at_multiple_epochs.items():
@@ -47,7 +47,7 @@ if __name__ == '__main__':
 
     eval_args = argparse.Namespace()
 
-    experiment_name = 'linear_model_2'
+    experiment_name = 'linear_model'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     train_args = utils.load_args('train_args',save_dir)
 
