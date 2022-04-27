@@ -65,6 +65,8 @@ def forget_gate_forward(obs, filt_state, out_dim):
 
     net = hk.nets.MLP((out_dim,), 
                     activation=nn.sigmoid, 
+                    w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                    b_init=hk.initializers.constant(1),
                     activate_final=True)
 
     return net(jnp.concatenate((obs, filt_state)))
@@ -72,7 +74,7 @@ def forget_gate_forward(obs, filt_state, out_dim):
 
 def filt_update_forward(obs, pred_state, out_dim):
     net = hk.nets.MLP((100,8,out_dim), 
-                    w_init=hk.initializers.Orthogonal(),
+                    w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                     activate_final=True)
     return net(jnp.concatenate((obs, pred_state)))
 
@@ -148,7 +150,7 @@ class LinearGaussianKernel:
         subkeys = random.split(key, 3)
 
         if self.matrix_conditionning == 'diagonal':
-            matrix = random.uniform(subkeys[0], shape=(self.in_dim,))
+            matrix = random.uniform(subkeys[0], shape=(self.in_dim,), minval=-1, maxval=1)
         else: 
             matrix = random.uniform(subkeys[0], shape=(self.out_dim, self.in_dim))
 
@@ -190,7 +192,7 @@ class GaussianHMM:
     def get_random_params(self, key):
 
         key, *subkeys = random.split(key, 3)
-        prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,)), 
+        prior_params = GaussianBaseParams(mean=random.uniform(subkeys[0], shape=(self.state_dim,), minval=-2, maxval=2), 
                                     cov_base=GaussianHMM.default_prior_cov_base * jnp.ones((self.state_dim,)))
         subkeys = random.split(key, 2)
 
