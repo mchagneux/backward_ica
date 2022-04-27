@@ -302,6 +302,7 @@ class SVITrainer:
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.q = q 
+        self.q.print_num_params()
         self.p = p 
         self.use_johnson = use_johnson
 
@@ -407,12 +408,14 @@ class SVITrainer:
 
         all_avg_elbos = []
         all_params = []
+        print('-- Starting training...')
         for fit_nb, key in enumerate(jax.random.split(key, num_fits)):
             params_key, monte_carlo_key = jax.random.split(key, 2)
             if self.use_johnson: 
                 aux_params = self.aux_init_params(params_key, data[0][0])
             else:
                 aux_params = None
+
             params, avg_elbos = self.fit(data, theta, self.q.get_random_params(params_key), aux_params, monte_carlo_key, store_every)
             all_avg_elbos.append(avg_elbos)
             all_params.append(params)

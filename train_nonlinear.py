@@ -23,20 +23,24 @@ def main(args, save_dir):
                             hidden_layer_sizes=args.hidden_layer_sizes,
                             slope=args.slope) # specify the structure of the true model
 
-    key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
-    theta = p.get_random_params(key_params) # sample params randomly (but covariances are fixed to default values)
+    key, subkey = jax.random.split(key_theta, 2)
+    theta = p.get_random_params(subkey) # sample params randomly (but covariances are fixed to default values)
     utils.save_params(theta, 'theta', save_dir)
 
-    state_seqs, obs_seqs = hmm.sample_multiple_sequences(key_gen, p.sample_seq, theta, args.num_seqs, args.seq_length)
+    key, subkey = jax.random.split(key, 2)
+    state_seqs, obs_seqs = hmm.sample_multiple_sequences(subkey, p.sample_seq, theta, args.num_seqs, args.seq_length)
 
-    # import matplotlib.pyplot as plt 
-    # test_points = jnp.linspace(state_seqs.min(),state_seqs.max(), 100).reshape(-1, args.state_dim)
-    # plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission))
-    # # plt.savefig(os.path.join(save_dir,'emission_map_on_support_of_all_states'))
-    # plt.show()
-    # plt.scatter(range(args.seq_length), state_seqs[0])
-    # plt.show()
-    smc_keys = jax.random.split(key_smc, args.num_seqs)
+    import matplotlib.pyplot as plt 
+    test_points = jnp.linspace(state_seqs.min(),state_seqs.max(), 100).reshape(-1, args.state_dim)
+    plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission))
+    plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
+    plt.clf()
+    plt.scatter(range(len(state_seqs[0])), state_seqs[0])
+    plt.savefig('example_states')
+
+    key, subkey = jax.random.split(key, 2)
+
+    smc_keys = jax.random.split(subkey, args.num_seqs)
 
     avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(obs_seq, 
                                                                         theta, 
@@ -47,13 +51,14 @@ def main(args, save_dir):
     print('Avg evidence:', avg_evidence)
 
 
-    q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
-                                obs_dim=args.obs_dim,
-                                transition_matrix_conditionning=args.transition_matrix_conditionning)
+    # q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
+    #                             obs_dim=args.obs_dim,
+    #                             transition_matrix_conditionning=args.transition_matrix_conditionning)
 
-    # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, obs_dim=args.obs_dim)
+    q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, obs_dim=args.obs_dim)
 
     trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, args.num_samples)
+
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_phi, obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
     utils.save_params(params, f'phi_every_{args.store_every}_epochs', save_dir)
@@ -62,15 +67,18 @@ if __name__ == '__main__':
 
     import argparse
     import os 
+    import sys
 
     args = argparse.Namespace()
 
-    experiment_name = 'nonlinear_linearVI'
+    experiment_name = 'nonlinear_p_theta_nonlinear_q_phi_2'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
+    
     os.mkdir(save_dir)
 
+    # sys.stdout = open(os.path.join(save_dir, 'train_logs.txt'), 'w')
 
-    args.seed_theta = 1330
+    args.seed_theta = 1326
     args.seed_phi = 4569
 
     args.state_dim, args.obs_dim = 1,1 
@@ -79,17 +87,17 @@ if __name__ == '__main__':
     args.slope = 0
 
     args.seq_length = 16
-    args.num_seqs = 6400
+    args.num_seqs = 12800
 
     args.optimizer = 'adam'
-    args.batch_size = 64
+    args.batch_size = 128
     args.learning_rate = 1e-2
-    args.num_epochs = 200
+    args.num_epochs = 150
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     
 
-    args.num_particles = 1000
+    args.num_particles = 2
     args.num_samples = 1
 
     # os.environ["XLA_FLAGS"] = f'--xla_force_host_platform_device_count={args.batch_size}'
@@ -97,3 +105,4 @@ if __name__ == '__main__':
 
     utils.save_args(args, 'train_args', save_dir)
     main(args, save_dir)
+    # sys.stdout.close()
