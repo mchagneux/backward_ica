@@ -1,7 +1,7 @@
 from collections import namedtuple
 from dataclasses import dataclass
-from jax import disable_jit, numpy as jnp, vmap, config, random, lax, jit
-from functools import partial
+from jax import disable_jit, numpy as jnp, vmap, config, random, lax, jit, scipy as jsp
+from functools import partial, update_wrapper
 from jax.tree_util import register_pytree_node_class, tree_multimap, tree_map
 from jax.scipy.linalg import solve_triangular, cho_solve, cho_factor
 import matplotlib.pyplot as plt
@@ -14,20 +14,92 @@ import pickle
 import argparse
 # Containers for parameters of various objects 
 
-KernelBaseParams = namedtuple('GaussianKernelBaseParams', ['map', 'cov_base'])
-KernelParams = namedtuple('GaussianKernelParams', ['map','cov_chol','cov','prec','log_det'])
+
+class lazy_property(object):
+    r"""
+    Used as a decorator for lazy loading of class attributes. This uses a
+    non-data descriptor that calls the wrapped method to compute the property on
+    first call; thereafter replacing the wrapped method into an instance
+    attribute.
+    """
+
+    def __init__(self, wrapped):
+        self.wrapped = wrapped
+        update_wrapper(self, wrapped)
+
+    # This is to prevent warnings from sphinx
+    def __call__(self, *args, **kwargs):
+        return self.wrapped(*args, **kwargs)
+
+    def __get__(self, instance, obj_type=None):
+        if instance is None:
+            return self
+        value = self.wrapped(instance)
+        setattr(instance, self.wrapped.__name__, value)
+        return value
+
+
+
+def cholesky_of_inverse(matrix):
+    # This formulation only takes the inverse of a triangular matrix
+    # which is more numerically stable.
+    # Refer to:
+    # https://nbviewer.jupyter.org/gist/fehiepsi/5ef8e09e61604f10607380467eb82006#Precision-to-scale_tril
+    tril_inv = jnp.swapaxes(
+        jnp.linalg.cholesky(matrix[..., ::-1, ::-1])[..., ::-1, ::-1], -2, -1
+    )
+    identity = jnp.broadcast_to(jnp.identity(matrix.shape[-1]), tril_inv.shape)
+    return jsp.linalg.solve_triangular(tril_inv, identity, lower=True)
+
+
+@register_pytree_node_class
+class CovParams:
+
+    def __init__(self, chol=None, cov=None, prec=None):
+
+        if cov is not None:
+            self.cov = cov
+            self.chol = jnp.linalg.cholesky(self.cov)
+        elif prec is not None:
+            self.prec = prec
+            self.chol = cholesky_of_inverse(self.prec)
+        elif chol is not None:
+            self.chol = chol
+        else:
+            raise ValueError()
+
+    @lazy_property
+    def cov(self):
+        return jnp.matmul(self.chol, jnp.swapaxes(self.chol, -1, -2))
+
+    @lazy_property
+    def prec(self):
+        identity = jnp.broadcast_to(
+            jnp.eye(self.chol.shape[-1]), self.chol.shape
+        )
+        return jsp.linalg.cho_solve((self.chol, True), identity)
+
+    def tree_flatten(self):
+        return self.chol, None
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, params):
+        chol = params
+        return cls(chol=chol)
+
+
+
+KernelBaseParams = namedtuple('KernelBaseParams', ['map', 'cov_base'])
+KernelParams = namedtuple('KernelParams', ['map','cov_params'])
 
 LinearMapParams = namedtuple('LinearMapParams', ['w', 'b'])
 
 GaussianBaseParams = namedtuple('GaussianBaseParams', ['mean', 'cov_base'])
-GaussianParams = namedtuple('GaussianParams', ['mean', 'cov', 'cov_chol', 'prec','log_det'])
+GaussianParams = namedtuple('GaussianParams', ['mean', 'cov_params'])
 
 HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
 NeuralSmootherParams = namedtuple('NeuralSmootherParams', ['prior','transition', 'filt_update', 'forget_gate'])
-
-FiltParams = namedtuple('FiltParams', ['state', 'mean', 'cov', 'log_det'])
-BackwardParams = namedtuple('BackwardParams', ['matrix', 'bias', 'cov', 'log_det'])
 
 
 def tree_prepend(prep, tree):
@@ -82,7 +154,6 @@ def inv_from_chol(mat_chol):
     return cho_solve(c_and_lower=(mat_chol,True), 
                 b=jnp.eye(mat_chol.shape[0]))
 
-
 def log_det_from_cov(cov):
     return log_det_from_chol(jnp.linalg.cholesky(cov))
 
@@ -97,19 +168,6 @@ def cov_params_from_cov(cov):
     cov_chol = jnp.linalg.cholesky(cov)
     return cov, cov_chol, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
 
-# @dataclass(frozen=True, init=True)
-# @register_pytree_node_class
-# class HMMParams:
-#     prior:Any
-#     transition:Any 
-#     emission:Any
-
-#     def tree_flatten(self):
-#         return ((self.prior, self.transition, self.emission), None) 
-
-#     @classmethod
-#     def tree_unflatten(cls, aux_data, children):
-#         return cls(*children)
 
 @dataclass(init=True)
 @register_pytree_node_class

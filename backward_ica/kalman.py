@@ -29,13 +29,13 @@ def kalman_update(pred_mean, pred_cov, obs, emission_params):
 def kalman_filter_seq(obs_seq, hmm_params):
 
     def log_l_term(pred_mean, pred_cov, obs, emission_params):
-        B, b, R = *emission_params.map, emission_params.cov
+        B, b, R = *emission_params.map, emission_params.cov_params.cov
         return jax_gaussian_logpdf(x=obs, 
                             mean=B @ pred_mean + b , 
                             cov=B @ pred_cov @ B.T + R)
 
-    init_filt_mean, init_filt_cov = kalman_init(obs_seq[0], hmm_params.prior.mean, hmm_params.prior.cov, hmm_params.emission)
-    loglikelihood = log_l_term(hmm_params.prior.mean, hmm_params.prior.cov, obs_seq[0], hmm_params.emission)
+    init_filt_mean, init_filt_cov = kalman_init(obs_seq[0], hmm_params.prior.mean, hmm_params.prior.cov_params.cov, hmm_params.emission)
+    loglikelihood = log_l_term(hmm_params.prior.mean, hmm_params.prior.cov_params.cov, obs_seq[0], hmm_params.emission)
 
     @jit
     def _filter_step(carry, x):

@@ -47,7 +47,7 @@ if __name__ == '__main__':
     import os 
     args = argparse.Namespace()
 
-    experiment_name = 'linear_model'
+    experiment_name = 'linear_model_refactor'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     os.mkdir(save_dir)
 

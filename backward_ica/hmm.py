@@ -108,12 +108,13 @@ class Gaussian:
 
     @staticmethod
     def sample(key, params):
-        mean, cov = params[:2]
-        return mean + jnp.linalg.cholesky(cov) @ random.normal(key, (cov.shape[0],))
+        mean, cov_params = params
+        return mean + cov_params.chol @ random.normal(key, (cov_params.chol.shape[0],))
     
     @staticmethod
     def logpdf(x, params):
-        return gaussian_logpdf(x, *params[:2])
+        mean, cov_params = params
+        return gaussian_logpdf(x, mean, cov_params.cov)
 
     @staticmethod
     def get_random_params(key, dim, default_cov_base):
@@ -123,8 +124,7 @@ class Gaussian:
 
     @staticmethod
     def format_params(params):
-        cov_chol = jnp.diag(params.cov_base)
-        return GaussianParams(params.mean, *cov_params_from_cov_chol(cov_chol))
+        return GaussianParams(params.mean, CovParams(chol=jnp.diag(params.cov_base)))
 
 @register_pytree_node_class
 class Kernel:
@@ -156,10 +156,10 @@ class Kernel:
         return self.apply_map(params.map, state)
     
     def sample(self, key, state, params):
-        return self.noise_sample(key, (self.map(state, params), params.cov))
+        return self.noise_sample(key, (self.map(state, params), params.cov_params))
 
     def logpdf(self, x, state, params):
-        return self.noise_logpdf(x, (self.map(state, params), params.cov))
+        return self.noise_logpdf(x, (self.map(state, params), params.cov_params))
 
     def get_random_params(self, key, default_cov_base=None):
         subkeys = random.split(key, 2)
@@ -168,7 +168,7 @@ class Kernel:
     
     def format_params(self, params):
         return KernelParams(self.format_map_params(params.map),
-                            *cov_params_from_cov_chol(jnp.diag(params.cov_base)))
+                            CovParams(jnp.diag(params.cov_base)))
     
     def tree_flatten(self):
         return ((self.in_dim, self.out_dim, self.apply_map, self.init_map_params, self.format_map_params, self.noise_sample, self.noise_logpdf), None)
@@ -306,20 +306,20 @@ class LinearGaussianHMM(HMM, BackwardSmoother):
 
     def init_filt_state(self, obs, params):
 
-        mean, cov =  kalman_init(obs, params.prior.mean, params.prior.cov, params.emission)
+        mean, cov =  kalman_init(obs, params.prior.mean, params.prior.cov_params.cov, params.emission)
 
-        return FiltParams(None, mean, cov, log_det_from_cov(cov))
+        return GaussianParams(mean, CovParams(cov=cov))
 
     def new_filt_state(self, obs, filt_state, params):
-        pred_mean, pred_cov = kalman_predict(filt_state.mean, filt_state.cov, params.transition)
+        pred_mean, pred_cov = kalman_predict(filt_state.mean, filt_state.cov_params.cov, params.transition)
         mean, cov = kalman_update(pred_mean, pred_cov, obs, params.emission)
 
-        return FiltParams(None, mean, cov, log_det_from_cov(cov))
+        return GaussianParams(mean, CovParams(cov=cov))
 
     def new_backwd_state(self, filt_state, params):
 
-        A, a, Q = params.transition.matrix, params.transition.bias, params.transition.cov
-        mu, Sigma = filt_state.mean, filt_state.cov
+        A, a, Q = *params.transition.map, params.transition.cov_params.cov
+        mu, Sigma = filt_state.mean, filt_state.cov_params.cov
         I = jnp.eye(self.state_dim)
 
         k_chol_inv = inv_of_chol(A @ Sigma @ A.T)
@@ -331,7 +331,7 @@ class LinearGaussianHMM(HMM, BackwardSmoother):
         a_back = mu @ C - K @ a
         cov_back = C @ Sigma
 
-        return BackwardParams(A_back, a_back, cov_back, log_det_from_cov(cov_back))
+        return KernelParams(LinearMapParams(A_back, a_back), CovParams(cov=cov_back))
 
     def likelihood_seq(self, obs_seq, params, *args):
         return kalman_filter_seq(obs_seq, self.format_params(params))[-1]
@@ -346,7 +346,7 @@ class LinearGaussianHMM(HMM, BackwardSmoother):
 
         def backwd_from_filt(filt_state):
 
-            A, a, Q = params.transition.matrix, params.transition.bias, params.transition.cov
+            A, a, Q = *params.transition.map, params.transition.cov_params.cov
             I = jnp.eye(self.state_dim)
             mu, Sigma = filt_state
 

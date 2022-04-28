@@ -46,8 +46,8 @@ def constant_terms_from_log_gaussian(dim:int, log_det:float)->float:
 def transition_term_integrated_under_backward(q_backwd_state, transition_params):
     # expectation of the quadratic form that appears in the log of the state transition density
 
-    A = transition_params.matrix @ q_backwd_state.matrix - jnp.eye(transition_params.cov.shape[0])
-    b = transition_params.matrix @ q_backwd_state.bias + transition_params.bias
+    A = transition_params.map.w @ q_backwd_state.matrix - jnp.eye(transition_params.cov.shape[0])
+    b = transition_params.map.w @ q_backwd_state.bias + transition_params.map.b
     Omega = transition_params.prec
     
     result = -0.5 * QuadTerm.from_A_b_Omega(A, b, Omega)
@@ -78,8 +78,8 @@ def quadratic_term_from_log_gaussian(gaussian_params):
     return result
 
 def get_tractable_emission_term(obs, emission_params):
-    A = emission_params.matrix
-    b = emission_params.bias - obs
+    A = emission_params.map.w
+    b = emission_params.map.b - obs
     Omega = emission_params.prec
     emission_term = -0.5*QuadTerm.from_A_b_Omega(A, b, Omega)
     emission_term.c += constant_terms_from_log_gaussian(emission_params.cov.shape[0], emission_params.log_det)
@@ -343,8 +343,6 @@ class LinearGaussianTowerELBO:
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \
                     + 0.5*self.p.state_dim
     
-
-
     
 class SVITrainer:
 
