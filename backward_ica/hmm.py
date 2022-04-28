@@ -153,7 +153,7 @@ class Kernel:
         self.noise_sample, self.noise_logpdf = Partial(noise_dist.sample), Partial(noise_dist.logpdf)
         
     def map(self, state, params):
-        return self.apply_map(params.map_params, state)
+        return self.apply_map(params.map, state)
     
     def sample(self, key, state, params):
         return self.noise_sample(key, (self.map(state, params), params.cov))
@@ -163,11 +163,11 @@ class Kernel:
 
     def get_random_params(self, key, default_cov_base=None):
         subkeys = random.split(key, 2)
-        return KernelBaseParams(map_params=self.init_map_params(subkeys[0], jnp.empty((self.in_dim,))),
-                                cov_base=default_cov_base * jnp.ones((self.out_dim,)))
+        return KernelBaseParams(self.init_map_params(subkeys[0], jnp.empty((self.in_dim,))),
+                                default_cov_base * jnp.ones((self.out_dim,)))
     
     def format_params(self, params):
-        return KernelParams(self.format_map_params(params.map_params),
+        return KernelParams(self.format_map_params(params.map),
                             *cov_params_from_cov_chol(jnp.diag(params.cov_base)))
     
     def tree_flatten(self):

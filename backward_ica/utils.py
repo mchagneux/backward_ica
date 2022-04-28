@@ -14,8 +14,8 @@ import pickle
 import argparse
 # Containers for parameters of various objects 
 
-KernelBaseParams = namedtuple('GaussianKernelBaseParams', ['map_params', 'cov_base'])
-KernelParams = namedtuple('GaussianKernelParams', ['map_params','cov_chol','cov','prec','log_det'])
+KernelBaseParams = namedtuple('GaussianKernelBaseParams', ['map', 'cov_base'])
+KernelParams = namedtuple('GaussianKernelParams', ['map','cov_chol','cov','prec','log_det'])
 
 LinearMapParams = namedtuple('LinearMapParams', ['w', 'b'])
 
