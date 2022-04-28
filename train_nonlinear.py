@@ -52,11 +52,11 @@ def main(args, save_dir):
     print('Avg evidence:', avg_evidence)
 
 
-    q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
-                                obs_dim=args.obs_dim,
-                                transition_matrix_conditionning=args.transition_matrix_conditionning)
+    # q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
+    #                             obs_dim=args.obs_dim,
+    #                             transition_matrix_conditionning=args.transition_matrix_conditionning)
 
-    # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, obs_dim=args.obs_dim)
+    q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, obs_dim=args.obs_dim)
 
     trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, args.num_samples)
 
@@ -72,7 +72,7 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'nonlinear_p_theta_linear_q_phi_3'
+    experiment_name = 'nonlinear_p_theta_nonlinear_q_phi_3'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     
     os.mkdir(save_dir)

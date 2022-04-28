@@ -1,3 +1,4 @@
+from turtle import back
 import jax
 import optax
 from jax import vmap, lax, config, numpy as jnp
@@ -95,7 +96,76 @@ def get_tractable_emission_term_from_natparams(emission_natparams):
 
 class GeneralELBO:
 
-    def __init__(self, p:GaussianHMM, q:LinearBackwardSmoother, num_samples=200):
+    def __init__(self, p:GaussianHMM, q:BackwardSmoother, num_samples=200):
+
+        self.p = p
+        self.q = q
+        self.num_samples = num_samples
+
+    def __call__(self, obs_seq, theta:HMMParams, phi, *args):
+
+        _, key = args
+
+        def _forward_pass(obs_seq, phi):
+            init_filt_state = self.q.init_filt_state(obs_seq[0], phi)
+
+            def _forward_step(carry, x):
+                phi, filt_state = carry
+                obs = x
+                backwd_state = self.q.new_backwd_state(filt_state, phi)
+                filt_state = self.q.new_filt_state(obs, filt_state, phi)
+                return filt_state, backwd_state
+            
+            return lax.scan(_forward_step, init=(phi, init_filt_state), xs=obs_seq[1:])
+
+        def _monte_carlo(obs_seq, normal_sample_seq, last_filt_state, backwd_state_seq, theta, phi):
+
+            filt_mean, filt_cov_chol = mean_cov_chol_from_vec(last_filt_state, self.q.state_dim)
+
+            last_sample = filt_mean + filt_cov_chol @ normal_sample_seq[-1]
+
+            def _sample_step(carry, x):
+                next_sample, theta, phi = carry
+
+                obs, backwd_state, normal_sample = x
+
+                emission_term_p = self.p.emission_kernel.logpdf(next_obs, self.p.emission_kernel.map(next_sample, theta), theta)
+                sample = self.q.backwd_kernel.map(next_sample, backwd_state.mean) + jnp.linalg.cholesky(backwd_state.cov) @ normal_sample
+                transition_term_p = self.p.transition_kernel.logpdf(next_sample, self.p.transition_kernel.map(sample, theta), theta)
+                backwd_term_q = self.q.backwd_kernel.logpdf(sample, self.q.backwd_kernel.map(next_sample, phi), phi)
+
+                return sample, emission_term_p  + transition_term_p - backwd_term_q
+            
+            init_sample, terms = lax.scan(_sample_step, init=last_sample, xs=(backwd_state_seq, normal_samples[:-1]), reverse=True)
+            
+
+            
+        last_filt_state, backwd_state_seq = _forward_pass(obs_seq, phi)
+
+        normal_samples = normal(key, shape=(self.num_samples, obs_seq.shape[0], self.p.state_dim))
+
+        return vmap(_monte_carlo, in_axes=(0,None,None,None,None))(normal_samples, last_filt_state, backwd_state_seq, theta, phi)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class BackwardLinearTowerELBO:
+
+    def __init__(self, p:GaussianHMM, q:BackwardSmoother, num_samples=200):
         self.p = p
         self.q = q
         self.num_samples = num_samples
@@ -177,9 +247,9 @@ class GeneralELBO:
                         
         return reconstruction_term + kl_term
 
-class JohnsonELBO:
+class JohnsonTowerELBO:
 
-    def __init__(self, p:GaussianHMM, q:LinearBackwardSmoother, aux_map, num_samples=200):
+    def __init__(self, p:GaussianHMM, q:BackwardSmoother, aux_map, num_samples=200):
 
         self.p = p
         self.q = q
@@ -252,7 +322,7 @@ class JohnsonELBO:
                         
         return kl_term + aux_reconstruction_term, kl_term + reconstruction_term
 
-class LinearGaussianELBO:
+class LinearGaussianTowerELBO:
 
     def __init__(self, p:GaussianHMM, q:LinearGaussianHMM):
         self.p = p
@@ -290,9 +360,10 @@ class LinearGaussianELBO:
     
 
 
+    
 class SVITrainer:
 
-    def __init__(self, p:GaussianHMM, q:LinearBackwardSmoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, use_johnson=False):
+    def __init__(self, p:GaussianHMM, q:BackwardSmoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, use_johnson=False):
 
 
         # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
@@ -307,15 +378,15 @@ class SVITrainer:
         self.use_johnson = use_johnson
 
         if isinstance(self.p, LinearGaussianHMM):
-            elbo = LinearGaussianELBO(self.p, self.q)
+            elbo = LinearGaussianTowerELBO(self.p, self.q)
             self.get_montecarlo_keys = get_dummy_keys
         else: 
             if self.use_johnson:
                 self.aux_init_params, aux_map = init_rep_net_forward(self.p.state_dim, self.p.obs_dim)
-                elbo = JohnsonELBO(self.p, self.q, aux_map, num_samples)
+                elbo = JohnsonTowerELBO(self.p, self.q, aux_map, num_samples)
                 self.get_montecarlo_keys = get_keys
             else: 
-                elbo = GeneralELBO(self.p, self.q, num_samples)
+                elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
                 self.get_montecarlo_keys = get_keys
 
         
@@ -433,7 +504,7 @@ class SVITrainer:
 
 
 def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, theta):
-    evidence_via_elbo_on_seq = lambda seq: LinearGaussianELBO(p,p)(seq, p.format_params(theta), p.format_params(theta))
+    evidence_via_elbo_on_seq = lambda seq: LinearGaussianTowerELBO(p,p)(seq, p.format_params(theta), p.format_params(theta))
     evidence_via_kalman_on_seq = lambda seq: p.likelihood_seq(seq, theta)
     print('ELBO sanity check:',jnp.abs(jnp.mean(jax.vmap(evidence_via_elbo_on_seq)(data) - jax.vmap(evidence_via_kalman_on_seq)(data))))
 
