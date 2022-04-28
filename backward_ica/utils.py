@@ -20,7 +20,7 @@ KernelParams = namedtuple('GaussianKernelParams', ['map_params','cov_chol','cov'
 LinearMapParams = namedtuple('LinearMapParams', ['w', 'b'])
 
 GaussianBaseParams = namedtuple('GaussianBaseParams', ['mean', 'cov_base'])
-GaussianParams = namedtuple('GaussianParams', ['mean', 'cov_chol','cov','prec','log_det'])
+GaussianParams = namedtuple('GaussianParams', ['mean', 'cov', 'cov_chol', 'prec','log_det'])
 
 HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
@@ -91,11 +91,11 @@ def log_det_from_chol(chol):
 
 def cov_params_from_cov_chol(cov_chol):
     cov = cov_chol @ cov_chol.T 
-    return cov_chol, cov, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
+    return cov, cov_chol, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
 
 def cov_params_from_cov(cov):
     cov_chol = jnp.linalg.cholesky(cov)
-    return cov_chol, cov, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
+    return cov, cov_chol, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
 
 # @dataclass(frozen=True, init=True)
 # @register_pytree_node_class

@@ -5,30 +5,31 @@ from jax import lax
 from functools import partial
 
 from backward_ica.utils import tree_prepend
+
 def exp_and_normalize(x):
 
     x = jnp.exp(x - x.max())
     return x / x.sum()
 
-def smc_init(prior_keys, obs, prior_sampler, emission_kernel, prior_params, emission_params):
+def smc_init(prior_key, obs, prior_sampler, emission_kernel, prior_params, emission_params, num_particles):
 
-    particles = vmap(prior_sampler, in_axes=(0,None))(prior_keys, prior_params)
+    particles = vmap(prior_sampler, in_axes=(0,None))(random.split(prior_key, num_particles), prior_params)
     log_probs = smc_update(particles, obs, emission_kernel, emission_params)
     return log_probs, particles
+
 
 def smc_predict(resampling_key, proposal_key, log_probs, particles, transition_kernel, transition_params):
 
     particles = resample(resampling_key, log_probs, particles)
 
-    mapped_particles = transition_kernel.map(particles, transition_params)
-    particles = transition_kernel.sample(proposal_key, mapped_particles, transition_params)
+    particles = vmap(transition_kernel.sample, in_axes=(0,0,None))(random.split(proposal_key, len(particles)), particles, transition_params)
 
     return particles
 
 def smc_update(particles, obs, emission_kernel, emission_params):
 
     log_probs = vmap(emission_kernel.logpdf, in_axes=(None, 0, None))(obs, 
-                                                                    emission_kernel.map(particles, emission_params), 
+                                                                    particles, 
                                                                     emission_params)
     return log_probs
 
@@ -42,24 +43,25 @@ def resample(key, log_probs, particles):
 def smc_filter_seq(key, obs_seq, params, prior_sampler, transition_kernel, emission_kernel, num_particles):
 
     prior_key, proposal_key, resampling_key = random.split(key,3)
-    prior_keys = random.split(prior_key, num_particles)
-    proposal_keys = random.split(proposal_key, len(obs_seq) - 1)
-
-    init_log_probs, init_particles = smc_init(prior_keys, obs_seq[0], prior_sampler, emission_kernel, params.prior, params.emission)
+    
+    init_log_probs, init_particles = smc_init(prior_key, obs_seq[0], prior_sampler, emission_kernel, params.prior, params.emission, num_particles)
     likel = compute_pred_likel(init_log_probs)
 
     @jit 
     def _filter_step(carry, x):
-        log_probs, particles, likel, resampling_key = carry
-        obs, proposal_key = x
+        log_probs, particles, likel = carry
+        obs, proposal_key, resampling_key = x
         particles = smc_predict(resampling_key, proposal_key, log_probs, particles, transition_kernel, params.transition)
         log_probs = smc_update(particles, obs, emission_kernel, params.emission)
-        likel+=compute_pred_likel(log_probs)
-        return (log_probs, particles, likel, resampling_key), None
+        likel += compute_pred_likel(log_probs)
+        return (log_probs, particles, likel), None
+
+    proposal_keys = random.split(proposal_key, len(obs_seq) - 1)
+    resampling_keys = random.split(resampling_key, len(obs_seq) - 1)
 
     terminal_log_probs, terminal_particles, likel = lax.scan(_filter_step, 
-                                                init=(init_log_probs, init_particles, likel, resampling_key), 
-                                                xs=(obs_seq[1:], proposal_keys))[0][:-1]
+                                                init=(init_log_probs, init_particles, likel), 
+                                                xs=(obs_seq[1:], proposal_keys, resampling_keys))[0]
 
     return terminal_log_probs, terminal_particles, likel - len(obs_seq)*jnp.log(num_particles)
 
@@ -100,22 +102,23 @@ def smc_compute_filt_seq(key, obs_seq, params, prior_sampler, transition_kernel,
 
 
     prior_key, proposal_key, resampling_key = random.split(key,3)
-    prior_keys = random.split(prior_key, num_particles)
-    proposal_keys = random.split(proposal_key, len(obs_seq) - 1)
+    
+    init_log_probs, init_particles = smc_init(prior_key, obs_seq[0], prior_sampler, emission_kernel, params.prior, params.emission, num_particles)
 
-    init_log_probs, init_particles = smc_init(prior_keys, obs_seq[0], prior_sampler, emission_kernel, params.prior, params.emission)
-
-    @jit
+    @jit 
     def _filter_step(carry, x):
-        log_probs, particles, resampling_key = carry
-        obs, proposal_key = x
+        log_probs, particles = carry
+        obs, proposal_key, resampling_key = x
         particles = smc_predict(resampling_key, proposal_key, log_probs, particles, transition_kernel, params.transition)
         log_probs = smc_update(particles, obs, emission_kernel, params.emission)
-        return (log_probs, particles, resampling_key), (log_probs, particles)
+        return (log_probs, particles), (log_probs, particles)
+
+    proposal_keys = random.split(proposal_key, len(obs_seq) - 1)
+    resampling_keys = random.split(resampling_key, len(obs_seq) - 1)
 
     log_probs, particles = lax.scan(_filter_step, 
-                                                init=(init_log_probs, init_particles, resampling_key), 
-                                                xs=(obs_seq[1:], proposal_keys))[1]
+                                    init=(init_log_probs, init_particles), 
+                                    xs=(obs_seq[1:], proposal_keys, resampling_keys))[1]
 
     return tree_prepend(init_log_probs, log_probs), tree_prepend(init_particles, particles)
 
@@ -123,25 +126,28 @@ def smc_smooth_from_filt_seq(key, filt_seq, params, transition_kernel):
 
     log_probs_seq, particles_seq = filt_seq
 
-    proposal_keys = random.split(key, len(particles_seq[0]))
-
     @jit
-    def _sample_path(proposal_key, log_probs_seq, particles_seq):
+    def _sample_path(key, log_probs_seq, particles_seq):
 
-        last_sample = random.choice(proposal_key, a=particles_seq[-1], p=exp_and_normalize(log_probs_seq[-1]))
+        path_keys = random.split(key, len(particles_seq))
+
+        last_sample = random.choice(path_keys[-1], a=particles_seq[-1], p=exp_and_normalize(log_probs_seq[-1]))
 
         def _step(carry, x):
-            next_sample, proposal_key = carry 
-            log_probs, particles = x 
-            log_probs_backwd = log_probs + transition_kernel.logpdf(next_sample, transition_kernel.map(particles, params.transition), params.transition)
-            sample = random.choice(proposal_key, a=particles, p=exp_and_normalize(log_probs_backwd))
-            return (sample, proposal_key), sample
+            next_sample = carry 
+            log_probs, particles, key = x 
+            log_probs_backwd = log_probs + vmap(transition_kernel.logpdf, in_axes=(None, 0, None))(next_sample, particles, params.transition)
+            sample = random.choice(key, a=particles, p=exp_and_normalize(log_probs_backwd))
+            return sample, sample
 
-        samples = lax.scan(_step, init=(last_sample, proposal_key), xs=(log_probs_seq[:-1], particles_seq[:-1]), reverse=True)[1]
+        samples = lax.scan(_step, init=last_sample, xs=(log_probs_seq[:-1], particles_seq[:-1], path_keys[:-1]), reverse=True)[1]
         
         return jnp.concatenate((samples, last_sample[None,:]))
-    
-    paths = vmap(_sample_path, in_axes=(0,None,None))(proposal_keys, log_probs_seq, particles_seq)
+
+    keys = random.split(key, len(particles_seq[0]))
+
+    paths = vmap(_sample_path, in_axes=(0,None,None))(keys, log_probs_seq, particles_seq)
+
     return jnp.mean(paths, axis=0), jnp.var(paths, axis=0)
     
 
