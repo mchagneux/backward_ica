@@ -148,21 +148,6 @@ def get_tractable_emission_term_from_natparams(emission_natparams):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class BackwardLinearTowerELBO:
 
     def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):

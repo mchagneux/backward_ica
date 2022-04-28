@@ -242,7 +242,8 @@ class HMM:
 
 class BackwardSmoother(metaclass=ABCMeta):
 
-    def __init__(self, backwd_kernel):
+    def __init__(self, backwd_kernel, filt_dist):
+        self.filt_dist = filt_dist
         self.backwd_kernel:Kernel = backwd_kernel
 
     @abstractmethod
@@ -301,7 +302,7 @@ class LinearGaussianHMM(HMM, BackwardSmoother):
                     transition_kernel_type, 
                     emission_kernel_type)
 
-        BackwardSmoother.__init__(self, backwd_kernel=Kernel)
+        BackwardSmoother.__init__(self, backwd_kernel=Kernel(state_dim, state_dim, ('linear', None)), filt_dist=Gaussian)
 
     def init_filt_state(self, obs, params):
 
@@ -378,61 +379,6 @@ class LinearGaussianHMM(HMM, BackwardSmoother):
                                 reverse=True)[1]
         
         return tree_append(means, last_filt_state_mean), tree_append(covs, last_filt_state_cov) 
-
-    def fit(self, params, data, optimizer, batch_size, num_epochs):
-                
-        loss = lambda seq, params: -self.likelihood_seq(seq, params)
-        
-        opt_state = optimizer.init(params)
-        num_seqs = data.shape[0]
-
-        @jax.jit
-        def batch_step(carry, x):
-            
-            def step(params, opt_state, batch):
-                neg_logl_value, grads = jax.vmap(jax.value_and_grad(loss, argnums=1), in_axes=(0,None))(batch, params)
-                avg_grads = jax.tree_util.tree_map(jnp.mean, grads)
-                updates, opt_state = optimizer.update(avg_grads, opt_state, params)
-                params = optax.apply_updates(params, updates)
-                return params, opt_state, jnp.mean(-neg_logl_value)
-
-            params, opt_state = carry
-            batch_start = x
-            batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, batch_size)
-            params, opt_state, avg_logl_batch = step(params, opt_state, batch_obs_seq)
-            return (params, opt_state), avg_logl_batch
-
-        def epoch_step(carry, x):
-            params, opt_state = carry
-            batch_start_indices = jnp.arange(0, num_seqs, batch_size)
-        
-
-            (params, opt_state), avg_logl_batches = jax.lax.scan(batch_step, 
-                                                                init=(params, opt_state), 
-                                                                xs=batch_start_indices)
-
-            return (params, opt_state), jnp.mean(avg_logl_batches)
-
-
-        (params, _), avg_logls = jax.lax.scan(epoch_step, init=(params, opt_state), xs=None, length=num_epochs)
-        
-        return params, avg_logls
-
-    def multi_fit(self, key, data, optimizer, batch_size, num_epochs, num_fits=5):
-
-        all_avg_logls = []
-        all_fitted_params = []
-        for fit_nb, key in enumerate(jax.random.split(key, num_fits)):
-            fitted_params, avg_logls = self.fit(self.get_random_params(key), data, optimizer, batch_size, num_epochs)
-            all_avg_logls.append(avg_logls)
-            all_fitted_params.append(fitted_params)
-            print(f'End of fit {fit_nb+1}/{num_fits}, final logl {avg_logls[-1]:.3f}')
-        array_to_sort = np.array([avg_logls[-1] for avg_logls in all_avg_logls])
-
-        array_to_sort[np.isnan(array_to_sort)] = -np.inf
-        best_optim = jnp.argmax(array_to_sort)
-        print(f'Best fit is {best_optim+1}.')
-        return all_fitted_params[best_optim], all_avg_logls
 
     def gaussianize_filt_state(self, filt_state, params):
         return filt_state
