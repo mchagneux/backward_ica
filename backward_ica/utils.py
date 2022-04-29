@@ -39,30 +39,60 @@ class lazy_property(object):
         return value
 
 
-
-def cholesky_of_inverse(matrix):
+def chol_from_prec(prec):
     # This formulation only takes the inverse of a triangular matrix
     # which is more numerically stable.
     # Refer to:
     # https://nbviewer.jupyter.org/gist/fehiepsi/5ef8e09e61604f10607380467eb82006#Precision-to-scale_tril
     tril_inv = jnp.swapaxes(
-        jnp.linalg.cholesky(matrix[..., ::-1, ::-1])[..., ::-1, ::-1], -2, -1
+        jnp.linalg.cholesky(prec[..., ::-1, ::-1])[..., ::-1, ::-1], -2, -1
     )
-    identity = jnp.broadcast_to(jnp.identity(matrix.shape[-1]), tril_inv.shape)
+    identity = jnp.broadcast_to(jnp.identity(prec.shape[-1]), tril_inv.shape)
     return jsp.linalg.solve_triangular(tril_inv, identity, lower=True)
+
+def cov_from_chol(chol):
+    return jnp.matmul(chol, jnp.swapaxes(chol, -1, -2))
+
+def cholesky(mat):
+    return jnp.linalg.cholesky(mat)
+
+def inv_from_chol(chol):
+
+    identity = jnp.broadcast_to(
+        jnp.eye(chol.shape[-1]), chol.shape)
+
+    return jsp.linalg.cho_solve((chol, True), identity)
+
+def log_det_from_cov(cov):
+    return log_det_from_chol(cholesky(cov))
+
+def log_det_from_chol(chol):
+    return jnp.sum(jnp.log(jnp.diagonal(chol)**2))
+
+def inv(mat):
+    return inv_from_chol(cholesky(mat))
+
+def inv_of_chol(mat):
+    return inv_of_chol_from_chol(cholesky(mat))
+
+def inv_of_chol_from_chol(mat_chol):
+    return solve_triangular(a=mat_chol, b=jnp.eye(mat_chol.shape[0]), lower=True)
+
+# def scale_params_from_chol(chol):
+#     return chol, cov_from_chol(chol), prec_from_chol(chol), log_det_from_chol(chol)
 
 
 @register_pytree_node_class
-class CovParams:
+class Scale:
 
     def __init__(self, chol=None, cov=None, prec=None):
 
         if cov is not None:
             self.cov = cov
-            self.chol = jnp.linalg.cholesky(self.cov)
+            self.chol = cholesky(cov)
         elif prec is not None:
             self.prec = prec
-            self.chol = cholesky_of_inverse(self.prec)
+            self.chol = chol_from_prec(prec)
         elif chol is not None:
             self.chol = chol
         else:
@@ -70,36 +100,49 @@ class CovParams:
 
     @lazy_property
     def cov(self):
-        return jnp.matmul(self.chol, jnp.swapaxes(self.chol, -1, -2))
+        return cov_from_chol(self.chol)
 
     @lazy_property
     def prec(self):
-        identity = jnp.broadcast_to(
-            jnp.eye(self.chol.shape[-1]), self.chol.shape
-        )
-        return jsp.linalg.cho_solve((self.chol, True), identity)
+        return inv_from_chol(self.chol)
+
+    @lazy_property
+    def log_det(self):
+        return log_det_from_chol(self.chol)
 
     def tree_flatten(self):
-        return self.chol, None
+        return ((self.chol,), None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, params):
-        chol = params
-        return cls(chol=chol)
+        return cls(*params)
 
 
 
-KernelBaseParams = namedtuple('KernelBaseParams', ['map', 'cov_base'])
-KernelParams = namedtuple('KernelParams', ['map','cov_params'])
+# @register_pytree_node_class
+# @dataclass(init=True)
+# class Scale:
 
+#     chol:jnp.ndarray = None
+#     cov:jnp.ndarray = None
+#     prec:jnp.ndarray = None
+#     log_det:float = None
+
+
+#     def tree_flatten(self):
+#         return (self.chol, self.cov, self.prec, self.log_det), None
+
+#     @classmethod
+#     def tree_unflatten(cls, aux_data, params):
+#         return cls(*params)
+
+
+KernelParams = namedtuple('KernelParams', ['map','scale'])
 LinearMapParams = namedtuple('LinearMapParams', ['w', 'b'])
-
-GaussianBaseParams = namedtuple('GaussianBaseParams', ['mean', 'cov_base'])
-GaussianParams = namedtuple('GaussianParams', ['mean', 'cov_params'])
-
+GaussianParams = namedtuple('GaussianParams', ['mean', 'scale'])
 HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
-NeuralSmootherParams = namedtuple('NeuralSmootherParams', ['prior','transition', 'filt_update', 'forget_gate'])
+# NeuralSmootherParams = namedtuple('NeuralSmootherParams', ['prior','transition', 'filt_update', 'forget_gate'])
 
 
 def tree_prepend(prep, tree):
@@ -107,7 +150,6 @@ def tree_prepend(prep, tree):
         lambda a, b: jnp.concatenate((a[None,:], b)), prep, tree
     )
     return preprended
-
 
 def tree_append(tree, app):
     appended = tree_multimap(
@@ -119,11 +161,9 @@ def tree_droplast(tree):
     '''Drop last index from each leaf'''
     return tree_map(lambda a: a[:-1], tree)
 
-
 def tree_dropfirst(tree):
     '''Drop first index from each leaf'''
     return tree_map(lambda a: a[1:], tree)
-
 
 def tree_get_idx(idx, tree):
     '''Get idx row from each leaf of tuple'''
@@ -133,40 +173,16 @@ def tree_get_slice(start, stop, tree):
     '''Get idx row from each leaf of tuple'''
     return tree_map(lambda a: a[start:stop], tree)
 
-def chol_from_inv(mat):
-    tril_inv = jnp.swapaxes(
-        jnp.linalg.cholesky(mat[..., ::-1, ::-1])[..., ::-1, ::-1], -2, -1
-    )
-    identity = jnp.broadcast_to(jnp.identity(mat.shape[-1]), tril_inv.shape)
-    return solve_triangular(tril_inv, identity, lower=True)
 
-def inv(mat):
-    return cho_solve(c_and_lower=cho_factor(mat, True), 
-                    b=jnp.eye(mat.shape[0]))
 
-def inv_of_chol(mat):
-    return inv_of_chol_from_chol(jnp.linalg.cholesky(mat))
 
-def inv_of_chol_from_chol(mat_chol):
-    return solve_triangular(a=mat_chol, b=jnp.eye(mat_chol.shape[0]), lower=True)
+# def cov_params_from_cov_chol(cov_chol):
+#     cov = cov_chol @ cov_chol.T 
+#     return cov, cov_chol, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
 
-def inv_from_chol(mat_chol):
-    return cho_solve(c_and_lower=(mat_chol,True), 
-                b=jnp.eye(mat_chol.shape[0]))
-
-def log_det_from_cov(cov):
-    return log_det_from_chol(jnp.linalg.cholesky(cov))
-
-def log_det_from_chol(chol):
-    return jnp.sum(jnp.log(jnp.diagonal(chol)**2))
-
-def cov_params_from_cov_chol(cov_chol):
-    cov = cov_chol @ cov_chol.T 
-    return cov, cov_chol, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
-
-def cov_params_from_cov(cov):
-    cov_chol = jnp.linalg.cholesky(cov)
-    return cov, cov_chol, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
+# def cov_params_from_cov(cov):
+#     cov_chol = jnp.linalg.cholesky(cov)
+#     return cov, cov_chol, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
 
 
 @dataclass(init=True)
@@ -209,14 +225,13 @@ class QuadTerm:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
-
-
 def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
     true_sequence, pred_means, pred_covs = true_sequence.squeeze()[:64], pred_means.squeeze()[:64], pred_covs.squeeze()[:64]
     time_axis = range(len(true_sequence))[:64]
     ax.errorbar(x=time_axis, fmt = '_', y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), label='Smoothed z, $1.96\\sigma$')
     ax.scatter(x=time_axis, marker = '_', y=true_sequence, c='r', label='True z')
     ax.set_xlabel('t')
+    ax.legend()
 
 def save_args(args, name, save_dir):
     with open(os.path.join(save_dir, f'{name}.json'), 'w') as f:
@@ -250,7 +265,6 @@ def load_train_logs(save_dir):
         train_logs = pickle.load(f)
     return train_logs
         
-
 def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, save_dir):
 
     colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
@@ -272,7 +286,6 @@ def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence
         if fit_nb == best_fit_idx: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}(best)'))
         else: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}'))
         plt.clf()
-
 
 def superpose_training_curves(train_logs_1, train_logs_2, name1, name2, save_dir):
 

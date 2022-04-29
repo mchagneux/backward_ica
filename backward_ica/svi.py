@@ -46,43 +46,43 @@ def constant_terms_from_log_gaussian(dim:int, log_det:float)->float:
 def transition_term_integrated_under_backward(q_backwd_state, transition_params):
     # expectation of the quadratic form that appears in the log of the state transition density
 
-    A = transition_params.map.w @ q_backwd_state.matrix - jnp.eye(transition_params.cov.shape[0])
-    b = transition_params.map.w @ q_backwd_state.bias + transition_params.map.b
-    Omega = transition_params.prec
+    A = transition_params.map.w @ q_backwd_state.map.w - jnp.eye(transition_params.scale.cov.shape[0])
+    b = transition_params.map.w @ q_backwd_state.map.b + transition_params.map.b
+    Omega = transition_params.scale.prec
     
     result = -0.5 * QuadTerm.from_A_b_Omega(A, b, Omega)
-    result.c += -0.5 * jnp.trace(transition_params.prec @ transition_params.matrix @ q_backwd_state.cov @ transition_params.matrix.T) \
-                + constant_terms_from_log_gaussian(transition_params.cov.shape[0], transition_params.log_det)
+    result.c += -0.5 * jnp.trace(transition_params.scale.prec @ transition_params.map.w @ q_backwd_state.scale.cov @ transition_params.map.w.T) \
+                + constant_terms_from_log_gaussian(transition_params.scale.cov.shape[0], transition_params.scale.log_det)
     return result 
 
 def expect_quadratic_term_under_backward(quad_form:QuadTerm, backwd_state):
     # the result is still a quadratic forms with new parameters, following the formula for expected values of quadratic forms  
 
-    W = backwd_state.matrix.T @ quad_form.W @ backwd_state.matrix
-    v = backwd_state.matrix.T @ (quad_form.v + (quad_form.W + quad_form.W.T) @ backwd_state.bias)
-    c = quad_form.c + jnp.trace(quad_form.W @ backwd_state.cov) + backwd_state.bias.T @ quad_form.W @ backwd_state.bias + quad_form.v.T @ backwd_state.bias 
+    W = backwd_state.map.w.T @ quad_form.W @ backwd_state.map.w
+    v = backwd_state.map.w.T @ (quad_form.v + (quad_form.W + quad_form.W.T) @ backwd_state.map.b)
+    c = quad_form.c + jnp.trace(quad_form.W @ backwd_state.scale.cov) + backwd_state.map.b.T @ quad_form.W @ backwd_state.map.b + quad_form.v.T @ backwd_state.map.b 
 
     return QuadTerm(W=W, v=v, c=c)
 
 def expect_quadratic_term_under_gaussian(quad_form:QuadTerm, gaussian_params):
-    return jnp.trace(quad_form.W @ gaussian_params.cov) + quad_form.evaluate(gaussian_params.mean)
+    return jnp.trace(quad_form.W @ gaussian_params.scale.cov) + quad_form.evaluate(gaussian_params.mean)
 
 def quadratic_term_from_log_gaussian(gaussian_params):
 
-    result = - 0.5 * QuadTerm(W=gaussian_params.prec, 
-                    v=-(gaussian_params.prec + gaussian_params.prec.T) @ gaussian_params.mean, 
-                    c=gaussian_params.mean.T @ gaussian_params.prec @ gaussian_params.mean)
+    result = - 0.5 * QuadTerm(W=gaussian_params.scale.prec, 
+                    v=-(gaussian_params.scale.prec + gaussian_params.scale.prec.T) @ gaussian_params.mean, 
+                    c=gaussian_params.mean.T @ gaussian_params.scale.prec @ gaussian_params.mean)
 
-    result.c += constant_terms_from_log_gaussian(gaussian_params.cov.shape[0], gaussian_params.log_det)
+    result.c += constant_terms_from_log_gaussian(gaussian_params.mean.shape[0], gaussian_params.scale.log_det)
 
     return result
 
 def get_tractable_emission_term(obs, emission_params):
     A = emission_params.map.w
     b = emission_params.map.b - obs
-    Omega = emission_params.prec
+    Omega = emission_params.scale.prec
     emission_term = -0.5*QuadTerm.from_A_b_Omega(A, b, Omega)
-    emission_term.c += constant_terms_from_log_gaussian(emission_params.cov.shape[0], emission_params.log_det)
+    emission_term.c += constant_terms_from_log_gaussian(emission_params.scale.cov.shape[0], emission_params.scale.log_det)
     return emission_term
 
 def get_tractable_emission_term_from_natparams(emission_natparams):
@@ -130,7 +130,7 @@ def get_tractable_emission_term_from_natparams(emission_natparams):
 #                 obs, backwd_state, normal_sample = x
 
 #                 emission_term_p = self.p.emission_kernel.logpdf(next_obs, self.p.emission_kernel.map(next_sample, theta), theta)
-#                 sample = self.q.backwd_kernel.map(next_sample, backwd_state.mean) + jnp.linalg.cholesky(backwd_state.cov) @ normal_sample
+#                 sample = self.q.backwd_kernel.map(next_sample, backwd_state.mean) + jnp.linalg.cholesky(backwd_state.scale.cov) @ normal_sample
 #                 transition_term_p = self.p.transition_kernel.logpdf(next_sample, self.p.transition_kernel.map(sample, theta), theta)
 #                 backwd_term_q = self.q.backwd_kernel.logpdf(sample, self.q.backwd_kernel.map(next_sample, phi), phi)
 
@@ -174,7 +174,7 @@ class BackwardLinearTowerELBO:
                         + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
 
 
-                kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.log_det) +  0.5 * self.p.state_dim
+                kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
                 q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
 
                 return (q_filt_state, kl_term), q_backwd_state
@@ -186,20 +186,20 @@ class BackwardLinearTowerELBO:
             q_last_filt_state = self.q.gaussianize_filt_state(q_last_filt_state, phi)
 
             kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state) \
-                        - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \
+                        - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
                         + 0.5*self.p.state_dim
 
             return kl_term, (q_last_filt_state, q_backwd_state_seq)
 
         kl_term, (q_last_filt_state, q_backwd_state_seq) = compute_kl_term(obs_seq)
 
-        means, covs = q_last_filt_state.mean, q_last_filt_state.cov 
-        A_backs, a_backs, cov_backs = q_backwd_state_seq.matrix, q_backwd_state_seq.bias, q_backwd_state_seq.cov
+        means, covs = q_last_filt_state.mean, q_last_filt_state.scale.cov 
+        A_backs, a_backs, cov_backs = q_backwd_state_seq.map.w, q_backwd_state_seq.map.b, q_backwd_state_seq.scale.cov
         marginal_means, marginal_covs = self.q.backwd_pass((means, covs), (A_backs, a_backs, cov_backs))
         
         def sample_from_marginal(normal_sample, marginal_mean, marginal_cov_chol, obs, theta):
             common_term = obs - self.p.emission_kernel.map(marginal_mean + marginal_cov_chol @ normal_sample, theta.emission).squeeze()
-            return -0.5 * (common_term.T @ theta.emission.prec @ common_term)
+            return -0.5 * (common_term.T @ theta.emission.scale.prec @ common_term)
 
 
         # def _sample_step(carry, x):
@@ -207,11 +207,11 @@ class BackwardLinearTowerELBO:
         #     matrix, bias, cov, obs, normal_sample = x
         #     current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
         #     common_term = obs - self.p.emission_kernel.map(jnp.atleast_2d(current_state_sample), theta.emission).squeeze()
-        #     return current_state_sample, -0.5 * (common_term.T @ theta.emission.prec @ common_term)
+        #     return current_state_sample, -0.5 * (common_term.T @ theta.emission.scale.prec @ common_term)
             
-        # matrices = jnp.concatenate((q_backwd_state_seq.matrix, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
-        # biases = jnp.concatenate((q_backwd_state_seq.bias, q_last_filt_state.mean[None,:]))
-        # covs = jnp.concatenate((q_backwd_state_seq.cov, q_last_filt_state.cov[None,:]))
+        # matrices = jnp.concatenate((q_backwd_state_seq.map.w, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
+        # biases = jnp.concatenate((q_backwd_state_seq.map.b, q_last_filt_state.mean[None,:]))
+        # covs = jnp.concatenate((q_backwd_state_seq.scale.cov, q_last_filt_state.scale.cov[None,:]))
 
         # sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
         #                                                 init=jnp.empty((self.p.state_dim,)), 
@@ -224,10 +224,10 @@ class BackwardLinearTowerELBO:
         monte_carlo_samples = vmap(vmap(sample_from_marginal, in_axes=(0,0,0,0,None)), in_axes=(0,None,None,None,None))(normal_samples, marginal_means, marginal_covs_chol, obs_seq, theta)
         
         reconstruction_term = jnp.sum(jnp.mean(monte_carlo_samples, axis=0)) + \
-             obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.cov.shape[0], theta.emission.log_det)
+             obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.scale.cov.shape[0], theta.emission.scale.log_det)
 
         # reconstruction_term = jnp.sum(jnp.mean(jax.vmap(sample_path)(normal_samples), axis=0)) \
-        #                     + obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.cov.shape[0], theta.emission.log_det)
+        #                     + obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.scale.cov.shape[0], theta.emission.scale.log_det)
 
                         
         return reconstruction_term + kl_term
@@ -264,7 +264,7 @@ class JohnsonTowerELBO:
                         + get_tractable_emission_term_from_natparams(self.aux_map(aux_params, obs))
 
 
-                kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.log_det) +  0.5 * self.p.state_dim
+                kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
                 q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
 
                 return (q_filt_state, kl_term, aux_reconstruction_term), q_backwd_state
@@ -275,7 +275,7 @@ class JohnsonTowerELBO:
 
 
             kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state) \
-                        - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \
+                        - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
                         + 0.5*self.p.state_dim
             aux_reconstruction_term = expect_quadratic_term_under_gaussian(aux_reconstruction_term, q_last_filt_state)
 
@@ -290,11 +290,11 @@ class JohnsonTowerELBO:
             matrix, bias, cov, obs, normal_sample = x
             current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
             common_term = obs - self.p.emission_kernel.map(jnp.atleast_2d(current_state_sample), theta.emission).squeeze()
-            return current_state_sample, -0.5 * (common_term.T @ theta.emission.prec @ common_term)
+            return current_state_sample, -0.5 * (common_term.T @ theta.emission.scale.prec @ common_term)
             
-        matrices = jnp.concatenate((q_backwd_state_seq.matrix, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
-        biases = jnp.concatenate((q_backwd_state_seq.bias, q_last_filt_state.mean[None,:]))
-        covs = jnp.concatenate((q_backwd_state_seq.cov, q_last_filt_state.cov[None,:]))
+        matrices = jnp.concatenate((q_backwd_state_seq.map.w, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
+        biases = jnp.concatenate((q_backwd_state_seq.map.b, q_last_filt_state.mean[None,:]))
+        covs = jnp.concatenate((q_backwd_state_seq.scale.cov, q_last_filt_state.scale.cov[None,:]))
 
         sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
                                                         init=jnp.empty((self.p.state_dim,)), 
@@ -302,7 +302,7 @@ class JohnsonTowerELBO:
                                                         reverse=True)[1]
 
         reconstruction_term = jnp.sum(jnp.mean(jax.vmap(sample_path)(normal_samples), axis=0)) \
-                            + obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.cov.shape[0], theta.emission.log_det)
+                            + obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.scale.cov.shape[0], theta.emission.scale.log_det)
 
                         
         return kl_term + aux_reconstruction_term, kl_term + reconstruction_term
@@ -329,7 +329,7 @@ class LinearGaussianTowerELBO:
                     + get_tractable_emission_term(obs, theta.emission)
 
 
-            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.log_det) +  0.5 * self.p.state_dim
+            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
             q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
 
             return (q_filt_state, kl_term), q_backwd_state
@@ -340,7 +340,7 @@ class LinearGaussianTowerELBO:
 
 
         return expect_quadratic_term_under_gaussian(result, q_last_filt_state) \
-                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.log_det) \
+                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
                     + 0.5*self.p.state_dim
     
     
@@ -375,7 +375,7 @@ class SVITrainer:
         
         self.loss = lambda seq, key, theta, phi, aux_params: -elbo(seq, theta, phi, aux_params, key)
         
-    def fit(self, data, theta, phi, aux_params, subkey_montecarlo, store_every):
+    def fit(self, key_batcher, key_montecarlo, data, theta, phi, aux_params, store_every):
 
         if self.use_johnson: 
             loss = lambda seq, key, phi, aux_params: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), aux_params)
@@ -388,7 +388,7 @@ class SVITrainer:
         optimizer = self.optimizer(num_seqs // self.batch_size)
 
         opt_state = optimizer.init(params)
-        subkeys = self.get_montecarlo_keys(subkey_montecarlo, num_seqs, self.num_epochs)
+        subkeys = self.get_montecarlo_keys(key_montecarlo, num_seqs, self.num_epochs)
 
 
         @jax.jit
@@ -401,22 +401,23 @@ class SVITrainer:
                 params = optax.apply_updates(params, updates)
                 return params, opt_state, jnp.mean(-neg_elbo_values)
 
-            params, opt_state, subkeys_epoch = carry
+            data, params, opt_state, subkeys_epoch = carry
             batch_start = x
             batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
             batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
             params, opt_state, avg_elbo_batch = step(params, opt_state, batch_obs_seq, batch_keys)
-            return (params, opt_state, subkeys_epoch), avg_elbo_batch
+            return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
 
 
         avg_elbos = []
         all_params = dict()
         for epoch_nb in range(self.num_epochs):
             subkeys_epoch = subkeys[epoch_nb]
-            batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
+            key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
+            batch_start_indices = jax.random.permutation(subkey_batcher, jnp.arange(0, num_seqs, self.batch_size))
         
-            (params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
-                                                                init=(params, opt_state, subkeys_epoch), 
+            (_, params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
+                                                                init=(data, params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
             if epoch_nb % store_every == 0:
                 all_params[epoch_nb] = params
@@ -455,7 +456,7 @@ class SVITrainer:
         with jax.profiler.trace('./profiling/'):
             print(step(params, data[:2], subkeys[:2]))
 
-    def multi_fit(self, key, data, theta, num_fits, store_every=None):
+    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, theta, num_fits, store_every=None):
 
         if store_every is None: 
             store_every = self.num_epochs
@@ -463,14 +464,14 @@ class SVITrainer:
         all_avg_elbos = []
         all_params = []
         print('-- Starting training...')
-        for fit_nb, key in enumerate(jax.random.split(key, num_fits)):
-            params_key, monte_carlo_key = jax.random.split(key, 2)
+        for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
             if self.use_johnson: 
-                aux_params = self.aux_init_params(params_key, data[0][0])
+                aux_params = self.aux_init_params(key_params, data[0][0])
             else:
                 aux_params = None
-
-            params, avg_elbos = self.fit(data, theta, self.q.get_random_params(params_key), aux_params, monte_carlo_key, store_every)
+            key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
+            key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
+            params, avg_elbos = self.fit(subkey_batcher, subkey_montecarlo, data, theta, self.q.get_random_params(subkey_params), aux_params, store_every)
             all_avg_elbos.append(avg_elbos)
             all_params.append(params)
 
@@ -489,5 +490,5 @@ class SVITrainer:
 def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, theta):
     evidence_via_elbo_on_seq = lambda seq: LinearGaussianTowerELBO(p,p)(seq, p.format_params(theta), p.format_params(theta))
     evidence_via_kalman_on_seq = lambda seq: p.likelihood_seq(seq, theta)
-    print('ELBO sanity check:',jnp.abs(jnp.mean(jax.vmap(evidence_via_elbo_on_seq)(data) - jax.vmap(evidence_via_kalman_on_seq)(data))))
+    print('ELBO sanity check:',jnp.abs(jnp.mean(jax.jit(jax.vmap(evidence_via_elbo_on_seq))(data) - jax.jit(jax.vmap(evidence_via_kalman_on_seq))(data))))
 

@@ -11,14 +11,14 @@ def kalman_init(obs, prior_mean, prior_cov, emission_params):
     return filt_mean, filt_cov
 
 def kalman_predict(filt_mean, filt_cov, transition_params):
-    A, a, Q = *transition_params.map, transition_params.cov
+    A, a, Q = *transition_params.map, transition_params.scale.cov
     pred_mean = A @ filt_mean + a
     pred_cov = A @ filt_cov @ A.T + Q
     return pred_mean, pred_cov
 
 def kalman_update(pred_mean, pred_cov, obs, emission_params):
 
-    B, b, R = *emission_params.map, emission_params.cov 
+    B, b, R = *emission_params.map, emission_params.scale.cov 
     kalman_gain = pred_cov @ B.T @ inv(B @ pred_cov @ B.T + R)
 
     filt_mean = pred_mean + kalman_gain @ (obs - (B @ pred_mean + b))
@@ -29,13 +29,13 @@ def kalman_update(pred_mean, pred_cov, obs, emission_params):
 def kalman_filter_seq(obs_seq, hmm_params):
 
     def log_l_term(pred_mean, pred_cov, obs, emission_params):
-        B, b, R = *emission_params.map, emission_params.cov_params.cov
+        B, b, R = *emission_params.map, emission_params.scale.cov
         return jax_gaussian_logpdf(x=obs, 
                             mean=B @ pred_mean + b , 
                             cov=B @ pred_cov @ B.T + R)
 
-    init_filt_mean, init_filt_cov = kalman_init(obs_seq[0], hmm_params.prior.mean, hmm_params.prior.cov_params.cov, hmm_params.emission)
-    loglikelihood = log_l_term(hmm_params.prior.mean, hmm_params.prior.cov_params.cov, obs_seq[0], hmm_params.emission)
+    init_filt_mean, init_filt_cov = kalman_init(obs_seq[0], hmm_params.prior.mean, hmm_params.prior.scale.cov, hmm_params.emission)
+    loglikelihood = log_l_term(hmm_params.prior.mean, hmm_params.prior.scale.cov, obs_seq[0], hmm_params.emission)
 
     @jit
     def _filter_step(carry, x):
@@ -52,7 +52,7 @@ def kalman_filter_seq(obs_seq, hmm_params):
                                 xs=obs_seq[1:])
 
     pred_mean_seq = tree_prepend(hmm_params.prior.mean, pred_mean_seq) 
-    pred_cov_seq =  tree_prepend(hmm_params.prior.cov, pred_cov_seq) 
+    pred_cov_seq =  tree_prepend(hmm_params.prior.scale.cov, pred_cov_seq) 
     filt_mean_seq = tree_prepend(init_filt_mean, filt_mean_seq) 
     filt_cov_seq =  tree_prepend(init_filt_cov, filt_cov_seq)
 
@@ -94,12 +94,12 @@ def pykalman_filter_seq(obs_seq, hmm_params):
 
     engine = KalmanFilter(transition_matrices=hmm_params.transition.map.w, 
                         observation_matrices=hmm_params.emission.map.w,
-                        transition_covariance=hmm_params.transition.cov,
-                        observation_covariance=hmm_params.emission.cov,
+                        transition_covariance=hmm_params.transition.scale.cov,
+                        observation_covariance=hmm_params.emission.scale.cov,
                         transition_offsets=hmm_params.transition.map.b,
                         observation_offsets=hmm_params.emission.map.b,
                         initial_state_mean=hmm_params.prior.mean,
-                        initial_state_covariance=hmm_params.prior.cov)
+                        initial_state_covariance=hmm_params.prior.scale.cov)
 
     return engine.filter(obs_seq)
 
@@ -108,12 +108,12 @@ def pykalman_logl_seq(obs_seq, hmm_params):
 
     engine = KalmanFilter(transition_matrices=hmm_params.transition.map.w, 
                         observation_matrices=hmm_params.emission.map.w,
-                        transition_covariance=hmm_params.transition.cov,
-                        observation_covariance=hmm_params.emission.cov,
+                        transition_covariance=hmm_params.transition.scale.cov,
+                        observation_covariance=hmm_params.emission.scale.cov,
                         transition_offsets=hmm_params.transition.map.b,
                         observation_offsets=hmm_params.emission.map.b,
                         initial_state_mean=hmm_params.prior.mean,
-                        initial_state_covariance=hmm_params.prior.cov)
+                        initial_state_covariance=hmm_params.prior.scale.cov)
 
     
     return engine.loglikelihood(obs_seq)
@@ -122,11 +122,11 @@ def pykalman_smooth_seq(obs_seq, hmm_params):
 
     engine = KalmanFilter(transition_matrices=hmm_params.transition.map.w, 
                         observation_matrices=hmm_params.emission.map.w,
-                        transition_covariance=hmm_params.transition.cov,
-                        observation_covariance=hmm_params.emission.cov,
+                        transition_covariance=hmm_params.transition.scale.cov,
+                        observation_covariance=hmm_params.emission.scale.cov,
                         transition_offsets=hmm_params.transition.map.b,
                         observation_offsets=hmm_params.emission.map.b,
                         initial_state_mean=hmm_params.prior.mean,
-                        initial_state_covariance=hmm_params.prior.cov)
+                        initial_state_covariance=hmm_params.prior.scale.cov)
                         
     return engine.smooth(obs_seq)

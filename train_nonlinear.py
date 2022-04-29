@@ -28,7 +28,7 @@ def main(args, save_dir):
     theta = p.get_random_params(key_params) # sample params randomly (but covariances are fixed to default values)
     utils.save_params(theta, 'theta', save_dir)
 
-    state_seqs, obs_seqs = hmm.sample_multiple_sequences(key_gen, p.sample_seq, theta, args.num_seqs, args.seq_length)
+    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta, args.num_seqs, args.seq_length)
 
     import matplotlib.pyplot as plt 
 
@@ -38,8 +38,8 @@ def main(args, save_dir):
     plt.clf()
 
     plt.scatter(range(len(state_seqs[0])), state_seqs[0])
-    plt.savefig('example_states')
-
+    plt.savefig(os.path.join(save_dir,'example_states'))
+    plt.clf()
 
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
@@ -60,7 +60,7 @@ def main(args, save_dir):
 
     trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, args.num_samples)
 
-    params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_phi, obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
+    params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi,3), obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
     utils.save_params(params, f'phi_every_{args.store_every}_epochs', save_dir)
 
@@ -72,7 +72,7 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'nonlinear_p_theta_nonlinear_q_phi_3'
+    experiment_name = 'nonlinear_refactor'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     
     os.mkdir(save_dir)

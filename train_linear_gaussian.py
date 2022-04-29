@@ -22,7 +22,7 @@ def main(args, save_dir):
     utils.save_params(theta, 'theta', save_dir)
 
     key, subkey = jax.random.split(key, 2)
-    obs_seqs = hmm.sample_multiple_sequences(subkey, p.sample_seq, theta, args.num_seqs, args.seq_length)[1]
+    obs_seqs = p.sample_multiple_sequences(subkey, theta, args.num_seqs, args.seq_length)[1]
 
     check_linear_gaussian_elbo(obs_seqs, p, theta)
     avg_evidence = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta))(obs_seqs))
@@ -36,8 +36,7 @@ def main(args, save_dir):
 
     trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size)
 
-
-    params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_phi, obs_seqs, theta, args.num_fits, store_every=args.store_every) # returns the best fit (based on the last value of the elbo)
+    params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi, 3), obs_seqs, theta, args.num_fits, store_every=args.store_every) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
     utils.save_params(params, f'phi_every_{args.store_every}_epochs', save_dir)
 
@@ -62,7 +61,7 @@ if __name__ == '__main__':
     args.num_seqs = 4096
 
     args.optimizer = 'adam'
-    args.batch_size = 64
+    args.batch_size = 32
     args.learning_rate = 1e-2
     args.num_epochs = 150
     args.store_every = args.num_epochs // 5
