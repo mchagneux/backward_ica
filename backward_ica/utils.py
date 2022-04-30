@@ -96,7 +96,7 @@ class Scale:
         elif chol is not None:
             self.chol = chol
         else:
-            raise ValueError()
+            raise ValueError()        
 
     @lazy_property
     def cov(self):
@@ -111,11 +111,19 @@ class Scale:
         return log_det_from_chol(self.chol)
 
     def tree_flatten(self):
-        return ((self.chol,), None)
+        attrs = vars(self)
+        children = attrs.values()
+        aux_data = attrs.keys()
+        return (children, aux_data)
 
     @classmethod
     def tree_unflatten(cls, aux_data, params):
-        return cls(*params)
+        obj = cls.__new__(cls)
+        for k,v in zip(aux_data, params):
+            setattr(obj, k, v)
+        return obj
+
+
 
 
 

@@ -414,7 +414,9 @@ class SVITrainer:
         for epoch_nb in range(self.num_epochs):
             subkeys_epoch = subkeys[epoch_nb]
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
-            batch_start_indices = jax.random.permutation(subkey_batcher, jnp.arange(0, num_seqs, self.batch_size))
+            
+            data = jax.random.permutation(subkey_batcher, data)
+            batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
         
             (_, params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
                                                                 init=(data, params, opt_state, subkeys_epoch), 
