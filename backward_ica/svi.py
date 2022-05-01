@@ -155,9 +155,8 @@ class BackwardLinearTowerELBO:
         self.q = q
         self.num_samples = num_samples
 
-    def __call__(self, obs_seq, theta:HMMParams, phi, *args):
+    def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
-        _, key = args
 
         def compute_kl_term(obs_seq):
 
@@ -195,7 +194,7 @@ class BackwardLinearTowerELBO:
         marginals = self.q.backwd_pass(q_last_filt_state, q_backwd_state_seq)
         
         def sample_from_marginal(normal_sample, marginal, obs, theta):
-            common_term = obs - self.p.emission_kernel.map(marginal.mean + marginal.scale.cov @ normal_sample, theta.emission).squeeze()
+            common_term = obs - self.p.emission_kernel.map(marginal.mean + marginal.scale.chol @ normal_sample, theta.emission).squeeze()
             return -0.5 * (common_term.T @ theta.emission.scale.prec @ common_term)
 
 
@@ -342,7 +341,7 @@ class LinearGaussianTowerELBO:
     
 class SVITrainer:
 
-    def __init__(self, p:HMM, q:BackwardSmoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, use_johnson=False):
+    def __init__(self, p:HMM, q:BackwardSmoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1):
 
 
         # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
@@ -354,31 +353,21 @@ class SVITrainer:
         self.q = q 
         self.q.print_num_params()
         self.p = p 
-        self.use_johnson = use_johnson
 
         if isinstance(self.p, LinearGaussianHMM):
-            elbo = LinearGaussianTowerELBO(self.p, self.q)
+            self.elbo = LinearGaussianTowerELBO(self.p, self.q)
             self.get_montecarlo_keys = get_dummy_keys
         else: 
-            if self.use_johnson:
-                self.aux_init_params, aux_map = init_rep_net_forward(self.p.state_dim, self.p.obs_dim)
-                elbo = JohnsonTowerELBO(self.p, self.q, aux_map, num_samples)
-                self.get_montecarlo_keys = get_keys
-            else: 
-                elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
-                self.get_montecarlo_keys = get_keys
-
-        
-        self.loss = lambda seq, key, theta, phi, aux_params: -elbo(seq, theta, phi, aux_params, key)
+            self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
+            self.get_montecarlo_keys = get_keys
         
     def fit(self, key_batcher, key_montecarlo, data, theta, phi, aux_params, store_every):
 
-        if self.use_johnson: 
-            loss = lambda seq, key, phi, aux_params: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), aux_params)
-            params = (phi, aux_params)
-        else: 
-            loss = lambda seq, key, phi: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), None)
-            params = phi
+        if isinstance(self.elbo, LinearGaussianTowerELBO):
+            loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(phi))
+        else:
+            loss = lambda key, seq, phi: -self.elbo(seq, key, self.p.format_params(theta), self.q.format_params(phi))
+        params = phi
 
         num_seqs = data.shape[0]
         optimizer = self.optimizer(num_seqs // self.batch_size)
@@ -490,3 +479,8 @@ def check_linear_gaussian_elbo(data, p:LinearGaussianHMM, theta):
     evidence_via_kalman_on_seq = lambda seq: p.likelihood_seq(seq, theta)
     print('ELBO sanity check:',jnp.abs(jnp.mean(jax.jit(jax.vmap(evidence_via_elbo_on_seq))(data) - jax.jit(jax.vmap(evidence_via_kalman_on_seq))(data))))
 
+def check_linear_tower_elbo(data, p:LinearGaussianHMM, theta):
+    elbo = BackwardLinearTowerELBO(p,p, 1)
+    evidence_via_elbo_on_seq = lambda seq: BackwardLinearTowerELBO(p,p)
+    evidence_via_kalman_on_seq = lambda seq: p.likelihood_seq(seq, theta)
+    print('ELBO sanity check:',jnp.abs(jnp.mean(jax.jit(jax.vmap(evidence_via_elbo_on_seq))(data) - jax.jit(jax.vmap(evidence_via_kalman_on_seq))(data))))

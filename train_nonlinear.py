@@ -44,6 +44,7 @@ def main(args, save_dir):
 
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
+    print('Computing evidence...')
     avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(key, obs_seq, 
                                                                         theta)))(obs_seqs, smc_keys))
 

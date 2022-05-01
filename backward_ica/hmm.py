@@ -391,7 +391,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         net = hk.nets.MLP((*hidden_layer_sizes,out_dim), 
                         activation=nn.tanh,
                         activate_final=True)
-        return pred_state + net(jnp.concatenate((obs, pred_state)))
+        return net(jnp.concatenate((obs, pred_state)))
 
     def __init__(self, 
                 state_dim, 
