@@ -150,7 +150,7 @@ def get_tractable_emission_term_from_natparams(emission_natparams):
 
 class BackwardLinearTowerELBO:
 
-    def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):
+    def __init__(self, p:HMM, q:LinearBackwardSmoother, num_samples=200):
         self.p = p
         self.q = q
         self.num_samples = num_samples
@@ -193,12 +193,10 @@ class BackwardLinearTowerELBO:
 
         kl_term, (q_last_filt_state, q_backwd_state_seq) = compute_kl_term(obs_seq)
 
-        means, covs = q_last_filt_state.mean, q_last_filt_state.scale.cov 
-        A_backs, a_backs, cov_backs = q_backwd_state_seq.map.w, q_backwd_state_seq.map.b, q_backwd_state_seq.scale.cov
-        marginal_means, marginal_covs = self.q.backwd_pass((means, covs), (A_backs, a_backs, cov_backs))
+        marginals = self.q.backwd_pass(q_last_filt_state, q_backwd_state_seq)
         
-        def sample_from_marginal(normal_sample, marginal_mean, marginal_cov_chol, obs, theta):
-            common_term = obs - self.p.emission_kernel.map(marginal_mean + marginal_cov_chol @ normal_sample, theta.emission).squeeze()
+        def sample_from_marginal(normal_sample, marginal, obs, theta):
+            common_term = obs - self.p.emission_kernel.map(marginal.mean + marginal.scale.cov @ normal_sample, theta.emission).squeeze()
             return -0.5 * (common_term.T @ theta.emission.scale.prec @ common_term)
 
 
@@ -220,8 +218,7 @@ class BackwardLinearTowerELBO:
 
         normal_samples = normal(key, shape=(self.num_samples, obs_seq.shape[0], self.p.state_dim))
 
-        marginal_covs_chol = jnp.linalg.cholesky(marginal_covs)
-        monte_carlo_samples = vmap(vmap(sample_from_marginal, in_axes=(0,0,0,0,None)), in_axes=(0,None,None,None,None))(normal_samples, marginal_means, marginal_covs_chol, obs_seq, theta)
+        monte_carlo_samples = vmap(vmap(sample_from_marginal, in_axes=(0,0,0,None)), in_axes=(0,None,None,None))(normal_samples, marginals, obs_seq, theta)
         
         reconstruction_term = jnp.sum(jnp.mean(monte_carlo_samples, axis=0)) + \
              obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.scale.cov.shape[0], theta.emission.scale.log_det)

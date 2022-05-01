@@ -15,28 +15,6 @@ import argparse
 # Containers for parameters of various objects 
 
 
-class lazy_property(object):
-    r"""
-    Used as a decorator for lazy loading of class attributes. This uses a
-    non-data descriptor that calls the wrapped method to compute the property on
-    first call; thereafter replacing the wrapped method into an instance
-    attribute.
-    """
-
-    def __init__(self, wrapped):
-        self.wrapped = wrapped
-        update_wrapper(self, wrapped)
-
-    # This is to prevent warnings from sphinx
-    def __call__(self, *args, **kwargs):
-        return self.wrapped(*args, **kwargs)
-
-    def __get__(self, instance, obj_type=None):
-        if instance is None:
-            return self
-        value = self.wrapped(instance)
-        setattr(instance, self.wrapped.__name__, value)
-        return value
 
 
 def chol_from_prec(prec):
@@ -81,6 +59,28 @@ def inv_of_chol_from_chol(mat_chol):
 # def scale_params_from_chol(chol):
 #     return chol, cov_from_chol(chol), prec_from_chol(chol), log_det_from_chol(chol)
 
+class lazy_property(object):
+    r"""
+    Used as a decorator for lazy loading of class attributes. This uses a
+    non-data descriptor that calls the wrapped method to compute the property on
+    first call; thereafter replacing the wrapped method into an instance
+    attribute.
+    """
+
+    def __init__(self, wrapped):
+        self.wrapped = wrapped
+        update_wrapper(self, wrapped)
+
+    # This is to prevent warnings from sphinx
+    def __call__(self, *args, **kwargs):
+        return self.wrapped(*args, **kwargs)
+
+    def __get__(self, instance, obj_type=None):
+        if instance is None:
+            return self
+        value = self.wrapped(instance)
+        setattr(instance, self.wrapped.__name__, value)
+        return value
 
 @register_pytree_node_class
 class Scale:
@@ -124,33 +124,13 @@ class Scale:
         return obj
 
 
-
-
-
-# @register_pytree_node_class
-# @dataclass(init=True)
-# class Scale:
-
-#     chol:jnp.ndarray = None
-#     cov:jnp.ndarray = None
-#     prec:jnp.ndarray = None
-#     log_det:float = None
-
-
-#     def tree_flatten(self):
-#         return (self.chol, self.cov, self.prec, self.log_det), None
-
-#     @classmethod
-#     def tree_unflatten(cls, aux_data, params):
-#         return cls(*params)
-
-
 KernelParams = namedtuple('KernelParams', ['map','scale'])
 LinearMapParams = namedtuple('LinearMapParams', ['w', 'b'])
 GaussianParams = namedtuple('GaussianParams', ['mean', 'scale'])
 HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
-# NeuralSmootherParams = namedtuple('NeuralSmootherParams', ['prior','transition', 'filt_update', 'forget_gate'])
+NeuralLinearBackwardSmootherParams = namedtuple('NeuralLinearBackwardSmootherParams', ['prior','transition', 'filt_update'])
+# NeuralBackwardSmootherParams = namedtuple('NeuralLinearBackwardSmootherParams', ['prior','transition', 'filt_update'])
 
 
 def tree_prepend(prep, tree):
@@ -181,16 +161,6 @@ def tree_get_slice(start, stop, tree):
     '''Get idx row from each leaf of tuple'''
     return tree_map(lambda a: a[start:stop], tree)
 
-
-
-
-# def cov_params_from_cov_chol(cov_chol):
-#     cov = cov_chol @ cov_chol.T 
-#     return cov, cov_chol, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
-
-# def cov_params_from_cov(cov):
-#     cov_chol = jnp.linalg.cholesky(cov)
-#     return cov, cov_chol, inv_from_chol(cov_chol), log_det_from_chol(cov_chol)
 
 
 @dataclass(init=True)
@@ -330,8 +300,6 @@ def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb,
     plt.savefig(figname)
     plt.clf()
 
-
-
 def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref_params, approx_params, seq_length, step, ref_smoother_name, approx_smoother_name):
     timesteps = range(2, seq_length, step)
 
@@ -407,7 +375,6 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
     plt.autoscale(True)
     plt.tight_layout()
 
-
 def multiple_length_ffbsi_smoothing(obs_seqs, smoother, params, timesteps, key, num_particles):
     
     key, subkey = random.split(key, 2)
@@ -466,8 +433,6 @@ def multiple_length_linear_backward_smoothing(obs_seqs, smoother, params, timest
 
 
     return results 
-
-
 
 def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, timesteps, ref_name, approx_name, save_dir):
 
@@ -587,7 +552,6 @@ def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, 
         plt.tight_layout()
         plt.savefig(os.path.join(save_dir, 'smoothing_results'))
         plt.clf()
-
 
 def compare_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, timesteps, ref_name, approx_name, save_dir):
 

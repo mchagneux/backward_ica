@@ -1,92 +1,97 @@
-from jax import numpy as jnp, lax, config, jit
+from jax import numpy as jnp, lax, jit
 from jax.scipy.stats.multivariate_normal import logpdf as jax_gaussian_logpdf
 from pykalman.standard import KalmanFilter
 from .utils import *
 
-config.update("jax_enable_x64", True)
 
-@jit
-def kalman_init(obs, prior_mean, prior_cov, emission_params):
-    filt_mean, filt_cov = kalman_update(prior_mean, prior_cov, obs, emission_params)
-    return filt_mean, filt_cov
+class Kalman: 
 
-def kalman_predict(filt_mean, filt_cov, transition_params):
-    A, a, Q = *transition_params.map, transition_params.scale.cov
-    pred_mean = A @ filt_mean + a
-    pred_cov = A @ filt_cov @ A.T + Q
-    return pred_mean, pred_cov
-
-def kalman_update(pred_mean, pred_cov, obs, emission_params):
-
-    B, b, R = *emission_params.map, emission_params.scale.cov 
-    kalman_gain = pred_cov @ B.T @ inv(B @ pred_cov @ B.T + R)
-
-    filt_mean = pred_mean + kalman_gain @ (obs - (B @ pred_mean + b))
-    filt_cov = pred_cov - kalman_gain @ B @ pred_cov
-
-    return filt_mean, filt_cov
-
-def kalman_filter_seq(obs_seq, hmm_params):
-
-    def log_l_term(pred_mean, pred_cov, obs, emission_params):
-        B, b, R = *emission_params.map, emission_params.scale.cov
-        return jax_gaussian_logpdf(x=obs, 
-                            mean=B @ pred_mean + b , 
-                            cov=B @ pred_cov @ B.T + R)
-
-    init_filt_mean, init_filt_cov = kalman_init(obs_seq[0], hmm_params.prior.mean, hmm_params.prior.scale.cov, hmm_params.emission)
-    loglikelihood = log_l_term(hmm_params.prior.mean, hmm_params.prior.scale.cov, obs_seq[0], hmm_params.emission)
 
     @jit
-    def _filter_step(carry, x):
-        loglikelihood, filt_mean, filt_cov = carry
-        pred_mean, pred_cov = kalman_predict(filt_mean, filt_cov, hmm_params.transition)
-        filt_mean, filt_cov = kalman_update(pred_mean, pred_cov, x, hmm_params.emission)
+    def init(obs, prior_params, emission_params):
+        filt_mean, filt_cov = Kalman.update(prior_params.mean, prior_params.scale.cov, obs, emission_params)
+        return filt_mean, filt_cov
 
-        loglikelihood += log_l_term(pred_mean, pred_cov, x, hmm_params.emission)
+    def predict(filt_mean, filt_cov, transition_params):
+        A, a, Q = *transition_params.map, transition_params.scale.cov
+        pred_mean = A @ filt_mean + a
+        pred_cov = A @ filt_cov @ A.T + Q
+        return pred_mean, pred_cov
 
-        return (loglikelihood, filt_mean, filt_cov), (pred_mean, pred_cov, filt_mean, filt_cov)
+    def update(pred_mean, pred_cov, obs, emission_params):
 
-    (loglikelihood, *_), (pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq) = lax.scan(f=_filter_step, 
-                                init=(loglikelihood, init_filt_mean, init_filt_cov), 
-                                xs=obs_seq[1:])
+        B, b, R = *emission_params.map, emission_params.scale.cov 
+        kalman_gain = pred_cov @ B.T @ inv(B @ pred_cov @ B.T + R)
 
-    pred_mean_seq = tree_prepend(hmm_params.prior.mean, pred_mean_seq) 
-    pred_cov_seq =  tree_prepend(hmm_params.prior.scale.cov, pred_cov_seq) 
-    filt_mean_seq = tree_prepend(init_filt_mean, filt_mean_seq) 
-    filt_cov_seq =  tree_prepend(init_filt_cov, filt_cov_seq)
+        filt_mean = pred_mean + kalman_gain @ (obs - (B @ pred_mean + b))
+        filt_cov = pred_cov - kalman_gain @ B @ pred_cov
 
-    return pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq, loglikelihood
+        return filt_mean, filt_cov
 
-def kalman_smooth_seq(obs_seq, hmm_params):
-
-    pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq = kalman_filter_seq(obs_seq, hmm_params)[:-1]
-
-    last_smooth_mean, last_smooth_cov = filt_mean_seq[-1], filt_cov_seq[-1]
-    
-    @jit
-    def _smooth_step(carry, x):
-        next_smooth_mean, next_smooth_cov = carry 
-        filt_mean, filt_cov, next_pred_mean, next_pred_cov = x  
+    def filter_seq(obs_seq, hmm_params):
         
-        C = filt_cov @ hmm_params.transition.map.w @ inv(next_pred_cov)
-        smooth_mean = filt_mean + C @ (next_smooth_mean - next_pred_mean)
-        smooth_cov = filt_cov + C @ (next_smooth_cov - next_pred_cov) @ C.T
+        def log_l_term(pred_mean, pred_cov, obs, emission_params):
+            B, b, R = *emission_params.map, emission_params.scale.cov
+            return jax_gaussian_logpdf(x=obs, 
+                                mean=B @ pred_mean + b , 
+                                cov=B @ pred_cov @ B.T + R)
 
-        return (smooth_mean, smooth_cov), (smooth_mean, smooth_cov)
+        init_filt_mean, init_filt_cov = Kalman.init(obs_seq[0], hmm_params.prior, hmm_params.emission)
+        loglikelihood = log_l_term(hmm_params.prior.mean, hmm_params.prior.scale.cov, obs_seq[0], hmm_params.emission)
 
-    _, (smooth_mean_seq, smooth_cov_seq) = lax.scan(f=_smooth_step,
-                                            init=(last_smooth_mean, last_smooth_cov),
-                                            xs=(filt_mean_seq[:-1], 
-                                                filt_cov_seq[:-1],
-                                                pred_mean_seq[1:],
-                                                pred_cov_seq[1:]),
-                                            reverse=True)
+        @jit
+        def _filter_step(carry, x):
+            loglikelihood, filt_mean, filt_cov = carry
+            pred_mean, pred_cov = Kalman.predict(filt_mean, filt_cov, hmm_params.transition)
+            filt_mean, filt_cov = Kalman.update(pred_mean, pred_cov, x, hmm_params.emission)
 
-    smooth_mean_seq = jnp.concatenate((smooth_mean_seq, last_smooth_mean[None,:]))
-    smooth_cov_seq = jnp.concatenate((smooth_cov_seq, last_smooth_cov[None,:]))
+            loglikelihood += log_l_term(pred_mean, pred_cov, x, hmm_params.emission)
 
-    return smooth_mean_seq, smooth_cov_seq
+            return (loglikelihood, filt_mean, filt_cov), (pred_mean, pred_cov, filt_mean, filt_cov)
+
+        (loglikelihood, *_), (pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq) = lax.scan(f=_filter_step, 
+                                    init=(loglikelihood, init_filt_mean, init_filt_cov), 
+                                    xs=obs_seq[1:])
+
+        pred_mean_seq = tree_prepend(hmm_params.prior.mean, pred_mean_seq) 
+        pred_cov_seq =  tree_prepend(hmm_params.prior.scale.cov, pred_cov_seq) 
+        filt_mean_seq = tree_prepend(init_filt_mean, filt_mean_seq) 
+        filt_cov_seq =  tree_prepend(init_filt_cov, filt_cov_seq)
+
+        return pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq, loglikelihood
+
+    def smooth_seq(obs_seq, hmm_params):
+
+        pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq = Kalman.filter_seq(obs_seq, hmm_params)[:-1]
+
+        last_smooth_mean, last_smooth_cov = filt_mean_seq[-1], filt_cov_seq[-1]
+        
+        @jit
+        def _smooth_step(carry, x):
+            next_smooth_mean, next_smooth_cov = carry 
+            filt_mean, filt_cov, next_pred_mean, next_pred_cov = x  
+            
+            C = filt_cov @ hmm_params.transition.map.w @ inv(next_pred_cov)
+            smooth_mean = filt_mean + C @ (next_smooth_mean - next_pred_mean)
+            smooth_cov = filt_cov + C @ (next_smooth_cov - next_pred_cov) @ C.T
+
+            return (smooth_mean, smooth_cov), (smooth_mean, smooth_cov)
+
+        _, (smooth_mean_seq, smooth_cov_seq) = lax.scan(f=_smooth_step,
+                                                init=(last_smooth_mean, last_smooth_cov),
+                                                xs=(filt_mean_seq[:-1], 
+                                                    filt_cov_seq[:-1],
+                                                    pred_mean_seq[1:],
+                                                    pred_cov_seq[1:]),
+                                                reverse=True)
+
+        smooth_mean_seq = jnp.concatenate((smooth_mean_seq, last_smooth_mean[None,:]))
+        smooth_cov_seq = jnp.concatenate((smooth_cov_seq, last_smooth_cov[None,:]))
+
+        return smooth_mean_seq, smooth_cov_seq
+
+
+
 
 
 
