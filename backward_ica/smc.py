@@ -15,27 +15,34 @@ def compute_pred_likel(log_probs):
     return logsumexp(log_probs)
 
 
+
 class SMC:
 
-    def __init__(self, transition_kernel, emission_kernel, prior_dist):
+    def __init__(self, transition_kernel, emission_kernel, prior_dist, num_particles=1000):
 
         self.transition_kernel = transition_kernel 
         self.emission_kernel = emission_kernel
         self.prior_sampler = prior_dist.sample 
+        self.num_particles = num_particles
     
     
-    def init(self, prior_key, obs, prior_params, emission_params, num_particles):
+    def init(self, prior_key, obs, prior_params, emission_params):
 
-        particles = vmap(self.prior_sampler, in_axes=(0,None))(random.split(prior_key, num_particles), prior_params)
+        particles = vmap(self.prior_sampler, in_axes=(0,None))(random.split(prior_key, self.num_particles), prior_params)
         log_probs = self.update(particles, obs, emission_params)
         return log_probs, particles
+
+
+    def resample(self, key, log_probs, particles):
+
+        return random.choice(key=key, a=particles, p=exp_and_normalize(log_probs), replace=True, shape=(self.num_particles,))
 
 
     def predict(self, resampling_key, proposal_key, log_probs, particles, transition_params):
 
         particles = self.resample(resampling_key, log_probs, particles)
 
-        particles = vmap(self.transition_kernel.sample, in_axes=(0,0,None))(random.split(proposal_key, len(particles)), particles, transition_params)
+        particles = vmap(self.transition_kernel.sample, in_axes=(0,0,None))(random.split(proposal_key, self.num_particles), particles, transition_params)
 
         return particles
 
@@ -47,15 +54,11 @@ class SMC:
         return log_probs
 
 
-    def resample(key, log_probs, particles):
-
-        return random.choice(key=key, a=particles, p=exp_and_normalize(log_probs), replace=True, shape=(len(particles),))
-
-    def filter_seq(self, key, obs_seq, params, num_particles):
+    def filter_seq(self, key, obs_seq, params):
 
         prior_key, proposal_key, resampling_key = random.split(key,3)
         
-        init_log_probs, init_particles = self.init(prior_key, obs_seq[0], params.prior, params.emission, num_particles)
+        init_log_probs, init_particles = self.init(prior_key, obs_seq[0], params.prior, params.emission)
         likel = compute_pred_likel(init_log_probs)
 
         @jit 
@@ -74,15 +77,15 @@ class SMC:
                                                     init=(init_log_probs, init_particles, likel), 
                                                     xs=(obs_seq[1:], proposal_keys, resampling_keys))[0]
 
-        return terminal_log_probs, terminal_particles, likel - len(obs_seq)*jnp.log(num_particles)
+        return terminal_log_probs, terminal_particles, likel - len(obs_seq)*jnp.log(self.num_particles)
 
 
-    def compute_filt_seq(self, key, obs_seq, params, num_particles):
+    def compute_filt_seq(self, key, obs_seq, params):
 
 
         prior_key, proposal_key, resampling_key = random.split(key,3)
         
-        init_log_probs, init_particles = self.init(prior_key, obs_seq[0], params.prior, params.emission, num_particles)
+        init_log_probs, init_particles = self.init(prior_key, obs_seq[0], params.prior, params.emission)
 
         @jit 
         def _filter_step(carry, x):
@@ -123,7 +126,7 @@ class SMC:
             
             return jnp.concatenate((samples, last_sample[None,:]))
 
-        keys = random.split(key, len(particles_seq[0]))
+        keys = random.split(key, self.num_particles)
 
         paths = vmap(_sample_path, in_axes=(0,None,None))(keys, log_probs_seq, particles_seq)
 

@@ -116,8 +116,8 @@ class Kernel:
         return self.noise_logpdf(x, GaussianParams(self.map(state, params), params.scale))
 
     def get_random_params(self, key, default_base_scale=None):
-        subkeys = random.split(key, 2)
-        return KernelParams(map=self.init_map_params(subkeys[0], jnp.empty((self.in_dim,))),
+        key, subkey = random.split(key, 2)
+        return KernelParams(map=self.init_map_params(key, jnp.empty((self.in_dim,))),
                             scale=default_base_scale * jnp.ones((self.out_dim,)))
     
     def format_params(self, params):
@@ -222,11 +222,10 @@ class BackwardSmoother(metaclass=ABCMeta):
     def backwd_pass(self, last_filt_state, backwd_state_seq):
         raise NotImplementedError
 
-    def compute_filt_seq(self, obs_seq, params):
+    def compute_filt_seq(self, obs_seq, formatted_params):
 
-        params = self.format_params(params)
-        
-        init_filt_state = self.init_filt_state(obs_seq[0], params)
+
+        init_filt_state = self.init_filt_state(obs_seq[0], formatted_params)
 
         @jit
         def _step(carry, x):
@@ -235,21 +234,23 @@ class BackwardSmoother(metaclass=ABCMeta):
             filt_state = self.new_filt_state(obs, filt_state, params)
             return (filt_state, params), filt_state
 
-        filt_state_seq = lax.scan(_step, init=(init_filt_state, params), xs=obs_seq[1:])[1]
+        filt_state_seq = lax.scan(_step, init=(init_filt_state, formatted_params), xs=obs_seq[1:])[1]
 
 
         return tree_prepend(init_filt_state, filt_state_seq)
 
-    def compute_backwd_seq(self, filt_seq, params):
+    def compute_backwd_seq(self, filt_seq, formatted_params):
         
-        params = self.format_params(params)
-
-        return vmap(self.new_backwd_state)(tree_droplast(filt_seq))
+        return vmap(self.new_backwd_state, in_axes=(0,None))(tree_droplast(filt_seq), formatted_params)
 
     def smooth_seq(self, obs_seq, params):
+        
+        formatted_params = self.format_params(params)
 
-        filt_state_seq = self.compute_filt_seq(obs_seq, params)
-        backwd_state_seq = self.compute_backwd_seq(filt_state_seq, params)
+        formatted_params.compute_covs()
+
+        filt_state_seq = self.compute_filt_seq(obs_seq, formatted_params)
+        backwd_state_seq = self.compute_backwd_seq(filt_state_seq, formatted_params)
 
         return self.backwd_pass(tree_get_idx(-1, filt_state_seq), backwd_state_seq)
 
@@ -283,7 +284,7 @@ class LinearBackwardSmoother(BackwardSmoother):
 
         @jit
         def _step(filt_state, backwd_state):
-            A_back, a_back, cov_back = backwd_state
+            A_back, a_back, cov_back = *backwd_state.map, backwd_state.scale.cov
             filt_state_mean, filt_state_cov = filt_state
             mean = A_back @ filt_state_mean + a_back
             cov = A_back @ filt_state_cov @ A_back.T + cov_back
@@ -294,8 +295,7 @@ class LinearBackwardSmoother(BackwardSmoother):
                                 xs=backwd_state_seq, 
                                 reverse=True)[1]
         
-        return tree_append(marginals, last_filt_state)
-
+        return tree_append(marginals, GaussianParams(last_filt_state_mean, Scale(cov=last_filt_state_cov)))
 
 class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
@@ -326,7 +326,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         return GaussianParams(mean, Scale(cov=cov))
 
-    def likelihood_seq(self, obs_seq, params, *args):
+    def likelihood_seq(self, obs_seq, params):
 
         return Kalman.filter_seq(obs_seq, self.format_params(params))[-1]
     
@@ -340,7 +340,8 @@ class NonLinearGaussianHMM(HMM):
                 obs_dim, 
                 transition_matrix_conditionning,
                 hidden_layer_sizes,
-                slope):
+                slope,
+                num_particles=1000):
 
 
         HMM.__init__(self, 
@@ -349,21 +350,19 @@ class NonLinearGaussianHMM(HMM):
                     transition_kernel_type = lambda state_dim: Kernel(state_dim, state_dim, ('linear', transition_matrix_conditionning)), 
                     emission_kernel_type  = lambda state_dim, obs_dim:Kernel(state_dim, obs_dim, ('nonlinear', (hidden_layer_sizes, slope))))
 
-        self.smc = SMC(self.transition_kernel, self.emission_kernel, self.prior_dist)
+        self.smc = SMC(self.transition_kernel, self.emission_kernel, self.prior_dist, num_particles)
 
-    def likelihood_seq(self, obs_seq, params, key, num_particles):
+    def likelihood_seq(self, key, obs_seq, params):
 
         return self.smc.filter_seq(key, 
                             obs_seq, 
-                            self.format_params(params),
-                            num_particles)[-1]
+                            self.format_params(params))[-1]
     
-    def compute_filt_seq(self, obs_seq, params, key, num_particles):
+    def compute_filt_seq(self, key, obs_seq, params):
 
         return self.smc.compute_filt_seq(key, 
                                 obs_seq, 
-                                self.format_params(params), 
-                                num_particles)
+                                self.format_params(params))
         
     def backwd_pass(self, filt_seq, params, key):
 
@@ -371,16 +370,17 @@ class NonLinearGaussianHMM(HMM):
 
         return self.smc.smooth_from_filt_seq(key, filt_seq, formatted_params)
     
-    def smooth_seq(self, obs_seq, params, key, num_particles):
+    def smooth_seq(self, key, obs_seq, params):
+
+        key, subkey = random.split(key, 2)
 
         formatted_params = self.format_params(params)
 
         filt_seq = self.smc.compute_filt_seq(key, 
                                 obs_seq, 
-                                formatted_params, 
-                                num_particles)
+                                formatted_params)
 
-        return self.smc.smooth_from_filt_seq(key, filt_seq, formatted_params)
+        return self.smc.smooth_from_filt_seq(subkey, filt_seq, formatted_params)
 
 
 
@@ -391,7 +391,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         net = hk.nets.MLP((*hidden_layer_sizes,out_dim), 
                         activation=nn.tanh,
                         activate_final=True)
-        return net(jnp.concatenate((obs, pred_state)))
+        return pred_state + net(jnp.concatenate((obs, pred_state)))
 
     def __init__(self, 
                 state_dim, 
@@ -432,8 +432,8 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
         pred_state = vec_from_gaussian_params(params.prior)
 
-        candidate_filt_state = self.filt_update_apply(params.filt_update, obs, pred_state)
-        return gaussian_params_from_vec(pred_state + candidate_filt_state, self.state_dim)
+        filt_state = self.filt_update_apply(params.filt_update, obs, pred_state)
+        return gaussian_params_from_vec(filt_state, self.state_dim)
 
 
     def new_filt_state(self, obs, filt_state, params):
@@ -441,9 +441,9 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         pred_mean, pred_cov = Kalman.predict(filt_state.mean, filt_state.scale.cov, params.transition)
         pred_state = vec_from_gaussian_params(GaussianParams(pred_mean, Scale(cov=pred_cov)))
 
-        candidate_filt_state  = self.filt_update_apply(params.filt_update, obs, pred_state)
+        filt_state  = self.filt_update_apply(params.filt_update, obs, pred_state)
 
-        return gaussian_params_from_vec(pred_state + candidate_filt_state, self.state_dim)
+        return gaussian_params_from_vec(filt_state, self.state_dim)
     
 
     def format_params(self, params):

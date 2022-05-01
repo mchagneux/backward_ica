@@ -21,7 +21,8 @@ def main(args, save_dir):
                             obs_dim=args.obs_dim, 
                             transition_matrix_conditionning=args.transition_matrix_conditionning,
                             hidden_layer_sizes=args.hidden_layer_sizes,
-                            slope=args.slope) # specify the structure of the true model
+                            slope=args.slope,
+                            num_particles=args.num_particles) # specify the structure of the true model
 
     key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
 
@@ -43,18 +44,16 @@ def main(args, save_dir):
 
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
-    avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(obs_seq, 
-                                                                        theta, 
-                                                                        key,
-                                                                        args.num_particles)))(obs_seqs, smc_keys))
+    avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(key, obs_seq, 
+                                                                        theta)))(obs_seqs, smc_keys))
 
 
     print('Avg evidence:', avg_evidence)
 
 
     q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
-                                obs_dim=args.obs_dim,
-                                transition_matrix_conditionning=args.transition_matrix_conditionning)
+                            obs_dim=args.obs_dim,
+                            transition_matrix_conditionning=args.transition_matrix_conditionning)
 
     # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, obs_dim=args.obs_dim)
 
@@ -68,7 +67,6 @@ if __name__ == '__main__':
 
     import argparse
     import os 
-    import sys
 
     args = argparse.Namespace()
 

@@ -90,11 +90,14 @@ class Scale:
         if cov is not None:
             self.cov = cov
             self.chol = cholesky(cov)
+
         elif prec is not None:
             self.prec = prec
             self.chol = chol_from_prec(prec)
+
         elif chol is not None:
             self.chol = chol
+            
         else:
             raise ValueError()        
 
@@ -127,9 +130,48 @@ class Scale:
 KernelParams = namedtuple('KernelParams', ['map','scale'])
 LinearMapParams = namedtuple('LinearMapParams', ['w', 'b'])
 GaussianParams = namedtuple('GaussianParams', ['mean', 'scale'])
-HMMParams = namedtuple('HMMParams',['prior','transition','emission'])
 
-NeuralLinearBackwardSmootherParams = namedtuple('NeuralLinearBackwardSmootherParams', ['prior','transition', 'filt_update'])
+@register_pytree_node_class
+@dataclass(init=True)
+class HMMParams:
+    
+    prior: GaussianParams 
+    transition:KernelParams
+    emission:KernelParams
+
+    def compute_covs(self):
+        self.prior.scale.cov
+        self.transition.scale.cov
+        self.emission.scale.cov
+
+    def tree_flatten(self):
+        return ((self.prior, self.transition, self.emission), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+
+@register_pytree_node_class
+@dataclass(init=True)
+class NeuralLinearBackwardSmootherParams:
+
+    prior: GaussianParams 
+    transition:KernelParams
+    filt_update:KernelParams
+
+    def compute_covs(self):
+        self.prior.scale.cov
+        self.transition.scale.cov
+
+    def tree_flatten(self):
+        return ((self.prior, self.transition, self.filt_update), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+
 # NeuralBackwardSmootherParams = namedtuple('NeuralLinearBackwardSmootherParams', ['prior','transition', 'filt_update'])
 
 
