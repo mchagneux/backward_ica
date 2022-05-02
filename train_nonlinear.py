@@ -52,11 +52,12 @@ def main(args, save_dir):
     print('Avg evidence:', avg_evidence)
 
 
-    q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
-                            obs_dim=args.obs_dim,
-                            transition_matrix_conditionning=args.transition_matrix_conditionning)
+    # q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
+    #                         obs_dim=args.obs_dim,
+    #                         transition_matrix_conditionning=args.transition_matrix_conditionning)
 
-    # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, obs_dim=args.obs_dim)
+    q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
+                                    obs_dim=args.obs_dim)
 
     trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, args.num_samples)
 

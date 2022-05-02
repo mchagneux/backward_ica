@@ -190,7 +190,6 @@ class HMM:
         print('-- in update:', sum(len(leaf) for leaf in tree_leaves(params.emission)))
 
 
-
 class BackwardSmoother(metaclass=ABCMeta):
 
     def __init__(self, backwd_kernel, filt_dist):
@@ -396,8 +395,8 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
     def __init__(self, 
                 state_dim, 
                 obs_dim, 
-                transition_kernel_matrix_conditionning, 
-                filt_update_hidden_layer_sizes = (100,8), 
+                transition_kernel_matrix_conditionning='diagonal', 
+                filt_update_hidden_layer_sizes = (100,), 
                 prior_dist=Gaussian, 
                 filt_dist=Gaussian):
         
@@ -456,5 +455,3 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         print('Num params:', sum(len(leaf) for leaf in tree_leaves(params)))
         print('-- in prior + predict + backward:', sum(len(leaf) for leaf in tree_leaves((params.prior, params.transition))))
         print('-- in update:', sum(len(leaf) for leaf in tree_leaves(params.filt_update)))
-        print('-- in forget gate:', sum(len(leaf) for leaf in tree_leaves(params.forget_gate)))
-

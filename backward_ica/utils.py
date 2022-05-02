@@ -14,6 +14,34 @@ import pickle
 import argparse
 # Containers for parameters of various objects 
 
+def tree_prepend(prep, tree):
+    preprended = tree_map(
+        lambda a, b: jnp.concatenate((a[None,:], b)), prep, tree
+    )
+    return preprended
+
+def tree_append(tree, app):
+    appended = tree_map(
+        lambda a, b: jnp.concatenate((a, b[None,:])), tree, app
+    )
+    return appended
+
+def tree_droplast(tree):
+    '''Drop last index from each leaf'''
+    return tree_map(lambda a: a[:-1], tree)
+
+def tree_dropfirst(tree):
+    '''Drop first index from each leaf'''
+    return tree_map(lambda a: a[1:], tree)
+
+def tree_get_idx(idx, tree):
+    '''Get idx row from each leaf of tuple'''
+    return tree_map(lambda a: a[idx], tree)
+
+def tree_get_slice(start, stop, tree):
+    '''Get idx row from each leaf of tuple'''
+    return tree_map(lambda a: a[start:stop], tree)
+
 
 
 
@@ -126,6 +154,9 @@ class Scale:
             setattr(obj, k, v)
         return obj
 
+    def __repr__(self):
+        return str(vars(self))
+
 
 KernelParams = namedtuple('KernelParams', ['map','scale'])
 LinearMapParams = namedtuple('LinearMapParams', ['w', 'b'])
@@ -173,35 +204,6 @@ class NeuralLinearBackwardSmootherParams:
 
 
 # NeuralBackwardSmootherParams = namedtuple('NeuralLinearBackwardSmootherParams', ['prior','transition', 'filt_update'])
-
-
-def tree_prepend(prep, tree):
-    preprended = tree_multimap(
-        lambda a, b: jnp.concatenate((a[None,:], b)), prep, tree
-    )
-    return preprended
-
-def tree_append(tree, app):
-    appended = tree_multimap(
-        lambda a, b: jnp.concatenate((a, b[None,:])), tree, app
-    )
-    return appended
-
-def tree_droplast(tree):
-    '''Drop last index from each leaf'''
-    return tree_map(lambda a: a[:-1], tree)
-
-def tree_dropfirst(tree):
-    '''Drop first index from each leaf'''
-    return tree_map(lambda a: a[1:], tree)
-
-def tree_get_idx(idx, tree):
-    '''Get idx row from each leaf of tuple'''
-    return tree_map(lambda a: a[idx], tree)
-
-def tree_get_slice(start, stop, tree):
-    '''Get idx row from each leaf of tuple'''
-    return tree_map(lambda a: a[start:stop], tree)
 
 
 
