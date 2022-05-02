@@ -9,6 +9,7 @@ from .utils import *
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
 from functools import partial
 from jax import nn
+from typing import Callable
 
 def gaussian_params_from_vec(vec, d):
 
@@ -37,9 +38,9 @@ def neural_map(input, hidden_layer_sizes, slope, out_dim):
 
     return net(input)
 
-def linear_map_apply(params, input):
-    out = jnp.dot(params.w, input)
-    return out + jnp.broadcast_to(params.b, out.shape)
+def linear_map_apply(map_params, input):
+    out = jnp.dot(map_params.w, input)
+    return out + jnp.broadcast_to(map_params.b, out.shape)
 
 def linear_map_init_params(key, dummy_in, out_dim, conditionning):
     key, subkey = random.split(key, 2)
@@ -80,47 +81,85 @@ class Gaussian:
 
 class Kernel:
 
+
     def __init__(self,
                 in_dim, 
                 out_dim,
-                map_def, 
+                kernel_def, 
                 noise_dist=Gaussian):
 
         self.in_dim = in_dim
         self.out_dim = out_dim 
-        map_name, map_args = map_def
+        kernel_type, kernel_args = kernel_def
 
-        if map_name == 'linear':
-            conditionning = map_args
-            apply_map = linear_map_apply
+        if kernel_type['map'] == 'linear':
+            conditionning = kernel_args
+
+            apply_map = lambda params, input: (linear_map_apply(params.map, input), params.scale)
             init_map_params = partial(linear_map_init_params, out_dim=out_dim, conditionning=conditionning)
             format_map_params = partial(linear_map_format_params, conditionning_func=_conditionnings[conditionning])
-        else: 
-            map_forward = map_args 
-            init_map_params, apply_map = hk.without_apply_rng(hk.transform(partial(map_forward, 
-                                                                                out_dim=out_dim)))
-            format_map_params = lambda x:x
 
-        self.apply_map, self.init_map_params, self.format_map_params =  apply_map, init_map_params, format_map_params
-        self.noise_sample, self.noise_logpdf = noise_dist.sample, noise_dist.logpdf
+            def get_random_params(key, default_base_scale):
+                key, subkey = random.split(key, 2)
+                return KernelParams(map=init_map_params(key, jnp.empty((self.in_dim,))),
+                                    scale=default_base_scale * jnp.ones((self.out_dim,)))
+
+            def format_params(params):
+                return KernelParams(map=format_map_params(params.map),
+                            scale=Scale(chol=jnp.diag(params.scale)))
+
+
+
+        else:
+            if kernel_type['homogeneous']:
+            
+                map_forward = kernel_args 
+                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(map_forward, 
+                                                                                    out_dim=out_dim)))
+                apply_map = lambda params, input: (nonlinear_apply_map(params.map, input), params.scale)
+
+                format_map_params = lambda x:x
+
+                def get_random_params(key, default_base_scale):
+                    key, subkey = random.split(key, 2)
+                    return KernelParams(map=init_map_params(key, jnp.empty((self.in_dim,))),
+                                        scale=default_base_scale * jnp.ones((self.out_dim,)))
+
+                def format_params(params):
+                    return KernelParams(map=format_map_params(params.map),
+                                scale=Scale(chol=jnp.diag(params.scale)))
+            else: 
+                
+                map_forward, varying_params_shape = kernel_args
+
+                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(map_forward, 
+                                                                                out_dim=out_dim)))
+                
+                apply_map = lambda params, input: nonlinear_apply_map(params.amortized, params.varying, input)
+
+                def get_random_params(key):
+                    return init_map_params(key, jnp.empty((varying_params_shape,)), jnp.empty((self.in_dim,)))
+                
+                def format_params(params):
+                    return params 
+
+        self._apply_map = apply_map 
+        self.get_random_params = get_random_params
+        self._format_params = format_params
+        self._noise_sample, self._noise_logpdf = noise_dist.sample, noise_dist.logpdf
         
     def map(self, state, params):
-        return self.apply_map(params.map, state)
+        return GaussianParams(*self._apply_map(params, state))
     
     def sample(self, key, state, params):
-        return self.noise_sample(key, GaussianParams(self.map(state, params), params.scale))
+        return self._noise_sample(key, self.map(state, params))
 
     def logpdf(self, x, state, params):
-        return self.noise_logpdf(x, GaussianParams(self.map(state, params), params.scale))
+        return self._noise_logpdf(x, self.map(state, params))
 
-    def get_random_params(self, key, default_base_scale=None):
-        key, subkey = random.split(key, 2)
-        return KernelParams(map=self.init_map_params(key, jnp.empty((self.in_dim,))),
-                            scale=default_base_scale * jnp.ones((self.out_dim,)))
-    
     def format_params(self, params):
-        return KernelParams(map=self.format_map_params(params.map),
-                            scale=Scale(chol=jnp.diag(params.scale)))
+        return self._format_params(params)
+
     
 class HMM: 
 
@@ -254,7 +293,9 @@ class LinearBackwardSmoother(BackwardSmoother):
 
     def __init__(self, state_dim, filt_dist=Gaussian):
 
-        super().__init__(filt_dist, Kernel(state_dim, state_dim, ('linear', None)))
+        backwd_kernel_def = ({'homogeneous':False, 'map':'linear'}, None)
+
+        super().__init__(filt_dist, Kernel(state_dim, state_dim, backwd_kernel_def))
 
     def new_backwd_state(self, filt_state, params):
 
@@ -298,11 +339,14 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
                 obs_dim, 
                 transition_matrix_conditionning):
 
+        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, transition_matrix_conditionning)
+        emission_kernel_def =  ({'homogeneous':True, 'map':'linear'}, None)
+
         HMM.__init__(self, 
                     state_dim, 
                     obs_dim, 
-                    transition_kernel_type = lambda state_dim:Kernel(state_dim, state_dim, ('linear', transition_matrix_conditionning)), 
-                    emission_kernel_type = lambda state_dim, obs_dim:Kernel(state_dim, obs_dim, ('linear', None)))
+                    transition_kernel_type = lambda state_dim:Kernel(state_dim, state_dim, transition_kernel_def), 
+                    emission_kernel_type = lambda state_dim, obs_dim:Kernel(state_dim, obs_dim, emission_kernel_def))
 
         LinearBackwardSmoother.__init__(self, state_dim)
 
@@ -338,11 +382,14 @@ class NonLinearGaussianHMM(HMM):
                 num_particles=1000):
 
         nonlinear_map_forward = partial(neural_map, hidden_layer_sizes=hidden_layer_sizes, slope=slope)
+        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, transition_matrix_conditionning)
+        emission_kernel_def = ({'homogeneous':True, 'map':'nonlinear'}, nonlinear_map_forward)
+        
         HMM.__init__(self, 
                     state_dim, 
                     obs_dim, 
-                    transition_kernel_type = lambda state_dim: Kernel(state_dim, state_dim, ('linear', transition_matrix_conditionning)), 
-                    emission_kernel_type  = lambda state_dim, obs_dim:Kernel(state_dim, obs_dim, ('nonlinear', nonlinear_map_forward)))
+                    transition_kernel_type = lambda state_dim: Kernel(state_dim, state_dim, transition_kernel_def), 
+                    emission_kernel_type  = lambda state_dim, obs_dim:Kernel(state_dim, obs_dim, emission_kernel_def))
 
         self.smc = SMC(self.transition_kernel, self.emission_kernel, self.prior_dist, num_particles)
 
@@ -448,31 +495,46 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         print('-- in prior + predict + backward:', sum(len(leaf) for leaf in tree_leaves((params.prior, params.transition))))
         print('-- in update:', sum(len(leaf) for leaf in tree_leaves(params.filt_update)))
 
-class NeuralBackwardSmoother(BackwardSmoother):
+# class NeuralBackwardSmoother(BackwardSmoother):
 
 
-    @staticmethod
-    def filt_update_forward(obs, prev_filt_state, hidden_layer_sizes, out_dim):
-        net = hk.nets.MLP((*hidden_layer_sizes, out_dim), 
-                        activation=nn.tanh,
-                        activate_final=True)
-        return net(jnp.concatenate((obs, prev_filt_state)))
+#     @staticmethod
+#     def filt_update_forward(obs, prev_filt_state, hidden_layer_sizes, out_dim):
+#         net = hk.nets.MLP((*hidden_layer_sizes, out_dim), 
+#                         activation=nn.tanh,
+#                         activate_final=True)
+#         return net(jnp.concatenate((obs, prev_filt_state)))
 
-    @staticmethod
-    def backwd_update_forward(filt_state, hidden_layer_sizes, out_dim):
-        net = hk.nets.MLP((*hidden_layer_sizes, out_dim),
-                        activation=nn.tanh,
-                        activate_final=True)
-        return net(filt_state)
+#     @staticmethod
+#     def backwd_kernel_map_forward(backwd_map_state, next_state, hidden_layer_sizes):
 
-    def __init__(self, state_dim, 
-                prior_dist=Gaussian, 
-                filt_dist=Gaussian,
-                backwd_dist=Gaussian, 
-                filt_update_hidden_layer_sizes=(10,),
-                backwd_update_hidden_layer_sizes=(10,)):
-        pass 
-    
+#         net = hk.nets.MLP((*hidden_layer_sizes, next_state.shape[0]),
+#                 activation=nn.tanh,
+#                 activate_final=True)
+        
+#         return net((jnp.concatenate(backwd_map_state, next_state)))
+
+#     @staticmethod   
+#     def backwd_update_forward(filt_state, hidden_layer_sizes):
+
+        
+
+#     def __init__(self, state_dim, obs_dim,
+#                 prior_dist=Gaussian, 
+#                 filt_dist=Gaussian,
+#                 backwd_dist=Gaussian, 
+#                 filt_update_hidden_layer_sizes=(10,),
+#                 backwd_update_hidden_layer_sizes=(10,)):
+
+#         self.state_dim, self.obs_dim = state_dim, obs_dim
+#         self.prior_dist = prior_dist 
+
+#         backwd_kernel = 
+        
+
+
+        
+
             
         
 
