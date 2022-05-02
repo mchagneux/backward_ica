@@ -33,14 +33,17 @@ def main(args, save_dir):
 
     import matplotlib.pyplot as plt 
 
-    test_points = jnp.linspace(state_seqs.min(),state_seqs.max(), 100).reshape(-1, args.state_dim)
-    plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission))
-    plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
-    plt.clf()
+    if args.state_dim == 1: 
+        plt.scatter(range(len(state_seqs[0])), state_seqs[0])
+        plt.savefig(os.path.join(save_dir,'example_states'))
+        plt.clf()
 
-    plt.scatter(range(len(state_seqs[0])), state_seqs[0])
-    plt.savefig(os.path.join(save_dir,'example_states'))
-    plt.clf()
+    if args.obs_dim == 1: 
+        test_points = jnp.linspace(state_seqs.min(),state_seqs.max(), 100).reshape(-1, args.state_dim)
+        plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission))
+        plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
+        plt.clf()
+
 
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
@@ -59,7 +62,13 @@ def main(args, save_dir):
     q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
                                     obs_dim=args.obs_dim)
 
-    trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, args.num_samples)
+    trainer = SVITrainer(p, q, 
+                        args.optimizer, 
+                        args.learning_rate, 
+                        args.num_epochs, 
+                        args.batch_size, 
+                        args.num_samples, 
+                        force_mc=True)
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi,3), obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
@@ -72,7 +81,7 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'nonlinear_refactor'
+    experiment_name = 'nonlinear_full_mc'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     
     os.mkdir(save_dir)

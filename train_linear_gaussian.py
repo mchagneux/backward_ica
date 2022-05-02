@@ -24,7 +24,8 @@ def main(args, save_dir):
     key, subkey = jax.random.split(key, 2)
     obs_seqs = p.sample_multiple_sequences(subkey, theta, args.num_seqs, args.seq_length)[1]
 
-    check_linear_gaussian_elbo(obs_seqs, p, theta)
+    # check_linear_gaussian_elbo(obs_seqs, p, theta)
+    print('Computing evidence...')
     avg_evidence = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta))(obs_seqs))
     print('Avg evidence:', avg_evidence)
 
@@ -34,7 +35,7 @@ def main(args, save_dir):
                             obs_dim=args.obs_dim, 
                             transition_matrix_conditionning=args.transition_matrix_conditionning) # specify the structure of the true model, but init params are sampled during optimisiation     
 
-    trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size)
+    trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, force_mc=True)
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi, 3), obs_seqs, theta, args.num_fits, store_every=args.store_every) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
@@ -46,7 +47,7 @@ if __name__ == '__main__':
     import os 
     args = argparse.Namespace()
 
-    experiment_name = 'linear_model_refactor'
+    experiment_name = 'linear_model_full_mc_higher_dim'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     os.mkdir(save_dir)
 
@@ -54,7 +55,7 @@ if __name__ == '__main__':
     args.seed_theta = 1326
     args.seed_phi = 4569
 
-    args.state_dim, args.obs_dim = 1,1 
+    args.state_dim, args.obs_dim = 10,12 
     args.transition_matrix_conditionning = 'diagonal'
 
     args.seq_length = 64
