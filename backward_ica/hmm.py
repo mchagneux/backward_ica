@@ -9,7 +9,6 @@ from .utils import *
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
 from functools import partial
 from jax import nn
-from typing import Callable
 
 def gaussian_params_from_vec(vec, d, chol_add=lambda d:jnp.zeros((d,d))):
 

@@ -70,7 +70,7 @@ def main(args, save_dir):
                         args.num_epochs, 
                         args.batch_size, 
                         args.num_samples, 
-                        force_mc=False)
+                        force_mc=True)
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi,3), obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
@@ -113,9 +113,8 @@ if __name__ == '__main__':
 
 
     args.num_particles = 1000
-    args.num_samples = 5
+    args.num_samples = 1
 
-    # os.environ["XLA_FLAGS"] = f'--xla_force_host_platform_device_count={args.batch_size}'
 
 
     utils.save_args(args, 'train_args', save_dir)
