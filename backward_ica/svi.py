@@ -358,8 +358,6 @@ class SVITrainer:
             self.elbo = GeneralELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
 
-
-        
     def fit(self, key_batcher, key_montecarlo, data, theta, phi, store_every):
 
         if isinstance(self.elbo, LinearGaussianTowerELBO):
@@ -469,7 +467,7 @@ class SVITrainer:
 
         all_avg_elbos = []
         all_params = []
-        print('-- Starting training...')
+        print('Starting training...')
         for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)

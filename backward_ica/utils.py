@@ -161,6 +161,8 @@ class Scale:
 KernelParams = namedtuple('KernelParams', ['map','scale'])
 LinearMapParams = namedtuple('LinearMapParams', ['w', 'b'])
 GaussianParams = namedtuple('GaussianParams', ['mean', 'scale'])
+NeuralBackwardSmootherParams = namedtuple('NeuralBackwardSmootherParams', ['prior', 'filt_update', 'backwd_map'])
+BackwardState = namedtuple('BackwardState', ['varying', 'amortized'])
 
 @register_pytree_node_class
 @dataclass(init=True)
@@ -203,7 +205,7 @@ class NeuralLinearBackwardSmootherParams:
         return cls(*children)
 
 
-# NeuralBackwardSmootherParams = namedtuple('NeuralLinearBackwardSmootherParams', ['prior','transition', 'filt_update'])
+
 
 
 

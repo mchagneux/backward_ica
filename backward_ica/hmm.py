@@ -11,14 +11,14 @@ from functools import partial
 from jax import nn
 from typing import Callable
 
-def gaussian_params_from_vec(vec, d):
+def gaussian_params_from_vec(vec, d, chol_add=lambda d:jnp.zeros((d,d))):
 
     mean = vec[:d]
     chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(vec[d:])
-    return GaussianParams(mean, scale=Scale(chol=chol))
+    return GaussianParams(mean, scale=Scale(chol=chol + chol_add(d)))
 
-def vec_from_gaussian_params(params):
-    return jnp.concatenate((params.mean, jnp.tril(params.scale.chol).flatten()))
+def vec_from_gaussian_params(params, d):
+    return jnp.concatenate((params.mean, params.scale.chol[jnp.tril_indices(d)]))
 
 _conditionnings = {'diagonal':lambda param: jnp.diag(param),
                 'symetric_def_pos': lambda param: param @ param.T,
@@ -430,7 +430,8 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
     def filt_update_forward(obs, pred_state, hidden_layer_sizes, out_dim):
         net = hk.nets.MLP((*hidden_layer_sizes,out_dim), 
                         activation=nn.tanh,
-                        activate_final=True)
+                        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                        activate_final=False)
         return net(jnp.concatenate((obs, pred_state)))
 
     def __init__(self, 
@@ -446,7 +447,8 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         self.state_dim, self.obs_dim = state_dim, obs_dim 
 
         self.prior_dist:Gaussian = prior_dist
-        self.transition_kernel = Kernel(state_dim, state_dim, ('linear', transition_kernel_matrix_conditionning))
+        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, transition_kernel_matrix_conditionning)
+        self.transition_kernel = Kernel(state_dim, state_dim, transition_kernel_def)
         self.filt_dist:Gaussian = filt_dist
 
         d = state_dim
@@ -454,7 +456,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         
         self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.filt_update_forward, 
                                                                                 hidden_layer_sizes=filt_update_hidden_layer_sizes, 
-                                                                                out_dim=self.filt_state_shape)))
+                                                                                out_dim=self.filt_state_shape))) 
         
     def get_random_params(self, key):
 
@@ -470,19 +472,19 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
     def init_filt_state(self, obs, params):
 
-        pred_state = vec_from_gaussian_params(params.prior)
+        pred_state = vec_from_gaussian_params(params.prior, self.state_dim)
 
         filt_state = self.filt_update_apply(params.filt_update, obs, pred_state)
-        return gaussian_params_from_vec(filt_state, self.state_dim)
+        return gaussian_params_from_vec(filt_state, self.state_dim, chol_add=jnp.eye)
 
     def new_filt_state(self, obs, filt_state, params):
 
         pred_mean, pred_cov = Kalman.predict(filt_state.mean, filt_state.scale.cov, params.transition)
-        pred_state = vec_from_gaussian_params(GaussianParams(pred_mean, Scale(cov=pred_cov)))
+        pred_state = vec_from_gaussian_params(GaussianParams(pred_mean, Scale(cov=pred_cov)), self.state_dim)
 
         filt_state  = self.filt_update_apply(params.filt_update, obs, pred_state)
 
-        return gaussian_params_from_vec(filt_state, self.state_dim)
+        return gaussian_params_from_vec(filt_state, self.state_dim, chol_add=jnp.eye)
     
     def format_params(self, params):
         return NeuralLinearBackwardSmootherParams(self.prior_dist.format_params(params.prior),
@@ -495,42 +497,103 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         print('-- in prior + predict + backward:', sum(len(leaf) for leaf in tree_leaves((params.prior, params.transition))))
         print('-- in update:', sum(len(leaf) for leaf in tree_leaves(params.filt_update)))
 
-# class NeuralBackwardSmoother(BackwardSmoother):
+class NeuralBackwardSmoother(BackwardSmoother):
 
 
-#     @staticmethod
-#     def filt_update_forward(obs, prev_filt_state, hidden_layer_sizes, out_dim):
-#         net = hk.nets.MLP((*hidden_layer_sizes, out_dim), 
-#                         activation=nn.tanh,
-#                         activate_final=True)
-#         return net(jnp.concatenate((obs, prev_filt_state)))
+    @staticmethod
+    def filt_update_forward(obs, prev_filt_state, hidden_layer_sizes, out_dim):
+        net = hk.nets.MLP((*hidden_layer_sizes, out_dim), 
+                        activation=nn.tanh,
+                        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                        activate_final=False)
 
-#     @staticmethod
-#     def backwd_kernel_map_forward(backwd_map_state, next_state, hidden_layer_sizes):
+        out = net(jnp.concatenate((obs, prev_filt_state)))
+        return out
 
-#         net = hk.nets.MLP((*hidden_layer_sizes, next_state.shape[0]),
-#                 activation=nn.tanh,
-#                 activate_final=True)
+    @staticmethod
+    def backwd_kernel_map_forward(varying_params, next_state, hidden_layer_sizes, out_dim):
+
+        d = out_dim
+        out_dim = d + (d * (d+1)) // 2
+
+        net = hk.nets.MLP((*hidden_layer_sizes, out_dim),
+                hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                activation=nn.tanh,
+                activate_final=False)
         
-#         return net((jnp.concatenate(backwd_map_state, next_state)))
+        out = net(jnp.concatenate((varying_params, next_state)))
+        mean = out[:d]
+        chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:]) + jnp.eye(d)
 
-#     @staticmethod   
-#     def backwd_update_forward(filt_state, hidden_layer_sizes):
+        return mean, Scale(chol=chol)
+
+        
+    def __init__(self, state_dim, obs_dim,
+                filt_update_hidden_layer_sizes=(10,),
+                backwd_map_hidden_layer_sizes=(10,),
+                prior_dist=Gaussian, 
+                filt_dist=Gaussian,
+                backwd_dist=Gaussian):
+
+
+        self.state_dim, self.obs_dim = state_dim, obs_dim
+        self.prior_dist = prior_dist 
+
+        d = state_dim
+        self.filt_state_shape = d + d*(d+1) // 2
+
+        backwd_kernel_def = ({'homogeneous':False, 'map':'nonlinear'}, 
+                        (partial(self.backwd_kernel_map_forward, hidden_layer_sizes=backwd_map_hidden_layer_sizes), self.filt_state_shape))
+
+        super().__init__(filt_dist, Kernel(state_dim, state_dim, backwd_kernel_def, backwd_dist))
+
+
+        self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.filt_update_forward, 
+                                                                                hidden_layer_sizes=filt_update_hidden_layer_sizes, 
+                                                                                out_dim=self.filt_state_shape)))
+
+    def get_random_params(self, key):
+
+        subkeys = random.split(key, 3)
+        prior_params = self.prior_dist.get_random_params(subkeys[0], self.state_dim, HMM.default_prior_base_scale)
+        backwd_map_params = self.backwd_kernel.get_random_params(subkeys[1])
+        filt_update_params = self.filt_update_init_params(subkeys[2], jnp.empty((self.obs_dim,)), jnp.empty((self.filt_state_shape,)))
+
+        return NeuralBackwardSmootherParams(prior_params, filt_update_params, backwd_map_params)
+
+    def format_params(self, params):
+
+        formatted_prior_params = self.prior_dist.format_params(params.prior)
+
+        return NeuralBackwardSmootherParams(formatted_prior_params, params.filt_update, params.backwd_map)
+
+    def init_filt_state(self, obs, params):
+        filt_state = self.filt_update_apply(params.filt_update, obs, vec_from_gaussian_params(params.prior, self.state_dim))
+        return gaussian_params_from_vec(filt_state, self.state_dim, chol_add=jnp.eye)
+
+    def new_filt_state(self, obs, filt_state, params):
+        filt_state = self.filt_update_apply(params.filt_update, obs, vec_from_gaussian_params(filt_state, self.state_dim))
+        return gaussian_params_from_vec(self.filt_update_apply(params.filt_update, obs, filt_state), self.state_dim, chol_add=jnp.eye)
+    
+    def new_backwd_state(self, filt_state, params):
+        return BackwardState(vec_from_gaussian_params(filt_state, self.state_dim), params.backwd_map)
+
+    def backwd_pass(self, last_filt_state, backwd_state_seq):
+        pass 
+
+    def print_num_params(self):
+        params = self.get_random_params(random.PRNGKey(0))
+        print('Num params:', sum(len(leaf) for leaf in tree_leaves(params)))
+        print('-- in prior:', sum(len(leaf) for leaf in tree_leaves(params.prior)))
+        print('-- in filtering update:', sum(len(leaf) for leaf in tree_leaves(params.filt_update)))
+        print('-- in backward map:', sum(len(leaf) for leaf in tree_leaves(params.backwd_map)))
+
+
+    
 
         
 
-#     def __init__(self, state_dim, obs_dim,
-#                 prior_dist=Gaussian, 
-#                 filt_dist=Gaussian,
-#                 backwd_dist=Gaussian, 
-#                 filt_update_hidden_layer_sizes=(10,),
-#                 backwd_update_hidden_layer_sizes=(10,)):
 
-#         self.state_dim, self.obs_dim = state_dim, obs_dim
-#         self.prior_dist = prior_dist 
-
-#         backwd_kernel = 
-        
 
 
         

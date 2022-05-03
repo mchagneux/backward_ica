@@ -20,7 +20,7 @@ def main(args, save_dir):
     p = hmm.NonLinearGaussianHMM(state_dim=args.state_dim, 
                             obs_dim=args.obs_dim, 
                             transition_matrix_conditionning=args.transition_matrix_conditionning,
-                            hidden_layer_sizes=args.hidden_layer_sizes,
+                            hidden_layer_sizes=args.emission_map_hidden_layer_sizes,
                             slope=args.slope,
                             num_particles=args.num_particles) # specify the structure of the true model
 
@@ -40,7 +40,7 @@ def main(args, save_dir):
 
     if args.obs_dim == 1: 
         test_points = jnp.linspace(state_seqs.min(),state_seqs.max(), 100).reshape(-1, args.state_dim)
-        plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission))
+        plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission).mean)
         plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
         plt.clf()
 
@@ -60,7 +60,12 @@ def main(args, save_dir):
     #                         transition_matrix_conditionning=args.transition_matrix_conditionning)
 
     q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
-                                    obs_dim=args.obs_dim)
+                                    obs_dim=args.obs_dim, filt_update_hidden_layer_sizes=args.filt_update_hidden_layer_sizes)
+
+    # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
+    #                         obs_dim=args.obs_dim, 
+    #                         filt_update_hidden_layer_sizes=args.filt_update_hidden_layer_sizes,
+    #                         backwd_map_hidden_layer_sizes=args.backwd_map_hidden_layer_sizes)
 
     trainer = SVITrainer(p, q, 
                         args.optimizer, 
@@ -81,7 +86,7 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'nonlinear_full_mc'
+    experiment_name = 'nonlinear_p_nonlinear_q_full_mc'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     
     os.mkdir(save_dir)
@@ -93,22 +98,25 @@ if __name__ == '__main__':
 
     args.state_dim, args.obs_dim = 1,1 
     args.transition_matrix_conditionning = 'diagonal'
-    args.hidden_layer_sizes = ()
+    args.emission_map_hidden_layer_sizes = ()
     args.slope = 0
 
-    args.seq_length = 16
-    args.num_seqs = 6400
+    args.seq_length = 4
+    args.num_seqs = 12800
 
     args.optimizer = 'adam'
     args.batch_size = 64
     args.learning_rate = 1e-2
-    args.num_epochs = 150
+    args.num_epochs = 200
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     
+    args.filt_update_hidden_layer_sizes = (100,8)
+    args.backwd_map_hidden_layer_sizes = (100,8)
+
 
     args.num_particles = 1000
-    args.num_samples = 1
+    args.num_samples = 10
 
     # os.environ["XLA_FLAGS"] = f'--xla_force_host_platform_device_count={args.batch_size}'
 
