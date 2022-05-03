@@ -47,7 +47,7 @@ if __name__ == '__main__':
     import os 
     args = argparse.Namespace()
 
-    experiment_name = 'linear_model_full_mc_higher_dim'
+    experiment_name = 'linear_model_full_mc'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     os.mkdir(save_dir)
 
@@ -55,7 +55,7 @@ if __name__ == '__main__':
     args.seed_theta = 1326
     args.seed_phi = 4569
 
-    args.state_dim, args.obs_dim = 10,12 
+    args.state_dim, args.obs_dim = 1,1
     args.transition_matrix_conditionning = 'diagonal'
 
     args.seq_length = 64

@@ -2,7 +2,6 @@ import jax
 import optax
 from jax import vmap, lax, config, numpy as jnp
 from jax.random import normal
-config.update("jax_enable_x64", True)
 
 from .hmm import *
 from .utils import *
@@ -103,8 +102,6 @@ class GeneralELBO:
 
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
-        phi.compute_covs()
-
         filt_state_seq = self.q.compute_filt_seq(obs_seq, phi)
         backwd_state_seq = self.q.compute_backwd_seq(filt_state_seq, phi)
 
@@ -138,7 +135,6 @@ class GeneralELBO:
         mc_samples = parallel_sampler(keys, obs_seq, last_filt_state, backwd_state_seq)
         return jnp.mean(mc_samples)
 
-
 class BackwardLinearTowerELBO:
 
     def __init__(self, p:HMM, q:LinearBackwardSmoother, num_samples=200):
@@ -147,7 +143,6 @@ class BackwardLinearTowerELBO:
         self.num_samples = num_samples
 
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
-
 
         def compute_kl_term(obs_seq):
 
@@ -182,43 +177,28 @@ class BackwardLinearTowerELBO:
 
         kl_term, (q_last_filt_state, q_backwd_state_seq) = compute_kl_term(obs_seq)
 
-        marginals = self.q.backwd_pass(q_last_filt_state, q_backwd_state_seq)
         
-        def sample_from_marginal(normal_sample, marginal, obs, theta):
-            common_term = obs - self.p.emission_kernel.map(marginal.mean + marginal.scale.chol @ normal_sample, theta.emission).squeeze()
-            return -0.5 * (common_term.T @ theta.emission.scale.prec @ common_term)
+        def _monte_carlo_sample(key, obs_seq, last_filt_state, backwd_state_seq):
 
+            keys = jax.random.split(key, obs_seq.shape[0])
+            last_sample = self.q.filt_dist.sample(keys[-1], last_filt_state)
+            last_term = self.p.emission_kernel.logpdf(obs_seq[-1], last_sample, theta.emission)
 
-        # def _sample_step(carry, x):
-        #     next_state_sample = carry
-        #     matrix, bias, cov, obs, normal_sample = x
-        #     current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
-        #     common_term = obs - self.p.emission_kernel.map(jnp.atleast_2d(current_state_sample), theta.emission).squeeze()
-        #     return current_state_sample, -0.5 * (common_term.T @ theta.emission.scale.prec @ common_term)
-            
-        # matrices = jnp.concatenate((q_backwd_state_seq.map.w, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
-        # biases = jnp.concatenate((q_backwd_state_seq.map.b, q_last_filt_state.mean[None,:]))
-        # covs = jnp.concatenate((q_backwd_state_seq.scale.cov, q_last_filt_state.scale.cov[None,:]))
+            def _sample_step(next_sample, x):
+                key, obs, backwd_state = x
+                sample = self.q.backwd_kernel.sample(key, next_sample, backwd_state)
+                return sample, self.p.emission_kernel.logpdf(obs, sample, theta.emission)
 
-        # sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
-        #                                                 init=jnp.empty((self.p.state_dim,)), 
-        #                                                 xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
-        #                                                 reverse=True)[1]
+            return last_term + jnp.sum(lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], obs_seq[:-1], backwd_state_seq), reverse=True)[1])
 
-        normal_samples = normal(key, shape=(self.num_samples, obs_seq.shape[0], self.p.state_dim))
-
-        monte_carlo_samples = vmap(vmap(sample_from_marginal, in_axes=(0,0,0,None)), in_axes=(0,None,None,None))(normal_samples, marginals, obs_seq, theta)
         
-        reconstruction_term = jnp.sum(jnp.mean(monte_carlo_samples, axis=0)) + \
-             obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.scale.cov.shape[0], theta.emission.scale.log_det)
+        parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
 
-        # reconstruction_term = jnp.sum(jnp.mean(jax.vmap(sample_path)(normal_samples), axis=0)) \
-        #                     + obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.scale.cov.shape[0], theta.emission.scale.log_det)
-
-                        
-        return reconstruction_term + kl_term
+        keys = jax.random.split(key, self.num_samples)
+        mc_samples = parallel_sampler(keys, obs_seq, q_last_filt_state, q_backwd_state_seq)
 
 
+        return jnp.mean(mc_samples) + kl_term
 
 class LinearGaussianTowerELBO:
 
@@ -256,81 +236,11 @@ class LinearGaussianTowerELBO:
         return expect_quadratic_term_under_gaussian(result, q_last_filt_state) \
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
                     + 0.5*self.p.state_dim
-    
-class JohnsonTowerELBO:
-
-    def __init__(self, p:HMM, q:BackwardSmoother, aux_map, num_samples=200):
-
-        self.p = p
-        self.q = q
-        self.aux_map = aux_map
-        self.num_samples = num_samples
-
-    def __call__(self, obs_seq, theta:HMMParams, phi, *args):
-
-        key, aux_params = args
-
-        def tractable_terms(obs_seq):
-
-            kl_term = quadratic_term_from_log_gaussian(theta.prior) 
-            aux_reconstruction_term  = get_tractable_emission_term_from_natparams(self.aux_map(aux_params, obs_seq[0]))
-
-            q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
-
-            def V_step(state, obs):
-
-                q_filt_state, kl_term, aux_reconstruction_term = state
-                q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
-
-                kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
-                        + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
-
-                aux_reconstruction_term = expect_quadratic_term_under_backward(aux_reconstruction_term, q_backwd_state) \
-                        + get_tractable_emission_term_from_natparams(self.aux_map(aux_params, obs))
 
 
-                kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
-                q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
-
-                return (q_filt_state, kl_term, aux_reconstruction_term), q_backwd_state
-        
-            (q_last_filt_state, kl_term, aux_reconstruction_term), q_backwd_state_seq = lax.scan(V_step, 
-                                                            init=(q_filt_state, kl_term, aux_reconstruction_term), 
-                                                            xs=obs_seq[1:])
 
 
-            kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state) \
-                        - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
-                        + 0.5*self.p.state_dim
-            aux_reconstruction_term = expect_quadratic_term_under_gaussian(aux_reconstruction_term, q_last_filt_state)
 
-            return (kl_term, aux_reconstruction_term), (q_last_filt_state, q_backwd_state_seq)
-
-        (kl_term, aux_reconstruction_term), (q_last_filt_state, q_backwd_state_seq) = tractable_terms(obs_seq)
-
-        normal_samples = normal(key, shape=(self.num_samples, obs_seq.shape[0], self.p.state_dim))
-
-        def _sample_step(carry, x):
-            next_state_sample = carry
-            matrix, bias, cov, obs, normal_sample = x
-            current_state_sample = matrix @ next_state_sample + bias + jnp.linalg.cholesky(cov) @ normal_sample
-            common_term = obs - self.p.emission_kernel.map(jnp.atleast_2d(current_state_sample), theta.emission).squeeze()
-            return current_state_sample, -0.5 * (common_term.T @ theta.emission.scale.prec @ common_term)
-            
-        matrices = jnp.concatenate((q_backwd_state_seq.map.w, jnp.zeros((1,self.p.state_dim, self.p.state_dim))))
-        biases = jnp.concatenate((q_backwd_state_seq.map.b, q_last_filt_state.mean[None,:]))
-        covs = jnp.concatenate((q_backwd_state_seq.scale.cov, q_last_filt_state.scale.cov[None,:]))
-
-        sample_path = lambda normal_samples_seq: lax.scan(_sample_step, 
-                                                        init=jnp.empty((self.p.state_dim,)), 
-                                                        xs=(matrices, biases, covs, obs_seq, normal_samples_seq), 
-                                                        reverse=True)[1]
-
-        reconstruction_term = jnp.sum(jnp.mean(jax.vmap(sample_path)(normal_samples), axis=0)) \
-                            + obs_seq.shape[0] * constant_terms_from_log_gaussian(theta.emission.scale.cov.shape[0], theta.emission.scale.log_det)
-
-                        
-        return kl_term + aux_reconstruction_term, kl_term + reconstruction_term
 
 class SVITrainer:
 

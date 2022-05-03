@@ -1,14 +1,11 @@
 import jax 
 import jax.numpy as jnp
-import optax 
 from jax import config 
-import pickle
-
-config.update("jax_enable_x64", True)
 
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 from backward_ica.svi import SVITrainer
+utils.enable_x64(True)
 
 
 def main(args, save_dir):
@@ -73,7 +70,7 @@ def main(args, save_dir):
                         args.num_epochs, 
                         args.batch_size, 
                         args.num_samples, 
-                        force_mc=True)
+                        force_mc=False)
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi,3), obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
@@ -102,21 +99,21 @@ if __name__ == '__main__':
     args.slope = 0
 
     args.seq_length = 4
-    args.num_seqs = 12800
+    args.num_seqs = 6400
 
     args.optimizer = 'adam'
     args.batch_size = 64
     args.learning_rate = 1e-2
-    args.num_epochs = 200
+    args.num_epochs = 300
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     
-    args.filt_update_hidden_layer_sizes = (100,8)
+    args.filt_update_hidden_layer_sizes = (100,)
     args.backwd_map_hidden_layer_sizes = (100,8)
 
 
     args.num_particles = 1000
-    args.num_samples = 10
+    args.num_samples = 5
 
     # os.environ["XLA_FLAGS"] = f'--xla_force_host_platform_device_count={args.batch_size}'
 

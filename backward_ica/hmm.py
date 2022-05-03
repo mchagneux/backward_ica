@@ -312,7 +312,6 @@ class LinearBackwardSmoother(BackwardSmoother):
 
         return KernelParams(LinearMapParams(A_back, a_back), Scale(cov=cov_back))
 
-
     def backwd_pass(self, last_filt_state, backwd_state_seq):
 
         last_filt_state_mean, last_filt_state_cov = last_filt_state.mean, last_filt_state.scale.cov
@@ -332,6 +331,10 @@ class LinearBackwardSmoother(BackwardSmoother):
         
         return tree_append(marginals, GaussianParams(last_filt_state_mean, Scale(cov=last_filt_state_cov)))
 
+    def compute_filt_seq(self, obs_seq, formatted_params):
+        formatted_params.compute_covs()
+        
+        return super().compute_filt_seq(obs_seq, formatted_params)
 class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
     def __init__(self, 
@@ -424,15 +427,29 @@ class NonLinearGaussianHMM(HMM):
         return self.smc.smooth_from_filt_seq(subkey, filt_seq, formatted_params)
 
 
+
+
 class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
+    class FiltUpdate(hk.Module):
+        
+        def __init__(self, hidden_layer_sizes, out_dim):
+            super().__init__(None)
+            self.net = hk.nets.MLP((*hidden_layer_sizes,out_dim), 
+                            activation=nn.tanh,
+                            w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                            activate_final=False)
+
+        def __call__(self, obs, pred_state):
+            forget_bias = hk.get_parameter('forget_bias', [], init=jnp.ones)
+            out = self.net(jnp.concatenate((obs, pred_state)))
+            forget_gate = nn.sigmoid(forget_bias)
+            return out * forget_gate + pred_state * (1 - forget_gate)
+            
     @staticmethod
     def filt_update_forward(obs, pred_state, hidden_layer_sizes, out_dim):
-        net = hk.nets.MLP((*hidden_layer_sizes,out_dim), 
-                        activation=nn.tanh,
-                        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-                        activate_final=False)
-        return net(jnp.concatenate((obs, pred_state)))
+        net = NeuralLinearBackwardSmoother.FiltUpdate(hidden_layer_sizes, out_dim)
+        return net(obs, pred_state)
 
     def __init__(self, 
                 state_dim, 
@@ -493,19 +510,22 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))
-        print('Num params:', sum(len(leaf) for leaf in tree_leaves(params)))
-        print('-- in prior + predict + backward:', sum(len(leaf) for leaf in tree_leaves((params.prior, params.transition))))
-        print('-- in update:', sum(len(leaf) for leaf in tree_leaves(params.filt_update)))
+        print('Num params:', sum(len(jnp.atleast_1d(leaf)) for leaf in tree_leaves(params)))
+        print('-- in prior + predict + backward:', sum(len(jnp.atleast_1d(leaf)) for leaf in tree_leaves((params.prior, params.transition))))
+        print('-- in update:', sum(len(jnp.atleast_1d(leaf)) for leaf in tree_leaves(params.filt_update)))
 
 class NeuralBackwardSmoother(BackwardSmoother):
 
 
     @staticmethod
     def filt_update_forward(obs, prev_filt_state, hidden_layer_sizes, out_dim):
+
+
         net = hk.nets.MLP((*hidden_layer_sizes, out_dim), 
                         activation=nn.tanh,
                         w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                         activate_final=False)
+
 
         out = net(jnp.concatenate((obs, prev_filt_state)))
         return out
@@ -588,8 +608,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
         print('-- in filtering update:', sum(len(leaf) for leaf in tree_leaves(params.filt_update)))
         print('-- in backward map:', sum(len(leaf) for leaf in tree_leaves(params.backwd_map)))
 
-
-    
 
         
 
