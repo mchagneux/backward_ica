@@ -17,7 +17,7 @@ def main(args, save_dir):
     p = hmm.NonLinearGaussianHMM(state_dim=args.state_dim, 
                             obs_dim=args.obs_dim, 
                             transition_matrix_conditionning=args.transition_matrix_conditionning,
-                            hidden_layer_sizes=args.emission_map_hidden_layer_sizes,
+                            layers=args.emission_map_layers,
                             slope=args.slope,
                             num_particles=args.num_particles) # specify the structure of the true model
 
@@ -57,12 +57,12 @@ def main(args, save_dir):
     #                         transition_matrix_conditionning=args.transition_matrix_conditionning)
 
     q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
-                                    obs_dim=args.obs_dim, filt_update_hidden_layer_sizes=args.filt_update_hidden_layer_sizes)
+                                    obs_dim=args.obs_dim, filt_update_layers=args.filt_update_layers)
 
     # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
     #                         obs_dim=args.obs_dim, 
-    #                         filt_update_hidden_layer_sizes=args.filt_update_hidden_layer_sizes,
-    #                         backwd_map_hidden_layer_sizes=args.backwd_map_hidden_layer_sizes)
+    #                         update_layers=args.filt_update_layers,
+    #                         backwd_layers=args.backwd_map_layers)
 
     trainer = SVITrainer(p, q, 
                         args.optimizer, 
@@ -83,7 +83,7 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'nonlinear_p_nonlinear_q_full_mc'
+    experiment_name = 'test'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     
     os.mkdir(save_dir)
@@ -95,10 +95,10 @@ if __name__ == '__main__':
 
     args.state_dim, args.obs_dim = 1,1 
     args.transition_matrix_conditionning = 'diagonal'
-    args.emission_map_hidden_layer_sizes = ()
+    args.emission_map_layers = ()
     args.slope = 0
 
-    args.seq_length = 4
+    args.seq_length = 8
     args.num_seqs = 6400
 
     args.optimizer = 'adam'
@@ -108,8 +108,8 @@ if __name__ == '__main__':
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     
-    args.filt_update_hidden_layer_sizes = (100,)
-    args.backwd_map_hidden_layer_sizes = (100,8)
+    args.filt_update_layers = (16,16)
+    args.backwd_map_layers = (16,16)
 
 
     args.num_particles = 1000

@@ -92,9 +92,9 @@ def get_tractable_emission_term_from_natparams(emission_natparams):
 
 
 
-class GeneralELBO:
+class GeneralBackwardELBO:
 
-    def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):
+    def __init__(self, p:HMM, q:Smoother, num_samples=200):
 
         self.p = p
         self.q = q
@@ -102,8 +102,8 @@ class GeneralELBO:
 
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
-        filt_state_seq = self.q.compute_filt_seq(obs_seq, phi)
-        backwd_state_seq = self.q.compute_backwd_seq(filt_state_seq, phi)
+        filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
+        backwd_state_seq = self.q.compute_kernel_state_seq(filt_state_seq, phi)
 
         def _monte_carlo_sample(key, obs_seq, last_filt_state, backwd_state_seq):
 
@@ -116,11 +116,11 @@ class GeneralELBO:
             def _sample_step(next_sample, x):
                 
                 key, obs, backwd_state = x
-                sample = self.q.backwd_kernel.sample(key, next_sample, backwd_state)
+                sample = self.q.kernel.sample(key, next_sample, backwd_state)
 
                 emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
                 transition_term_p = self.p.transition_kernel.logpdf(next_sample, sample, theta.transition)
-                backwd_term_q = -self.q.backwd_kernel.logpdf(sample, next_sample, backwd_state)
+                backwd_term_q = -self.q.kernel.logpdf(sample, next_sample, backwd_state)
 
                 return sample, emission_term_p + transition_term_p + backwd_term_q
             
@@ -153,7 +153,7 @@ class BackwardLinearTowerELBO:
             def V_step(state, obs):
 
                 q_filt_state, kl_term = state
-                q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
+                q_backwd_state = self.q.new_kernel_state(q_filt_state, phi)
 
                 kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
                         + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
@@ -186,7 +186,7 @@ class BackwardLinearTowerELBO:
 
             def _sample_step(next_sample, x):
                 key, obs, backwd_state = x
-                sample = self.q.backwd_kernel.sample(key, next_sample, backwd_state)
+                sample = self.q.kernel.sample(key, next_sample, backwd_state)
                 return sample, self.p.emission_kernel.logpdf(obs, sample, theta.emission)
 
             return last_term + jnp.sum(lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], obs_seq[:-1], backwd_state_seq), reverse=True)[1])
@@ -216,7 +216,7 @@ class LinearGaussianTowerELBO:
         def V_step(state, obs):
 
             q_filt_state, kl_term = state
-            q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
+            q_backwd_state = self.q.new_kernel_state(q_filt_state, phi)
 
             kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
                     + transition_term_integrated_under_backward(q_backwd_state, theta.transition) \
@@ -238,13 +238,54 @@ class LinearGaussianTowerELBO:
                     + 0.5*self.p.state_dim
 
 
+# class GeneralForwardELBO:
 
+#     def __init__(self, p:HMM, q:ForwardSmoother, num_samples=2):
 
+#         self.p = p
+#         self.q = q
+#         self.num_samples = num_samples
+
+#     def __call__(self, key, obs_seq, theta:HMMParams, phi):
+
+#         filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
+#         fwd_state_seq = self.q.compute_fwd_seq(filt_state_seq, phi)
+
+#         def _monte_carlo_sample(key, obs_seq, init_filt_state, fwd_state_seq):
+
+#             keys = jax.random.split(key, obs_seq.shape[0])
+#             first_sample = self.q.filt_dist.sample(keys[0], init_filt_state)
+
+#             first_term = -self.q.filt_dist.logpdf(first_sample, init_filt_state) \
+#                     + self.p.emission_kernel.logpdf(obs_seq[0], first_sample, theta.emission) \
+#                     + self.p.prior_dist.logpdf(init_sample, theta.prior)
+
+#             def _sample_step(prev_sample, x):
+                
+#                 key, obs, fwd_state = x
+#                 sample = self.q.fwd_kernel.sample(key, prev_sample, fwd_state)
+
+#                 emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
+#                 transition_term_p = self.p.transition_kernel.logpdf(sample, prev_sample, theta.transition)
+#                 backwd_term_q = -self.q.fwd_kernel.logpdf(sample, prev_sample, fwd_state)
+
+#                 return sample, emission_term_p + transition_term_p + backwd_term_q
+            
+#             init_sample, terms = lax.scan(_sample_step, init=first_sample, xs=(keys[1:], obs_seq[1:], fwd_state_seq), reverse=False)
+
+#             return first_term + jnp.sum(terms)
+
+#         parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
+
+#         keys = jax.random.split(key, self.num_samples)
+#         init_filt_state =  tree_get_idx(0, filt_state_seq)
+#         mc_samples = parallel_sampler(keys, obs_seq, init_filt_state, fwd_state_seq)
+#         return jnp.mean(mc_samples)
 
 
 class SVITrainer:
 
-    def __init__(self, p:HMM, q:BackwardSmoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_mc=False):
+    def __init__(self, p:HMM, q:Smoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_mc=False):
 
 
         # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
@@ -265,7 +306,7 @@ class SVITrainer:
                 self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
                 self.get_montecarlo_keys = get_keys
         else:
-            self.elbo = GeneralELBO(self.p, self.q, num_samples)
+            self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
 
     def fit(self, key_batcher, key_montecarlo, data, theta, phi, store_every):
@@ -418,7 +459,7 @@ def check_general_elbo(p:LinearGaussianHMM, num_seqs, seq_length, num_samples):
 
     seqs = p.sample_multiple_sequences(key_gen, theta, num_seqs, seq_length)[1]
     mc_keys = jax.random.split(jax.random.PRNGKey(2), num_seqs)
-    elbo = GeneralELBO(p,p,num_samples)
+    elbo = GeneralBackwardELBO(p,p,num_samples)
 
     evidence_reference = vmap(jit(lambda seq: p.likelihood_seq(seq, theta)))(seqs)
     

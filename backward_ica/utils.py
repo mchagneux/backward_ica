@@ -13,6 +13,7 @@ import json
 import os 
 import pickle 
 import argparse
+from typing import Any
 # Containers for parameters of various objects 
 
 def enable_x64(use_x64=True):
@@ -210,8 +211,7 @@ class Scale:
 KernelParams = namedtuple('KernelParams', ['map','scale'])
 LinearMapParams = namedtuple('LinearMapParams', ['w', 'b'])
 GaussianParams = namedtuple('GaussianParams', ['mean', 'scale'])
-NeuralBackwardSmootherParams = namedtuple('NeuralBackwardSmootherParams', ['prior', 'filt_update', 'backwd_map'])
-BackwardState = namedtuple('BackwardState', ['varying', 'amortized'])
+BackwardState = namedtuple('BackwardState', ['shared', 'varying', 'inner'])
 
 @register_pytree_node_class
 @dataclass(init=True)
@@ -253,7 +253,25 @@ class NeuralLinearBackwardSmootherParams:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
+@register_pytree_node_class
+@dataclass(init=True)
+class NeuralBackwardSmootherParams:
 
+    prior: GaussianParams 
+    transition:KernelParams
+    filt_update:KernelParams
+    backwd_map:Any
+
+    def compute_covs(self):
+        self.prior.scale.cov
+        self.transition.scale.cov
+
+    def tree_flatten(self):
+        return ((self.prior, self.transition, self.filt_update, self.backwd_map), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
 
 
 
@@ -398,14 +416,14 @@ def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb,
 def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref_params, approx_params, seq_length, step, ref_smoother_name, approx_smoother_name):
     timesteps = range(2, seq_length, step)
 
-    compute_ref_filt_seq = lambda obs_seq: ref_smoother.compute_filt_seq(obs_seq, ref_params)
-    compute_ref_backwd_seq = lambda filt_seq: ref_smoother.compute_backwd_seq(filt_seq, ref_params)
+    compute_ref_filt_seq = lambda obs_seq: ref_smoother.compute_filt_state_seq(obs_seq, ref_params)
+    compute_ref_backwd_seq = lambda filt_seq: ref_smoother.compute_kernel_state_seq(filt_seq, ref_params)
 
-    compute_approx_filt_seq = lambda obs_seq: approx_smoother.compute_filt_seq(obs_seq, approx_params)
-    compute_approx_backwd_seq = lambda filt_seq: approx_smoother.compute_backwd_seq(filt_seq, approx_params)
+    compute_approx_filt_seq = lambda obs_seq: approx_smoother.compute_filt_state_seq(obs_seq, approx_params)
+    compute_approx_backwd_seq = lambda filt_seq: approx_smoother.compute_kernel_state_seq(filt_seq, approx_params)
     
-    ref_backwd_pass = ref_smoother.backwd_pass
-    approx_backwd_pass = approx_smoother.backwd_pass
+    ref_compute_marginals = ref_smoother.compute_marginals
+    approx_compute_marginals = approx_smoother.compute_marginals
 
     def results_for_single_seq(state_seq, obs_seq):
 
@@ -415,8 +433,8 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
 
         def result_up_to_length(length):
 
-            ref_smoothed_means = ref_backwd_pass(tree_get_idx(length, ref_filt_seq), tree_get_slice(0,length-1, ref_backwd_seq))[0]
-            approx_smoothed_means = approx_backwd_pass(tree_get_idx(length, approx_filt_seq), tree_get_slice(0,length-1, approx_backwd_seq))[0]
+            ref_smoothed_means = ref_compute_marginals(tree_get_idx(length, ref_filt_seq), tree_get_slice(0,length-1, ref_backwd_seq))[0]
+            approx_smoothed_means = approx_compute_marginals(tree_get_idx(length, approx_filt_seq), tree_get_slice(0,length-1, approx_backwd_seq))[0]
             
             kalman_wrt_states = jnp.abs(jnp.sum(ref_smoothed_means - state_seq[:length], axis=0))
             vi_wrt_states = jnp.abs(jnp.sum(approx_smoothed_means - state_seq[:length], axis=0))
@@ -430,8 +448,8 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
             vi_wrt_states.append(result[1])
             vi_vs_kalman.append(result[2])
 
-        ref_smoothed_means = ref_backwd_pass(tree_get_idx(-1, ref_filt_seq), ref_backwd_seq)[0]
-        approx_smoothed_means = approx_backwd_pass(tree_get_idx(-1, approx_filt_seq), approx_backwd_seq)[0]
+        ref_smoothed_means = ref_compute_marginals(tree_get_idx(-1, ref_filt_seq), ref_backwd_seq)[0]
+        approx_smoothed_means = approx_compute_marginals(tree_get_idx(-1, approx_filt_seq), approx_backwd_seq)[0]
         vi_vs_kalman_marginals = jnp.abs(ref_smoothed_means - approx_smoothed_means)[jnp.array(timesteps)]
 
         return kalman_wrt_states, vi_wrt_states, vi_vs_kalman, vi_vs_kalman_marginals
@@ -470,23 +488,24 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
     plt.autoscale(True)
     plt.tight_layout()
 
-def multiple_length_ffbsi_smoothing(obs_seqs, smoother, params, timesteps, key, num_particles):
+def multiple_length_ffbsi_smoothing(key, obs_seqs, smoother, params, timesteps):
     
+    params = smoother.format_params(params)
     key, subkey = random.split(key, 2)
-    compute_filt_seq = jit(lambda obs_seq: smoother.compute_filt_seq(obs_seq, params, key, num_particles))
-    backwd_pass = lambda filt_seq: smoother.backwd_pass(filt_seq, params, subkey)
+    compute_filt_state_seq = jit(lambda obs_seq: smoother.compute_filt_state_seq(key, obs_seq, params))
+    compute_marginals = lambda filt_seq: smoother.compute_marginals(subkey, filt_seq, params)
 
 
     def results_for_single_seq(obs_seq):
 
-        filt_seq = compute_filt_seq(obs_seq)
+        filt_seq = compute_filt_state_seq(obs_seq)
 
         results = []
         
         for length in tqdm(timesteps): 
-            results.append(backwd_pass(tree_get_slice(0, length, filt_seq))[0])
+            results.append(compute_marginals(tree_get_slice(0, length, filt_seq))[0])
 
-        results.append(backwd_pass(filt_seq))
+        results.append(compute_marginals(filt_seq))
 
 
         return results
@@ -501,22 +520,24 @@ def multiple_length_ffbsi_smoothing(obs_seqs, smoother, params, timesteps, key, 
 
 def multiple_length_linear_backward_smoothing(obs_seqs, smoother, params, timesteps):
     
-    compute_filt_seq = lambda obs_seq: smoother.compute_filt_seq(obs_seq, params)
-    compute_backwd_seq = lambda filt_seq: smoother.compute_backwd_seq(filt_seq, params)
-    backwd_pass = smoother.backwd_pass
+    params = smoother.format_params(params)
+    compute_filt_state_seq = lambda obs_seq: smoother.compute_filt_state_seq(obs_seq, params)
+    compute_kernel_state_seq = lambda filt_seq: smoother.compute_kernel_state_seq(filt_seq, params)
+    compute_marginals = smoother.compute_marginals
 
     def results_for_single_seq(obs_seq):
 
-        filt_seq = compute_filt_seq(obs_seq)
-        backwd_seq = compute_backwd_seq(filt_seq)
+        filt_seq = compute_filt_state_seq(obs_seq)
+        backwd_seq = compute_kernel_state_seq(filt_seq)
 
         results = []
         
         for length in tqdm(timesteps): 
-        
-            results.append(backwd_pass(tree_get_idx(length, filt_seq), tree_get_slice(0,length-1, backwd_seq))[0])
+            marginal_means = compute_marginals(tree_get_idx(length, filt_seq), tree_get_slice(0,length-1, backwd_seq)).mean
+            results.append(marginal_means)
 
-        results.append(backwd_pass(tree_get_idx(-1, filt_seq), backwd_seq))
+        marginals = compute_marginals(tree_get_idx(-1, filt_seq), backwd_seq)
+        results.append((marginals.mean, marginals.scale.cov))
 
 
         return results

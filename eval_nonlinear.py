@@ -17,7 +17,7 @@ def main(train_args, eval_args, save_dir):
     p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
-                            hidden_layer_sizes=train_args.hidden_layer_sizes,
+                            layers=train_args.layers,
                             slope=train_args.slope) # specify the structure of the true model
 
     theta = utils.load_params('theta', save_dir)

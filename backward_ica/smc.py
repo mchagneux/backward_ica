@@ -80,7 +80,7 @@ class SMC:
         return terminal_log_probs, terminal_particles, likel - len(obs_seq)*jnp.log(self.num_particles)
 
 
-    def compute_filt_seq(self, key, obs_seq, params):
+    def compute_filt_state_seq(self, key, obs_seq, params):
 
 
         prior_key, proposal_key, resampling_key = random.split(key,3)

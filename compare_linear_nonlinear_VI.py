@@ -19,21 +19,23 @@ def main(dir_VI_1, dir_VI_2, eval_args, save_dir):
     p = hmm.NonLinearGaussianHMM(state_dim=args_V1.state_dim, 
                             obs_dim=args_V1.obs_dim, 
                             transition_matrix_conditionning=args_V1.transition_matrix_conditionning,
-                            hidden_layer_sizes=args_V1.hidden_layer_sizes,
-                            slope=args_V1.slope) # specify the structure of the true model
+                            layers=args_V1.emission_map_layers,
+                            slope=args_V1.slope,
+                            num_particles=eval_args.num_particles) # specify the structure of the true model
 
     theta = utils.load_params('theta', dir_VI_1)
 
     key_gen, key_smc = jax.random.split(key,2)
-    state_seqs, obs_seqs = hmm.sample_multiple_sequences(key_gen, p.sample_seq, theta, eval_args.num_seqs, eval_args.seq_length)
+    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta, eval_args.num_seqs, eval_args.seq_length)
     timesteps = range(1, eval_args.seq_length, eval_args.step)
-
-    smoothing_p_theta = utils.multiple_length_ffbsi_smoothing(obs_seqs, p, theta, timesteps, key_smc, eval_args.num_particles)
-
+    
     training_curves_1 = utils.load_train_logs(dir_VI_1)
     training_curves_2 = utils.load_train_logs(dir_VI_2)
 
     utils.superpose_training_curves(training_curves_1, training_curves_2, 'linearVI', 'nonlinearVI', save_dir)
+    smoothing_p_theta = utils.multiple_length_ffbsi_smoothing(key_smc, obs_seqs, p, theta, timesteps)
+
+
     
     q = hmm.LinearGaussianHMM(state_dim=args_V1.state_dim, 
                             obs_dim=args_V1.obs_dim, 
@@ -45,13 +47,14 @@ def main(dir_VI_1, dir_VI_2, eval_args, save_dir):
     smoothing_q_phi_1 = utils.multiple_length_linear_backward_smoothing(obs_seqs, q, phi, timesteps)
 
     args_V2 = utils.load_args('train_args',dir_VI_2)
-    q = hmm.NeuralBackwardSmoother(args_V2.state_dim, args_V2.obs_dim)
+    q = hmm.NeuralLinearBackwardSmoother(args_V2.state_dim, args_V2.obs_dim, filt_update_layers=args_V2.filt_update_layers)
 
     phi = utils.load_params(f'phi_every_{args_V2.store_every}_epochs', dir_VI_2)[args_V2.num_epochs-1]
 
 
     smoothing_q_phi_2 = utils.multiple_length_linear_backward_smoothing(obs_seqs, q, phi, timesteps)
 
+    test = 0 
     smoothing_q_phi = {'linearVI':smoothing_q_phi_1, 'nonlinearVI':smoothing_q_phi_2}
     utils.compare_multiple_length_smoothing(state_seqs, smoothing_p_theta, smoothing_q_phi, timesteps, f'ffbsi_{eval_args.num_particles}', 'VI', save_dir)
 
@@ -62,8 +65,8 @@ if __name__ == '__main__':
 
     eval_args = argparse.Namespace()
 
-    dir_VI_1 = os.path.join('experiments', 'nonlinear_p_theta_linear_q_phi')
-    dir_VI_2 = os.path.join('experiments', 'nonlinear_p_theta_nonlinear_q_phi')
+    dir_VI_1 = os.path.join('archived_experiments', 'nonlinear_p_linear_q')
+    dir_VI_2 = os.path.join('archived_experiments', 'nonlinear_p_nonlinear_q')
 
     save_dir = os.path.join('experiments', 'compare_linear_nonlinear_VI')
     os.mkdir(save_dir)
