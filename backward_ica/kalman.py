@@ -13,14 +13,14 @@ class Kalman:
         return filt_mean, filt_cov
 
     def predict(filt_mean, filt_cov, transition_params):
-        A, a, Q = *transition_params.map, transition_params.scale.cov
+        A, a, Q = transition_params.map.w, transition_params.map.b, transition_params.scale.cov
         pred_mean = A @ filt_mean + a
         pred_cov = A @ filt_cov @ A.T + Q
         return pred_mean, pred_cov
 
     def update(pred_mean, pred_cov, obs, emission_params):
 
-        B, b, R = *emission_params.map, emission_params.scale.cov 
+        B, b, R = emission_params.map.w, emission_params.map.b, emission_params.scale.cov 
         kalman_gain = pred_cov @ B.T @ inv(B @ pred_cov @ B.T + R)
 
         filt_mean = pred_mean + kalman_gain @ (obs - (B @ pred_mean + b))
@@ -31,7 +31,7 @@ class Kalman:
     def filter_seq(obs_seq, hmm_params):
         
         def log_l_term(pred_mean, pred_cov, obs, emission_params):
-            B, b, R = *emission_params.map, emission_params.scale.cov
+            B, b, R = emission_params.map.w, emission_params.map.b, emission_params.scale.cov
             return jax_gaussian_logpdf(x=obs, 
                                 mean=B @ pred_mean + b , 
                                 cov=B @ pred_cov @ B.T + R)

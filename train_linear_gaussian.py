@@ -1,13 +1,10 @@
 import jax 
 import jax.numpy as jnp
-from jax import config 
-
-config.update("jax_enable_x64", True)
 
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 from backward_ica.svi import SVITrainer, check_linear_gaussian_elbo
-
+utils.enable_x64(True)
 
 def main(args, save_dir):
     key_theta = jax.random.PRNGKey(args.seed_theta)
@@ -47,7 +44,7 @@ if __name__ == '__main__':
     import os 
     args = argparse.Namespace()
 
-    experiment_name = 'linear_model_full_mc'
+    experiment_name = 'test_linear'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     os.mkdir(save_dir)
 

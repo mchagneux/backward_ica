@@ -209,17 +209,40 @@ class Scale:
 
 
 KernelParams = namedtuple('KernelParams', ['map','scale'])
-LinearMapParams = namedtuple('LinearMapParams', ['w', 'b'])
 GaussianParams = namedtuple('GaussianParams', ['mean', 'scale'])
 BackwardState = namedtuple('BackwardState', ['shared', 'varying', 'inner'])
+
+
+@register_pytree_node_class
+class LinearMapParams:
+    def __init__(self, w, b=None):
+        self.w = w 
+        if b is not None: 
+            self.b = b
+        
+    def tree_flatten(self):
+        attrs = vars(self)
+        children = attrs.values()
+        aux_data = attrs.keys()
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, params):
+        obj = cls.__new__(cls)
+        for k,v in zip(aux_data, params):
+            setattr(obj, k, v)
+        return obj
+
+    def __repr__(self):
+        return str(vars(self))
 
 @register_pytree_node_class
 @dataclass(init=True)
 class HMMParams:
     
     prior: GaussianParams 
-    transition:KernelParams
-    emission:KernelParams
+    transition: KernelParams
+    emission: KernelParams
 
     def compute_covs(self):
         self.prior.scale.cov
@@ -272,8 +295,6 @@ class NeuralBackwardSmootherParams:
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
-
-
 
 
 @dataclass(init=True)
@@ -362,12 +383,13 @@ def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence
 
     num_fits = len(avg_elbos)
     for fit_nb in range(num_fits):
+        stored_epoch_nbs_for_fit = stored_epoch_nbs[fit_nb]
         plt.yscale('symlog')
         ydata = avg_elbos[fit_nb]
         plt.plot(range(1,len(ydata)), ydata[1:], label='$\mathcal{L}(\\theta,\\phi)$', c='black')
         plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
         idx_color = 0
-        for epoch_nb in stored_epoch_nbs[len(stored_epoch_nbs)-3:]:
+        for epoch_nb in stored_epoch_nbs_for_fit:
             plt.axvline(x=epoch_nb, linestyle='dashed', c=colors[idx_color])
             idx_color+=1
 

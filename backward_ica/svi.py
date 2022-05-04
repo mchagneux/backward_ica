@@ -309,7 +309,7 @@ class SVITrainer:
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
 
-    def fit(self, key_batcher, key_montecarlo, data, theta, phi, store_every):
+    def fit(self, key_batcher, key_montecarlo, data, theta, phi):
 
         if isinstance(self.elbo, LinearGaussianTowerELBO):
             loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(phi))
@@ -343,7 +343,7 @@ class SVITrainer:
 
 
         avg_elbos = []
-        all_params = dict()
+        all_params = []
         batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
 
         for epoch_nb in range(self.num_epochs):
@@ -355,12 +355,9 @@ class SVITrainer:
             (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
                                                                 init=(data, params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
-            if epoch_nb % store_every == 0:
-                all_params[epoch_nb] = params
 
             avg_elbos.append(jnp.mean(avg_elbo_batches))
-        
-        all_params[epoch_nb] = params
+            all_params.append(params)
                     
         return all_params, avg_elbos
 
@@ -413,28 +410,46 @@ class SVITrainer:
 
         self.check_elbo(data, theta)
 
-        if store_every is None: 
-            store_every = self.num_epochs
-
         all_avg_elbos = []
         all_params = []
+        best_elbos = []
+        best_epochs = []
         print('Starting training...')
         for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
+
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
-            params, avg_elbos = self.fit(subkey_batcher, subkey_montecarlo, data, theta, self.q.get_random_params(subkey_params), store_every)
-            all_avg_elbos.append(avg_elbos)
-            all_params.append(params)
 
-            print(f'End of fit {fit_nb+1}/{num_fits}, final ELBO {avg_elbos[-1]:.3f}')
+            params, avg_elbos = self.fit(subkey_batcher, subkey_montecarlo, data, theta, self.q.get_random_params(subkey_params))
 
 
-        array_to_sort = np.array([avg_elbos[-1] for avg_elbos in all_avg_elbos])
-        array_to_sort[np.isnan(array_to_sort)] = -np.inf
-        best_optim = jnp.argmax(array_to_sort)
+            if store_every is not None:
+                best_epoch = -1
+                best_elbo = avg_elbos[best_epoch]
+                all_params.append(params[epoch_nb] for epoch_nb in range(stop=self.num_epochs, step=store_every))
+                all_avg_elbos.append(avg_elbos)
+                print(f'End of fit {fit_nb+1}/{num_fits}, final ELBO {best_elbo:.3f}')
+
+            else: 
+                best_epoch = jnp.argmax(jnp.array(avg_elbos))
+                best_epochs.append([best_epoch])
+
+                best_elbo = avg_elbos[best_epoch]
+                all_params.append(params[best_epoch])
+                all_avg_elbos.append(avg_elbos[:best_epoch])
+                
+                print(f'End of fit {fit_nb+1}/{num_fits}, best ELBO {best_elbo:.3f} at epoch {best_epoch}')
+            best_elbos.append(best_elbo)
+
+        
+        best_optim = jnp.argmax(np.array(best_elbos))
         print(f'Best fit is {best_optim+1}.')
         best_params = all_params[best_optim]
-        return best_params, (best_optim, list(best_params.keys()), all_avg_elbos)
+
+        if store_every is not None: 
+            return best_params, (best_optim, [list(range(stop=self.num_epochs, step=store_every)) for _ in range(self.num_fits)], all_avg_elbos)
+        else: 
+            return best_params, (best_optim, best_epochs, all_avg_elbos)
 
 
 

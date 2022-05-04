@@ -30,7 +30,12 @@ def main(args, save_dir):
 
     import matplotlib.pyplot as plt 
 
+
     if args.state_dim == 1: 
+        # for state_seq in state_seqs: 
+        #     plt.scatter(range(len(state_seq)), state_seq)
+        # plt.savefig(os.path.join(save_dir,'example_states'))
+        # plt.clf()
         plt.scatter(range(len(state_seqs[0])), state_seqs[0])
         plt.savefig(os.path.join(save_dir,'example_states'))
         plt.clf()
@@ -57,11 +62,11 @@ def main(args, save_dir):
     #                         transition_matrix_conditionning=args.transition_matrix_conditionning)
 
     q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
-                                    obs_dim=args.obs_dim, filt_update_layers=args.filt_update_layers)
+                                    obs_dim=args.obs_dim, update_layers=args.update_layers)
 
     # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
     #                         obs_dim=args.obs_dim, 
-    #                         update_layers=args.filt_update_layers,
+    #                         update_layers=args.update_layers,
     #                         backwd_layers=args.backwd_map_layers)
 
     trainer = SVITrainer(p, q, 
@@ -74,7 +79,7 @@ def main(args, save_dir):
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi,3), obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
-    utils.save_params(params, f'phi_every_{args.store_every}_epochs', save_dir)
+    utils.save_params(params, 'phi', save_dir)
 
 if __name__ == '__main__':
 
@@ -83,7 +88,7 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'test'
+    experiment_name = 'test_nonlinear_p_nonlinear_q'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     
     os.mkdir(save_dir)
@@ -99,7 +104,7 @@ if __name__ == '__main__':
     args.slope = 0
 
     args.seq_length = 8
-    args.num_seqs = 6400
+    args.num_seqs = 12800
 
     args.optimizer = 'adam'
     args.batch_size = 64
@@ -108,7 +113,7 @@ if __name__ == '__main__':
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     
-    args.filt_update_layers = (16,16)
+    args.update_layers = (16,16)
     args.backwd_map_layers = (16,16)
 
 
@@ -119,4 +124,3 @@ if __name__ == '__main__':
 
     utils.save_args(args, 'train_args', save_dir)
     main(args, save_dir)
-    # sys.stdout.close()
