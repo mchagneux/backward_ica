@@ -3,4 +3,4 @@ pandas
 matplotlib
 pykalman
 tqdm
-haiku-dm
+dm-haiku

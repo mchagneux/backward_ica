@@ -2,7 +2,7 @@ import jax
 import optax
 from jax import vmap, lax, config, numpy as jnp
 from jax.random import normal
-
+from time import time
 from .hmm import *
 from .utils import *
 
@@ -138,15 +138,19 @@ class GeneralBackwardELBO:
 class BackwardLinearTowerELBO:
 
     def __init__(self, p:HMM, q:LinearBackwardSmoother, num_samples=200):
+        
         self.p = p
         self.q = q
         self.num_samples = num_samples
 
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
+        
         def compute_kl_term(obs_seq):
 
-            kl_term = quadratic_term_from_log_gaussian(theta.prior)
+            phi.compute_covs()
+
+            result = quadratic_term_from_log_gaussian(theta.prior) + get_tractable_emission_term(obs_seq[0], theta.emission)
 
             q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
 
@@ -156,28 +160,38 @@ class BackwardLinearTowerELBO:
                 q_backwd_state = self.q.new_kernel_state(q_filt_state, phi)
 
                 kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
-                        + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
-
+                        + transition_term_integrated_under_backward(q_backwd_state, theta.transition) \
+                        + get_tractable_emission_term(obs, theta.emission)
 
                 kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
                 q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
 
                 return (q_filt_state, kl_term), q_backwd_state
         
-            (q_last_filt_state, kl_term), q_backwd_state_seq = lax.scan(V_step, 
-                                                            init=(q_filt_state, kl_term), 
-                                                            xs=obs_seq[1:])
+            (q_last_filt_state, result), q_backwd_state_seq = lax.scan(V_step, 
+                                                    init=(q_filt_state, result), 
+                                                    xs=obs_seq[1:])
 
 
-            kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state) \
+            kl_term = expect_quadratic_term_under_gaussian(result, q_last_filt_state) \
                         - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
-                        + 0.5*self.p.state_dim
+                        + 0.5 * self.p.state_dim
 
             return kl_term, (q_last_filt_state, q_backwd_state_seq)
 
         kl_term, (q_last_filt_state, q_backwd_state_seq) = compute_kl_term(obs_seq)
 
+        # marginals = self.q.compute_marginals(q_last_filt_state, q_backwd_state_seq)
+
+        # sample_from_marginal = lambda key, obs, marginal: self.p.emission_kernel.logpdf(obs, Gaussian.sample(key, marginal), theta.emission)
+        # sample_one_path = vmap(sample_from_marginal)
+        # parallel_sampler = lambda keys, obs_seq, marginals: jnp.sum(vmap(sample_one_path, in_axes=(0,None,None))(keys, obs_seq, marginals))
         
+
+        # keys = jax.random.split(key, obs_seq.shape[0] * self.num_samples).reshape(self.num_samples, obs_seq.shape[0], -1)
+
+        # mc_samples = parallel_sampler(keys, obs_seq, marginals)
+
         def _monte_carlo_sample(key, obs_seq, last_filt_state, backwd_state_seq):
 
             keys = jax.random.split(key, obs_seq.shape[0])
@@ -196,9 +210,8 @@ class BackwardLinearTowerELBO:
 
         keys = jax.random.split(key, self.num_samples)
         mc_samples = parallel_sampler(keys, obs_seq, q_last_filt_state, q_backwd_state_seq)
-
-
-        return jnp.mean(mc_samples) + kl_term
+        reconstruction_term = jnp.mean(mc_samples)
+        return kl_term - reconstruction_term
 
 class LinearGaussianTowerELBO:
 
@@ -389,7 +402,6 @@ class SVITrainer:
         with jax.profiler.trace('./profiling/'):
             print(step(params, data[:2], subkeys[:2]))
 
-
     def check_elbo(self, data, theta):
         if isinstance(self.p, LinearGaussianHMM):
             print('Checking ELBO quality...')
@@ -404,8 +416,6 @@ class SVITrainer:
             avg_elbos = vmap(elbo)(keys, data)
             print('Avg error with Kalman evidence:', jnp.mean(jnp.abs(avg_evidences-avg_elbos)))
 
-        
-
     def multi_fit(self, key_params, key_batcher, key_montecarlo, data, theta, num_fits, store_every=None):
 
         self.check_elbo(data, theta)
@@ -414,9 +424,10 @@ class SVITrainer:
         all_params = []
         best_elbos = []
         best_epochs = []
+        
         print('Starting training...')
-        for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
-
+        
+        for fit_nb, subkey_params in tqdm(enumerate(jax.random.split(key_params, num_fits))):
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
@@ -436,11 +447,10 @@ class SVITrainer:
 
                 best_elbo = avg_elbos[best_epoch]
                 all_params.append(params[best_epoch])
-                all_avg_elbos.append(avg_elbos[:best_epoch])
-                
+                all_avg_elbos.append(avg_elbos)
+
                 print(f'End of fit {fit_nb+1}/{num_fits}, best ELBO {best_elbo:.3f} at epoch {best_epoch}')
             best_elbos.append(best_elbo)
-
         
         best_optim = jnp.argmax(np.array(best_elbos))
         print(f'Best fit is {best_optim+1}.')
@@ -461,9 +471,9 @@ def check_linear_gaussian_elbo(p:LinearGaussianHMM, num_seqs, seq_length):
 
     elbo = LinearGaussianTowerELBO(p,p)
 
-    evidence_reference = vmap(jit(lambda seq: p.likelihood_seq(seq, theta)))(seqs)
+    evidence_reference = vmap(lambda seq: p.likelihood_seq(seq, theta))(seqs)
     theta = p.format_params(theta)
-    evidence_elbo = vmap(jit(lambda seq: elbo(seq, theta, theta)))(seqs)
+    evidence_elbo = vmap(lambda seq: elbo(seq, theta, theta))(seqs)
 
     print('ELBO sanity check:',jnp.mean(jnp.abs(evidence_elbo - evidence_reference)))
 
@@ -476,11 +486,26 @@ def check_general_elbo(p:LinearGaussianHMM, num_seqs, seq_length, num_samples):
     mc_keys = jax.random.split(jax.random.PRNGKey(2), num_seqs)
     elbo = GeneralBackwardELBO(p,p,num_samples)
 
-    evidence_reference = vmap(jit(lambda seq: p.likelihood_seq(seq, theta)))(seqs)
+    evidence_reference = vmap(lambda seq: p.likelihood_seq(seq, theta))(seqs)
     
     theta = p.format_params(theta)
-    evidence_elbo = vmap(jit(lambda key, seq: elbo(key, seq, theta, theta)))(mc_keys, seqs)
+    evidence_elbo = vmap(lambda key, seq: elbo(key, seq, theta, theta))(mc_keys, seqs)
 
     print('ELBO sanity check:',jnp.mean(jnp.abs(evidence_elbo - evidence_reference)))
 
+def check_backward_linear_elbo(p:LinearGaussianHMM, num_seqs, seq_length, num_samples):
+
+    key_params, key_gen = jax.random.split(jax.random.PRNGKey(0), 2)
+    theta = p.get_random_params(key_params)
+
+    seqs = p.sample_multiple_sequences(key_gen, theta, num_seqs, seq_length)[1]
+    mc_keys = jax.random.split(jax.random.PRNGKey(2), num_seqs)
+    elbo = BackwardLinearTowerELBO(p,p,num_samples)
+
+    evidence_reference = vmap(lambda seq: p.likelihood_seq(seq, theta))(seqs)
+    
+    theta = p.format_params(theta)
+    evidence_elbo = vmap(lambda key, seq: elbo(key, seq, theta, theta))(mc_keys, seqs)
+
+    print('ELBO sanity check:',jnp.mean(jnp.abs(evidence_elbo - evidence_reference)))
 

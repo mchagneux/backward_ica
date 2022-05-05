@@ -36,20 +36,33 @@ def main(args, save_dir):
         #     plt.scatter(range(len(state_seq)), state_seq)
         # plt.savefig(os.path.join(save_dir,'example_states'))
         # plt.clf()
-        plt.scatter(range(len(state_seqs[0])), state_seqs[0])
+        for state_seq in state_seqs[:100]: 
+            plt.plot(state_seq, linestyle='dotted', marker='.')
         plt.savefig(os.path.join(save_dir,'example_states'))
         plt.clf()
 
     if args.obs_dim == 1: 
-        test_points = jnp.linspace(state_seqs.min(),state_seqs.max(), 100).reshape(-1, args.state_dim)
-        plt.plot(test_points, p.emission_kernel.map(test_points, theta.emission).mean)
+        mapped_state_seqs = p.emission_kernel.map(state_seqs[:100], theta.emission).mean
+        for mapped_state_seq in mapped_state_seqs:
+            plt.plot(mapped_state_seq, linestyle='dotted', marker='.')
+        plt.savefig(os.path.join(save_dir,'example_mapped_states'))
+        plt.clf()
+
+        support = jnp.sort(state_seqs.flatten()).reshape(-1,1)
+        plt.plot(support, p.emission_kernel.map(support, theta.emission).mean)
         plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
+        plt.clf()
+        
+        support_stationary = jnp.sort(state_seqs[:,3:,:].flatten()).reshape(-1,1)
+        plt.plot(support_stationary, p.emission_kernel.map(support_stationary, theta.emission).mean)
+        plt.savefig(os.path.join(save_dir,'emission_map_on_states_support_stationary'))
         plt.clf()
 
 
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
     print('Computing evidence...')
+
     avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(key, obs_seq, 
                                                                         theta)))(obs_seqs, smc_keys))
 
@@ -62,7 +75,9 @@ def main(args, save_dir):
     #                         transition_matrix_conditionning=args.transition_matrix_conditionning)
 
     q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
-                                    obs_dim=args.obs_dim, update_layers=args.update_layers)
+                                    obs_dim=args.obs_dim, 
+                                    use_johnson=True,
+                                    update_layers=args.update_layers)
 
     # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
     #                         obs_dim=args.obs_dim, 
@@ -75,7 +90,7 @@ def main(args, save_dir):
                         args.num_epochs, 
                         args.batch_size, 
                         args.num_samples, 
-                        force_mc=True)
+                        force_mc=False)
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi,3), obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
@@ -88,7 +103,7 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'test_nonlinear_p_nonlinear_q'
+    experiment_name = 'nonlinear_p_nonlinear_q'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     
     os.mkdir(save_dir)
@@ -119,7 +134,6 @@ if __name__ == '__main__':
 
     args.num_particles = 1000
     args.num_samples = 1
-
 
 
     utils.save_args(args, 'train_args', save_dir)

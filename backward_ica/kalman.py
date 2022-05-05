@@ -7,7 +7,6 @@ from .utils import *
 class Kalman: 
 
 
-    @jit
     def init(obs, prior_params, emission_params):
         filt_mean, filt_cov = Kalman.update(prior_params.mean, prior_params.scale.cov, obs, emission_params)
         return filt_mean, filt_cov

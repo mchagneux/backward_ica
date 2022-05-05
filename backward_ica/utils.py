@@ -160,6 +160,11 @@ class lazy_property(object):
         setattr(instance, self.wrapped.__name__, value)
         return value
 
+
+KernelParams = namedtuple('KernelParams', ['map','scale'])
+BackwardState = namedtuple('BackwardState', ['shared', 'varying', 'inner'])
+
+
 @register_pytree_node_class
 class Scale:
 
@@ -207,11 +212,79 @@ class Scale:
     def __repr__(self):
         return str(vars(self))
 
+def empty_add(d):
+    return jnp.zeros((d,d))
 
-KernelParams = namedtuple('KernelParams', ['map','scale'])
-GaussianParams = namedtuple('GaussianParams', ['mean', 'scale'])
-BackwardState = namedtuple('BackwardState', ['shared', 'varying', 'inner'])
+@register_pytree_node_class
+class GaussianParams: 
 
+    def __init__(self, mean=None, scale=None, eta1=None, eta2=None):
+
+        if (mean is not None) and (scale is not None):
+            self.mean = mean 
+            self.scale = scale
+        elif (eta1 is not None) and (eta2 is not None):
+            self.eta1 = eta1 
+            self.eta2 = eta2
+
+    @classmethod
+    def from_mean_scale(cls, mean, scale):
+        obj = cls.__new__(cls)
+        obj.mean = mean 
+        obj.scale = scale
+        return obj
+
+    @classmethod
+    def from_nat_params(cls, eta1, eta2):
+        obj = cls.__new__(cls)
+        obj.eta1 = eta1
+        obj.eta2 = eta2 
+        return obj
+
+    @classmethod
+    def from_vec(cls, vec, d, chol_add=empty_add):
+        mean = vec[:d]
+        chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(vec[d:])
+        return cls(mean=mean, scale=Scale(chol=chol + chol_add(d)))
+    
+    @property
+    def vec(self):
+        d = self.mean.shape[0]
+        return jnp.concatenate((self.mean, self.scale.chol[jnp.tril_indices(d)]))
+
+    @lazy_property
+    def mean(self):
+        return self.scale.cov @ self.eta1
+
+    @lazy_property
+    def scale(self):
+        return Scale(prec=-0.5*self.eta2)
+    
+    @lazy_property
+    def eta1(self):
+        return self.scale.prec @ self.mean 
+        
+    @lazy_property
+    def eta2(self):
+        return -0.5 * self.scale.prec 
+        
+    def tree_flatten(self):
+        attrs = vars(self)
+        children = attrs.values()
+        aux_data = attrs.keys()
+        return (children, aux_data)
+        
+    @classmethod
+    def tree_unflatten(cls, aux_data, params):
+        obj = cls.__new__(cls)
+        for k,v in zip(aux_data, params):
+            setattr(obj, k, v)
+        return obj
+
+    def __repr__(self):
+        return str(vars(self))
+
+# GaussianParams = namedtuple('GaussianParams', ['mean', 'scale'])
 
 @register_pytree_node_class
 class LinearMapParams:
@@ -386,7 +459,7 @@ def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence
         stored_epoch_nbs_for_fit = stored_epoch_nbs[fit_nb]
         plt.yscale('symlog')
         ydata = avg_elbos[fit_nb]
-        plt.plot(range(1,len(ydata)), ydata[1:], label='$\mathcal{L}(\\theta,\\phi)$', c='black')
+        plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$', c='black')
         plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
         idx_color = 0
         for epoch_nb in stored_epoch_nbs_for_fit:
