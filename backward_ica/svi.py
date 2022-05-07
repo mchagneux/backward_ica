@@ -6,7 +6,6 @@ from time import time
 from .hmm import *
 from .utils import *
 
-
 def get_keys(key, num_seqs, num_epochs):
     keys = jax.random.split(key, num_seqs * num_epochs)
     keys = jnp.array(keys).reshape(num_epochs, num_seqs,-1)
@@ -91,7 +90,6 @@ def get_tractable_emission_term_from_natparams(emission_natparams):
                     c=const)
 
 
-
 class GeneralBackwardELBO:
 
     def __init__(self, p:HMM, q:Smoother, num_samples=200):
@@ -105,6 +103,7 @@ class GeneralBackwardELBO:
         filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
         backwd_state_seq = self.q.compute_kernel_state_seq(filt_state_seq, phi)
 
+        
         def _monte_carlo_sample(key, obs_seq, last_filt_state, backwd_state_seq):
 
             keys = jax.random.split(key, obs_seq.shape[0])
@@ -119,10 +118,12 @@ class GeneralBackwardELBO:
                 sample = self.q.kernel.sample(key, next_sample, backwd_state)
 
                 emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
+
                 transition_term_p = self.p.transition_kernel.logpdf(next_sample, sample, theta.transition)
+
                 backwd_term_q = -self.q.kernel.logpdf(sample, next_sample, backwd_state)
 
-                return sample, emission_term_p + transition_term_p + backwd_term_q
+                return sample, backwd_term_q + emission_term_p + transition_term_p
             
             init_sample, terms = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], obs_seq[:-1], backwd_state_seq), reverse=True)
 
@@ -142,76 +143,91 @@ class BackwardLinearTowerELBO:
         self.p = p
         self.q = q
         self.num_samples = num_samples
-
+            
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
         
-        def compute_kl_term(obs_seq):
+        result = quadratic_term_from_log_gaussian(theta.prior) #+ get_tractable_emission_term(obs_seq[0], theta.emission)
 
-            phi.compute_covs()
 
-            result = quadratic_term_from_log_gaussian(theta.prior) + get_tractable_emission_term(obs_seq[0], theta.emission)
+        q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
 
-            q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
+        def V_step(state, obs):
 
-            def V_step(state, obs):
+            q_filt_state, kl_term = state
+            q_backwd_state = self.q.new_kernel_state(q_filt_state, phi)
 
-                q_filt_state, kl_term = state
-                q_backwd_state = self.q.new_kernel_state(q_filt_state, phi)
+            kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
+                    + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
+                    #+ get_tractable_emission_term(obs, theta.emission)
 
-                kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
-                        + transition_term_integrated_under_backward(q_backwd_state, theta.transition) \
-                        + get_tractable_emission_term(obs, theta.emission)
 
-                kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
-                q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
+            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
+            q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
 
-                return (q_filt_state, kl_term), q_backwd_state
+            return (q_filt_state, kl_term), q_backwd_state
+    
+        (q_last_filt_state, result), q_backwd_state_seq = lax.scan(V_step, 
+                                                init=(q_filt_state, result), 
+                                                xs=obs_seq[1:])
+
+
+        result =  expect_quadratic_term_under_gaussian(result, q_last_filt_state) \
+                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
+                    + 0.5*self.p.state_dim
+
+
+
+        marginals = self.q.compute_marginals(q_last_filt_state, q_backwd_state_seq)
+
+
+        def sample_one_path(key, obs_seq, marginal_params_seq):
+
+            def term_at_t(key, obs, marginal_params):
+                sample = Gaussian.sample(key, marginal_params)
+                return self.p.emission_kernel.logpdf(obs, sample, theta.emission)
+
+            keys = jax.random.split(key, len(obs_seq))
+
+            return jnp.sum(vmap(term_at_t)(keys, obs_seq, marginal_params_seq))
+
+
+        parallel_sampler = vmap(sample_one_path, in_axes=(0,None,None))
         
-            (q_last_filt_state, result), q_backwd_state_seq = lax.scan(V_step, 
-                                                    init=(q_filt_state, result), 
-                                                    xs=obs_seq[1:])
-
-
-            kl_term = expect_quadratic_term_under_gaussian(result, q_last_filt_state) \
-                        - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
-                        + 0.5 * self.p.state_dim
-
-            return kl_term, (q_last_filt_state, q_backwd_state_seq)
-
-        kl_term, (q_last_filt_state, q_backwd_state_seq) = compute_kl_term(obs_seq)
-
-        # marginals = self.q.compute_marginals(q_last_filt_state, q_backwd_state_seq)
-
-        # sample_from_marginal = lambda key, obs, marginal: self.p.emission_kernel.logpdf(obs, Gaussian.sample(key, marginal), theta.emission)
-        # sample_one_path = vmap(sample_from_marginal)
-        # parallel_sampler = lambda keys, obs_seq, marginals: jnp.sum(vmap(sample_one_path, in_axes=(0,None,None))(keys, obs_seq, marginals))
-        
-
-        # keys = jax.random.split(key, obs_seq.shape[0] * self.num_samples).reshape(self.num_samples, obs_seq.shape[0], -1)
-
-        # mc_samples = parallel_sampler(keys, obs_seq, marginals)
-
-        def _monte_carlo_sample(key, obs_seq, last_filt_state, backwd_state_seq):
-
-            keys = jax.random.split(key, obs_seq.shape[0])
-            last_sample = self.q.filt_dist.sample(keys[-1], last_filt_state)
-            last_term = self.p.emission_kernel.logpdf(obs_seq[-1], last_sample, theta.emission)
-
-            def _sample_step(next_sample, x):
-                key, obs, backwd_state = x
-                sample = self.q.kernel.sample(key, next_sample, backwd_state)
-                return sample, self.p.emission_kernel.logpdf(obs, sample, theta.emission)
-
-            return last_term + jnp.sum(lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], obs_seq[:-1], backwd_state_seq), reverse=True)[1])
-
-        
-        parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
-
         keys = jax.random.split(key, self.num_samples)
-        mc_samples = parallel_sampler(keys, obs_seq, q_last_filt_state, q_backwd_state_seq)
-        reconstruction_term = jnp.mean(mc_samples)
-        return kl_term - reconstruction_term
+        
+        mc_samples = parallel_sampler(keys, obs_seq, marginals)
+
+        # def sample_one_path(key, obs_seq, last_filt_state, backwd_state_seq):
+
+        #     keys = jax.random.split(key, len(obs_seq))
+
+        #     last_sample = self.q.filt_dist.sample(keys[-1], last_filt_state)
+
+        #     last_term = self.p.emission_kernel.logpdf(obs_seq[-1], last_sample, theta.emission)
+
+        #     def _sample_step(next_sample, x):
+                
+        #         key, obs, backwd_state = x
+
+        #         sample = self.q.kernel.sample(key, next_sample, backwd_state)
+
+        #         emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
+
+        #         return sample, emission_term_p
+            
+        #     terms = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], obs_seq[:-1], backwd_state_seq), reverse=True)[1]
+
+        #     return jnp.sum(terms) + last_term
+
+        # parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
+
+        # keys = jax.random.split(key, self.num_samples)
+
+        # mc_samples = parallel_sampler(keys, obs_seq, q_last_filt_state, q_backwd_state_seq)
+        # print('Variance via autoregressive:',jnp.var(mc_samples))
+
+        return result + jnp.mean(mc_samples)
 
 class LinearGaussianTowerELBO:
 
@@ -298,7 +314,7 @@ class LinearGaussianTowerELBO:
 
 class SVITrainer:
 
-    def __init__(self, p:HMM, q:Smoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_mc=False):
+    def __init__(self, p:HMM, q:Smoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_full_mc=False):
 
 
         # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
@@ -310,17 +326,18 @@ class SVITrainer:
         self.q = q 
         self.q.print_num_params()
         self.p = p 
+        if isinstance(self.p, LinearGaussianHMM):
+            self.elbo = LinearGaussianTowerELBO(self.p, self.q)
+            self.get_montecarlo_keys = get_dummy_keys
+        else: 
+            if (not isinstance(self.q, LinearBackwardSmoother)) or force_full_mc:
+                
+                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+            
+            else: self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
 
-        if not force_mc: 
-            if isinstance(self.p, LinearGaussianHMM):
-                self.elbo = LinearGaussianTowerELBO(self.p, self.q)
-                self.get_montecarlo_keys = get_dummy_keys
-            else: 
-                self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
-                self.get_montecarlo_keys = get_keys
-        else:
-            self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
+
 
     def fit(self, key_batcher, key_montecarlo, data, theta, phi):
 
@@ -328,6 +345,7 @@ class SVITrainer:
             loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(phi))
         else:
             loss = lambda key, seq, phi: -self.elbo(key, seq, self.p.format_params(theta), self.q.format_params(phi))
+            
         params = phi
 
         num_seqs = data.shape[0]
@@ -418,7 +436,7 @@ class SVITrainer:
 
     def multi_fit(self, key_params, key_batcher, key_montecarlo, data, theta, num_fits, store_every=None):
 
-        self.check_elbo(data, theta)
+        # self.check_elbo(data, theta)
 
         all_avg_elbos = []
         all_params = []
@@ -477,35 +495,40 @@ def check_linear_gaussian_elbo(p:LinearGaussianHMM, num_seqs, seq_length):
 
     print('ELBO sanity check:',jnp.mean(jnp.abs(evidence_elbo - evidence_reference)))
 
-def check_general_elbo(p:LinearGaussianHMM, num_seqs, seq_length, num_samples):
+def check_general_elbo(mc_key, p:LinearGaussianHMM, num_seqs, seq_length, num_samples):
 
     key_params, key_gen = jax.random.split(jax.random.PRNGKey(0), 2)
     theta = p.get_random_params(key_params)
 
     seqs = p.sample_multiple_sequences(key_gen, theta, num_seqs, seq_length)[1]
-    mc_keys = jax.random.split(jax.random.PRNGKey(2), num_seqs)
+    mc_keys = jax.random.split(mc_key, num_seqs)
     elbo = GeneralBackwardELBO(p,p,num_samples)
 
     evidence_reference = vmap(lambda seq: p.likelihood_seq(seq, theta))(seqs)
     
     theta = p.format_params(theta)
     evidence_elbo = vmap(lambda key, seq: elbo(key, seq, theta, theta))(mc_keys, seqs)
-
     print('ELBO sanity check:',jnp.mean(jnp.abs(evidence_elbo - evidence_reference)))
 
-def check_backward_linear_elbo(p:LinearGaussianHMM, num_seqs, seq_length, num_samples):
+def check_backward_linear_elbo(mc_key, p:LinearGaussianHMM, num_seqs, seq_length, num_samples):
 
     key_params, key_gen = jax.random.split(jax.random.PRNGKey(0), 2)
     theta = p.get_random_params(key_params)
 
     seqs = p.sample_multiple_sequences(key_gen, theta, num_seqs, seq_length)[1]
-    mc_keys = jax.random.split(jax.random.PRNGKey(2), num_seqs)
+    mc_keys = jax.random.split(mc_key, num_seqs)
     elbo = BackwardLinearTowerELBO(p,p,num_samples)
 
     evidence_reference = vmap(lambda seq: p.likelihood_seq(seq, theta))(seqs)
     
     theta = p.format_params(theta)
     evidence_elbo = vmap(lambda key, seq: elbo(key, seq, theta, theta))(mc_keys, seqs)
-
     print('ELBO sanity check:',jnp.mean(jnp.abs(evidence_elbo - evidence_reference)))
+    # time0 = time() 
+    # print('Grad:', grad_elbo(mc_keys, seqs, theta, theta))
+    # print('Timing:', time() - time0)
+
+    # evidence_elbo = vmap(lambda key, seq: elbo(key, seq, theta, theta))(mc_keys, seqs)
+    # # print('ELBO:', evidence_elbo)
+    # print('ELBO sanity check:',jnp.mean(jnp.abs(evidence_elbo - evidence_reference)))
 

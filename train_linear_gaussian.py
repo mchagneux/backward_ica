@@ -27,12 +27,15 @@ def main(args, save_dir):
     print('Avg evidence:', avg_evidence)
 
 
+    # q = hmm.LinearGaussianHMM(args.state_dim, args.obs_dim, 'diagonal')
     
-    q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
+    q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
                             obs_dim=args.obs_dim, 
-                            transition_matrix_conditionning=args.transition_matrix_conditionning) # specify the structure of the true model, but init params are sampled during optimisiation     
+                            transition_kernel_matrix_conditionning=args.transition_matrix_conditionning,
+                            use_johnson=True,
+                            update_layers=(16,)) # specify the structure of the true model, but init params are sampled during optimisiation     
 
-    trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, force_mc=True)
+    trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, force_full_mc=False)
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi, 3), obs_seqs, theta, args.num_fits, store_every=None) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
     utils.save_params(params, f'phi_every_{args.store_every}_epochs', save_dir)
@@ -54,13 +57,13 @@ if __name__ == '__main__':
     args.state_dim, args.obs_dim = 1,1
     args.transition_matrix_conditionning = 'diagonal'
 
-    args.seq_length = 64
-    args.num_seqs = 4096
+    args.seq_length = 4
+    args.num_seqs = 12800
 
     args.optimizer = 'adam'
-    args.batch_size = 32
+    args.batch_size = 64
     args.learning_rate = 1e-2
-    args.num_epochs = 150
+    args.num_epochs = 300
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
 

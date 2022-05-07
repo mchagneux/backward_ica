@@ -1,3 +1,4 @@
+from fcntl import F_SEAL_SEAL
 import jax 
 import jax.numpy as jnp
 from jax import config 
@@ -31,33 +32,32 @@ def main(args, save_dir):
     import matplotlib.pyplot as plt 
 
 
-    if args.state_dim == 1: 
         # for state_seq in state_seqs: 
         #     plt.scatter(range(len(state_seq)), state_seq)
         # plt.savefig(os.path.join(save_dir,'example_states'))
         # plt.clf()
-        for state_seq in state_seqs[:100]: 
-            plt.plot(state_seq, linestyle='dotted', marker='.')
-        plt.savefig(os.path.join(save_dir,'example_states'))
-        plt.clf()
+    state_seqs_1st_coord = state_seqs[:100]
+    for state_seq in state_seqs_1st_coord: 
+        plt.plot(state_seq, linestyle='dotted', marker='.')
+    plt.savefig(os.path.join(save_dir,'example_states'))
+    plt.clf()
 
-    if args.obs_dim == 1: 
-        mapped_state_seqs = p.emission_kernel.map(state_seqs[:100], theta.emission).mean
-        for mapped_state_seq in mapped_state_seqs:
-            plt.plot(mapped_state_seq, linestyle='dotted', marker='.')
-        plt.savefig(os.path.join(save_dir,'example_mapped_states'))
-        plt.clf()
+    mapped_state_seqs_1st_coord = p.emission_kernel.map(state_seqs_1st_coord, theta.emission).mean
+    for mapped_state_seq in mapped_state_seqs_1st_coord:
+        plt.plot(mapped_state_seq, linestyle='dotted', marker='.')
+    plt.savefig(os.path.join(save_dir,'example_mapped_states'))
+    plt.clf()
 
-        support = jnp.sort(state_seqs.flatten()).reshape(-1,1)
-        plt.plot(support, p.emission_kernel.map(support, theta.emission).mean)
-        plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
-        plt.clf()
-        
-        support_stationary = jnp.sort(state_seqs[:,3:,:].flatten()).reshape(-1,1)
-        plt.plot(support_stationary, p.emission_kernel.map(support_stationary, theta.emission).mean)
-        plt.savefig(os.path.join(save_dir,'emission_map_on_states_support_stationary'))
-        plt.clf()
-
+    support = jnp.sort(state_seqs.flatten()).reshape(-1,1)
+    plt.plot(support, p.emission_kernel.map(support, theta.emission).mean)
+    plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
+    plt.clf()
+    
+    support_stationary = jnp.sort(state_seqs[:,4:,:].flatten()).reshape(-1,1)
+    plt.plot(support_stationary, p.emission_kernel.map(support_stationary, theta.emission).mean)
+    plt.savefig(os.path.join(save_dir,'emission_map_on_states_support_stationary'))
+    plt.clf()
+    # return 
 
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
@@ -90,7 +90,7 @@ def main(args, save_dir):
                         args.num_epochs, 
                         args.batch_size, 
                         args.num_samples, 
-                        force_mc=False)
+                        force_full_mc=False)
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi,3), obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
@@ -103,7 +103,7 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'nonlinear_p_nonlinear_q'
+    experiment_name = 'test_nonlinear'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     
     os.mkdir(save_dir)
@@ -113,9 +113,9 @@ if __name__ == '__main__':
     args.seed_theta = 1329
     args.seed_phi = 4569
 
-    args.state_dim, args.obs_dim = 1,1 
+    args.state_dim, args.obs_dim = 1,1
     args.transition_matrix_conditionning = 'diagonal'
-    args.emission_map_layers = ()
+    args.emission_map_layers = () 
     args.slope = 0
 
     args.seq_length = 8
@@ -128,7 +128,7 @@ if __name__ == '__main__':
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     
-    args.update_layers = (16,16)
+    args.update_layers = (8,)
     args.backwd_map_layers = (16,16)
 
 

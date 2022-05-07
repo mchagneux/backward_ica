@@ -390,6 +390,7 @@ class QuadTerm:
         return QuadTerm(W=other*self.W, 
                         v=other*self.v, 
                         c=other*self.c) 
+    
     def evaluate(self, x):
         return x.T @ self.W @ x + self.v.T @ x + self.c
 
@@ -483,9 +484,9 @@ def superpose_training_curves(train_logs_1, train_logs_2, name1, name2, save_dir
     plt.yscale('symlog')
     
     ydata = avg_elbos_1[best_fit_idx_1]
-    plt.plot(range(1,len(ydata)), ydata[1:], label='$\mathcal{L}(\\theta,\\phi)$,'+f'{name1}', c=colors[0])
+    plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$,'+f'{name1}', c=colors[0])
     ydata = avg_elbos_2[best_fit_idx_2]
-    plt.plot(range(1,len(ydata)), ydata[1:], label='$\mathcal{L}(\\theta,\\phi)$,'+f'{name2}', c=colors[1])
+    plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$,'+f'{name2}', c=colors[1])
     plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
 
     plt.xlabel('Epoch') 

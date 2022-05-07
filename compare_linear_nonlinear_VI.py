@@ -12,9 +12,19 @@ import backward_ica.utils as utils
 
 def main(dir_VI_1, dir_VI_2, eval_args, save_dir):
 
+
+    training_curves_1 = utils.load_train_logs(dir_VI_1)
+    training_curves_2 = utils.load_train_logs(dir_VI_2)
+    
+    utils.superpose_training_curves(training_curves_1, training_curves_2, eval_args.method_1, eval_args.method_2, save_dir)
+    return 
+    
     key = jax.random.PRNGKey(eval_args.seed)
 
     args_V1 = utils.load_args('train_args', dir_VI_1)
+
+
+
 
     p = hmm.NonLinearGaussianHMM(state_dim=args_V1.state_dim, 
                             obs_dim=args_V1.obs_dim, 
@@ -29,10 +39,7 @@ def main(dir_VI_1, dir_VI_2, eval_args, save_dir):
     state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta, eval_args.num_seqs, eval_args.seq_length)
     timesteps = range(1, eval_args.seq_length, eval_args.step)
     
-    training_curves_1 = utils.load_train_logs(dir_VI_1)
-    training_curves_2 = utils.load_train_logs(dir_VI_2)
 
-    utils.superpose_training_curves(training_curves_1, training_curves_2, 'linearVI', 'nonlinearVI', save_dir)
     smoothing_p_theta = utils.multiple_length_ffbsi_smoothing(key_smc, obs_seqs, p, theta, timesteps)
 
 
@@ -64,17 +71,21 @@ if __name__ == '__main__':
 
     eval_args = argparse.Namespace()
 
-    dir_VI_1 = os.path.join('experiments', 'test_nonlinear_p_linear_q')
-    dir_VI_2 = os.path.join('experiments', 'test_nonlinear_p_nonlinear_q')
+    eval_args.method_1 = 'q_johnson'
+    eval_args.method_2 = 'q_nonlinear'
 
-    save_dir = os.path.join('experiments', 'compare_linear_nonlinear_VI')
+    save_dir = os.path.join('experiments', f'compare_{eval_args.method_1}_vs_{eval_args.method_2}')
     os.mkdir(save_dir)
+
 
     eval_args.num_seqs = 5
     eval_args.seq_length = 500
     eval_args.num_particles = 1000
     eval_args.step = 50
     eval_args.seed = 0
+
+    dir_VI_1 = os.path.join('experiments',  eval_args.method_1)
+    dir_VI_2 = os.path.join('experiments', eval_args.method_2)
 
     utils.save_args(eval_args, 'eval_args', save_dir)
 
