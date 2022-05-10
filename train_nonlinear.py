@@ -76,7 +76,7 @@ def main(args, save_dir):
 
     q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
                                     obs_dim=args.obs_dim, 
-                                    use_johnson=True,
+                                    use_johnson=False,
                                     update_layers=args.update_layers)
 
     # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
@@ -90,6 +90,7 @@ def main(args, save_dir):
                         args.num_epochs, 
                         args.batch_size, 
                         args.num_samples, 
+                        schedule=False,
                         force_full_mc=False)
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi,3), obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
@@ -103,7 +104,7 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'test_nonlinear'
+    experiment_name = 'q_nonlinear'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     
     os.mkdir(save_dir)
@@ -118,17 +119,17 @@ if __name__ == '__main__':
     args.emission_map_layers = () 
     args.slope = 0
 
-    args.seq_length = 8
+    args.seq_length = 4
     args.num_seqs = 12800
 
     args.optimizer = 'adam'
     args.batch_size = 64
     args.learning_rate = 1e-2
-    args.num_epochs = 300
+    args.num_epochs = 600
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     
-    args.update_layers = (8,)
+    args.update_layers = (8,8)
     args.backwd_map_layers = (16,16)
 
 

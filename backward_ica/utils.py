@@ -258,7 +258,7 @@ class GaussianParams:
 
     @lazy_property
     def scale(self):
-        return Scale(prec=-0.5*self.eta2)
+        return Scale(prec=-2*self.eta2)
     
     @lazy_property
     def eta1(self):

@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from jax import numpy as jnp, random
+from jax import numpy as jnp, random, value_and_grad, tree_util
 from jax.tree_util import tree_leaves
 from optax import Updates
 from backward_ica.kalman import Kalman
@@ -7,10 +7,11 @@ from backward_ica.smc import SMC
 import haiku as hk
 from jax import lax, vmap
 from .utils import *
-from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf
+from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf, pdf as gaussian_pdf
 from functools import partial
 from jax import nn
 
+import optax
 
 _conditionnings = {'diagonal':lambda param: jnp.diag(param),
                 'symetric_def_pos': lambda param: param @ param.T,
@@ -67,6 +68,10 @@ class Gaussian:
     @staticmethod
     def logpdf(x, params):
         return gaussian_logpdf(x, params.mean, params.scale.cov)
+    
+    @staticmethod
+    def pdf(x, params):
+        return gaussian_pdf(x, params.mean, params.scale.cov)
 
     @staticmethod
     def get_random_params(key, dim, default_mean=1.0, default_base_scale=None):
@@ -168,17 +173,20 @@ class Kernel:
         self._apply_map = apply_map 
         self.get_random_params = get_random_params
         self._format_params = format_params
-        self._noise_sample, self._noise_logpdf = noise_dist.sample, noise_dist.logpdf
+        self.noise_dist:Gaussian = noise_dist
         
     def map(self, state, params):
         mean, scale = self._apply_map(params, state)
         return GaussianParams(mean=mean, scale=scale)
     
     def sample(self, key, state, params):
-        return self._noise_sample(key, self.map(state, params))
+        return self.noise_dist.sample(key, self.map(state, params))
 
     def logpdf(self, x, state, params):
-        return self._noise_logpdf(x, self.map(state, params))
+        return self.noise_dist.logpdf(x, self.map(state, params))
+    
+    def pdf(self, x, state, params):
+        return self.noise_dist.pdf(x, self.map(state, params))
 
     def format_params(self, params):
         return self._format_params(params)
@@ -275,7 +283,7 @@ class Smoother(metaclass=ABCMeta):
             
             forget_state = self.forget_net(input)
 
-            return candidate_filt_state * (1 - forget_state) + pred_state * forget_state
+            return candidate_filt_state #* (1 - forget_state) + pred_state * forget_state
 
     @staticmethod
     def filt_update_forward(obs, pred_state, layers, out_dim):
@@ -428,7 +436,6 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         LinearBackwardSmoother.__init__(self, state_dim)
 
-
     def init_filt_state(self, obs, params):
 
         mean, cov =  Kalman.init(obs, params.prior, params.emission)
@@ -448,6 +455,50 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
     
     def gaussianize_filt_state(self, filt_state, params):
         return filt_state
+    
+    def fit(self, key, data, optimizer, learning_rate, batch_size, num_epochs):
+                
+        loss = lambda seq, params: -self.likelihood_seq(seq, params)
+        
+        key_init_params, key_batcher = random.split(key, 2)
+        optimizer = getattr(optax, optimizer)(learning_rate)
+        params = self.get_random_params(key_init_params)
+        opt_state = optimizer.init(params)
+        num_seqs = data.shape[0]
+
+        @jit
+        def batch_step(carry, x):
+            
+            def step(params, opt_state, batch):
+                neg_logl_value, grads = vmap(value_and_grad(loss, argnums=1), in_axes=(0,None))(batch, params)
+                avg_grads = tree_util.tree_map(jnp.mean, grads)
+                updates, opt_state = optimizer.update(avg_grads, opt_state, params)
+                params = optax.apply_updates(params, updates)
+                return params, opt_state, jnp.mean(-neg_logl_value)
+
+            data, params, opt_state = carry
+            batch_start = x
+            batch_obs_seq = lax.dynamic_slice_in_dim(data, batch_start, batch_size)
+            params, opt_state, avg_logl_batch = step(params, opt_state, batch_obs_seq)
+            return (data, params, opt_state), avg_logl_batch
+        
+        batch_start_indices = jnp.arange(0, num_seqs, batch_size)
+
+        avg_logls = []
+
+        for _ in range(num_epochs):
+
+            key_batcher, subkey_batcher = random.split(key_batcher, 2)
+            
+            data = random.permutation(subkey_batcher, data)
+
+            (_, params, opt_state), avg_logl_batches = lax.scan(batch_step, 
+                                                                init=(data, params, opt_state), 
+                                                                xs=batch_start_indices)
+            avg_logls.append(jnp.mean(avg_logl_batches))
+
+        
+        return params, avg_logls
 
 class NonLinearGaussianHMM(HMM):
 
@@ -499,7 +550,6 @@ class NonLinearGaussianHMM(HMM):
 
         return self.smc.smooth_from_filt_seq(subkey, filt_seq, formatted_params)
 
-
 class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
 
@@ -508,8 +558,8 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
         rec_net = hk.nets.MLP((*layers, out_dim),
                     w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-                    # b_init=hk.initializers.RandomNormal(),
-                    activation=nn.tanh,
+                    b_init=hk.initializers.RandomNormal(),
+                    activation=xtanh(0.1),
                     activate_final=False)
 
         # R_prec_diagonal = hk.get_parameter('R_prec', 
@@ -521,7 +571,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
         out = rec_net(obs)
         eta1, log_prec_diag = jnp.split(out,2)
-        eta2 = -jnp.diag(nn.softplus(log_prec_diag))
+        eta2 = - 0.5 * jnp.diag(nn.softplus(log_prec_diag))
         return GaussianParams(eta1 = eta1 + pred_state.eta1, eta2 = eta2 + pred_state.eta2)
 
     def __init__(self, 

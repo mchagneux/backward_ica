@@ -1,5 +1,5 @@
 from jax import numpy as jnp, random
-from backward_ica.hmm import LinearGaussianHMM, NeuralBackwardSmoother, NeuralLinearBackwardSmoother, NonLinearGaussianHMM
+from backward_ica.hmm import LinearGaussianHMM, NeuralLinearBackwardSmoother, NonLinearGaussianHMM
 from backward_ica.svi import check_general_elbo, check_linear_gaussian_elbo, check_backward_linear_elbo
 from backward_ica.kalman import Kalman, pykalman_logl_seq, pykalman_smooth_seq
 from backward_ica.utils import GaussianParams, Scale
@@ -9,10 +9,10 @@ enable_x64(True)
 
 key = random.PRNGKey(0)
 
-state_dim, obs_dim = 3,4
-num_seqs = 2000
-seq_length = 2
-num_samples = 100
+state_dim, obs_dim = 1,1
+num_seqs = 1
+seq_length = 3
+num_samples = 10000
 
 p = LinearGaussianHMM(state_dim, obs_dim, 'diagonal')
 # theta = p .get_random_params(key)

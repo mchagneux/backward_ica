@@ -26,6 +26,10 @@ def main(args, save_dir):
     avg_evidence = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta))(obs_seqs))
     print('Avg evidence:', avg_evidence)
 
+    # mle_fit, mle_curve = p.fit(key, obs_seqs, args.optimizer, args.learning_rate, args.batch_size, 3)
+    # import matplotlib.pyplot as plt
+    # plt.plot(mle_curve)
+    # plt.show()
 
     # q = hmm.LinearGaussianHMM(args.state_dim, args.obs_dim, 'diagonal')
     
@@ -33,9 +37,9 @@ def main(args, save_dir):
                             obs_dim=args.obs_dim, 
                             transition_kernel_matrix_conditionning=args.transition_matrix_conditionning,
                             use_johnson=True,
-                            update_layers=(16,)) # specify the structure of the true model, but init params are sampled during optimisiation     
+                            update_layers=(8,)) # specify the structure of the true model, but init params are sampled during optimisiation     
 
-    trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, force_full_mc=False)
+    trainer = SVITrainer(p, q, args.optimizer, args.learning_rate, args.num_epochs, args.batch_size, force_full_mc=False, schedule=False)
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi, 3), obs_seqs, theta, args.num_fits, store_every=None) # returns the best fit (based on the last value of the elbo)
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
     utils.save_params(params, f'phi_every_{args.store_every}_epochs', save_dir)
@@ -57,15 +61,15 @@ if __name__ == '__main__':
     args.state_dim, args.obs_dim = 1,1
     args.transition_matrix_conditionning = 'diagonal'
 
-    args.seq_length = 4
+    args.seq_length = 8
     args.num_seqs = 12800
 
     args.optimizer = 'adam'
-    args.batch_size = 64
+    args.batch_size = 32
     args.learning_rate = 1e-2
     args.num_epochs = 300
     args.store_every = args.num_epochs // 5
-    args.num_fits = 5
+    args.num_fits = 2
 
     utils.save_args(args, 'train_args', save_dir)
     main(args, save_dir)

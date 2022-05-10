@@ -147,32 +147,32 @@ class BackwardLinearTowerELBO:
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
         
-        result = quadratic_term_from_log_gaussian(theta.prior) #+ get_tractable_emission_term(obs_seq[0], theta.emission)
-
+        kl_term = quadratic_term_from_log_gaussian(theta.prior) #+ get_tractable_emission_term(obs_seq[0], theta.emission)
 
         q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
 
-        def V_step(state, obs):
+        def V_step(carry, x):
 
-            q_filt_state, kl_term = state
+            q_filt_state, kl_term = carry
+            obs = x
+
             q_backwd_state = self.q.new_kernel_state(q_filt_state, phi)
 
             kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
                     + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
-                    #+ get_tractable_emission_term(obs, theta.emission)
-
 
             kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
             q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
 
+
             return (q_filt_state, kl_term), q_backwd_state
     
-        (q_last_filt_state, result), q_backwd_state_seq = lax.scan(V_step, 
-                                                init=(q_filt_state, result), 
+        (q_last_filt_state, kl_term), q_backwd_state_seq = lax.scan(V_step, 
+                                                init=(q_filt_state, kl_term), 
                                                 xs=obs_seq[1:])
 
 
-        result =  expect_quadratic_term_under_gaussian(result, q_last_filt_state) \
+        kl_term =  expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state) \
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
                     + 0.5*self.p.state_dim
 
@@ -226,8 +226,7 @@ class BackwardLinearTowerELBO:
 
         # mc_samples = parallel_sampler(keys, obs_seq, q_last_filt_state, q_backwd_state_seq)
         # print('Variance via autoregressive:',jnp.var(mc_samples))
-
-        return result + jnp.mean(mc_samples)
+        return kl_term + jnp.mean(mc_samples)
 
 class LinearGaussianTowerELBO:
 
@@ -314,13 +313,14 @@ class LinearGaussianTowerELBO:
 
 class SVITrainer:
 
-    def __init__(self, p:HMM, q:Smoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_full_mc=False):
-
+    def __init__(self, p:HMM, q:Smoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_full_mc=False, schedule=False):
 
         # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
-        # schedule_fn = optax.piecewise_constant_schedule(1., {100*: decay_rate})
-        # self.optimizer = optax.chain(optimizer(learning_rate), optax.scale_by_schedule(schedule_fn))
-        self.optimizer = lambda num_batches: getattr(optax, optimizer)(learning_rate)
+        if schedule: 
+            schedule_fn = lambda num_batches: optax.piecewise_constant_schedule(1., {k*num_batches: 0.1 for k in [150, 330]})
+            self.optimizer = lambda num_batches: optax.chain(getattr(optax, optimizer)(learning_rate), optax.scale_by_schedule(schedule_fn(num_batches)))
+        else: 
+            self.optimizer = lambda num_batches: getattr(optax, optimizer)(learning_rate)
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.q = q 
@@ -346,11 +346,9 @@ class SVITrainer:
         else:
             loss = lambda key, seq, phi: -self.elbo(key, seq, self.p.format_params(theta), self.q.format_params(phi))
             
-        params = phi
-
         num_seqs = data.shape[0]
         optimizer = self.optimizer(num_seqs // self.batch_size)
-
+        params = phi 
         opt_state = optimizer.init(params)
         subkeys = self.get_montecarlo_keys(key_montecarlo, num_seqs, self.num_epochs)
 
