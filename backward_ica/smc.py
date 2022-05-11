@@ -54,38 +54,13 @@ class SMC:
         return log_probs
 
 
-    def filter_seq(self, key, obs_seq, params):
-
-        prior_key, proposal_key, resampling_key = random.split(key,3)
-        
-        init_log_probs, init_particles = self.init(prior_key, obs_seq[0], params.prior, params.emission)
-        likel = compute_pred_likel(init_log_probs)
-
-        @jit 
-        def _filter_step(carry, x):
-            log_probs, particles, likel = carry
-            obs, proposal_key, resampling_key = x
-            particles = self.predict(resampling_key, proposal_key, log_probs, particles, params.transition)
-            log_probs = self.update(particles, obs, params.emission)
-            likel += compute_pred_likel(log_probs)
-            return (log_probs, particles, likel), None
-
-        proposal_keys = random.split(proposal_key, len(obs_seq) - 1)
-        resampling_keys = random.split(resampling_key, len(obs_seq) - 1)
-
-        terminal_log_probs, terminal_particles, likel = lax.scan(_filter_step, 
-                                                    init=(init_log_probs, init_particles, likel), 
-                                                    xs=(obs_seq[1:], proposal_keys, resampling_keys))[0]
-
-        return terminal_log_probs, terminal_particles, likel - len(obs_seq)*jnp.log(self.num_particles)
-
-
     def compute_filt_state_seq(self, key, obs_seq, params):
 
 
         prior_key, proposal_key, resampling_key = random.split(key,3)
         
         init_log_probs, init_particles = self.init(prior_key, obs_seq[0], params.prior, params.emission)
+        init_likel = compute_pred_likel(init_log_probs)
 
         @jit 
         def _filter_step(carry, x):
@@ -93,16 +68,18 @@ class SMC:
             obs, proposal_key, resampling_key = x
             particles = self.predict(resampling_key, proposal_key, log_probs, particles, params.transition)
             log_probs = self.update(particles, obs, params.emission)
-            return (log_probs, particles), (log_probs, particles)
+            likel = compute_pred_likel(log_probs)
+
+            return (log_probs, particles), (log_probs, particles, likel)
 
         proposal_keys = random.split(proposal_key, len(obs_seq) - 1)
         resampling_keys = random.split(resampling_key, len(obs_seq) - 1)
 
-        log_probs, particles = lax.scan(_filter_step, 
+        log_probs, particles, likel = lax.scan(_filter_step, 
                                         init=(init_log_probs, init_particles), 
                                         xs=(obs_seq[1:], proposal_keys, resampling_keys))[1]
 
-        return tree_prepend(init_log_probs, log_probs), tree_prepend(init_particles, particles)
+        return (tree_prepend(init_log_probs, log_probs), tree_prepend(init_particles, particles)), jnp.sum(likel) + init_likel
 
     def smooth_from_filt_seq(self, key, filt_seq, params):
 
@@ -130,6 +107,6 @@ class SMC:
 
         paths = vmap(_sample_path, in_axes=(0,None,None))(keys, log_probs_seq, particles_seq)
 
-        return jnp.mean(paths, axis=0), jnp.var(paths, axis=0)
+        return paths
         
 

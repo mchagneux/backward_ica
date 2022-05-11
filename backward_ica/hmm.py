@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from jax import numpy as jnp, random, value_and_grad, tree_util
+from jax import numpy as jnp, random, value_and_grad, tree_util, grad
 from jax.tree_util import tree_leaves
 from optax import Updates
 from backward_ica.kalman import Kalman
@@ -456,7 +456,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
     def gaussianize_filt_state(self, filt_state, params):
         return filt_state
     
-    def fit(self, key, data, optimizer, learning_rate, batch_size, num_epochs):
+    def fit_rmle(self, key, data, optimizer, learning_rate, batch_size, num_epochs):
                 
         loss = lambda seq, params: -self.likelihood_seq(seq, params)
         
@@ -524,7 +524,7 @@ class NonLinearGaussianHMM(HMM):
 
     def likelihood_seq(self, key, obs_seq, params):
 
-        return self.smc.filter_seq(key, 
+        return self.smc.compute_filt_state_seq(key, 
                             obs_seq, 
                             self.format_params(params))[-1]
     
@@ -532,7 +532,7 @@ class NonLinearGaussianHMM(HMM):
 
         return self.smc.compute_filt_state_seq(key, 
                                 obs_seq, 
-                                formatted_params)
+                                formatted_params)[:-1]
         
     def compute_marginals(self, key, filt_seq, formatted_params):
 
@@ -548,7 +548,87 @@ class NonLinearGaussianHMM(HMM):
                                 obs_seq, 
                                 formatted_params)
 
-        return self.smc.smooth_from_filt_seq(subkey, filt_seq, formatted_params)
+        paths = self.smc.smooth_from_filt_seq(subkey, filt_seq, formatted_params)
+
+        return jnp.mean(paths, axis=0), jnp.var(paths, axis=0)
+    
+    def fit_em(self, key, data, optimizer, learning_rate, batch_size, num_epochs):
+
+        key_init_params, key_batcher = random.split(key, 2)
+        optimizer = getattr(optax, optimizer)(learning_rate)
+        params = self.get_random_params(key_init_params)
+        opt_state = optimizer.init(params)
+        num_seqs = data.shape[0]        
+        key_batcher, key_montecarlo = random.split(key, 2)
+        mc_keys = random.split(key_montecarlo, num_seqs * num_epochs).reshape(num_epochs, num_seqs,-1)
+
+        def e_from_smoothed_paths(theta, smoothed_paths, obs_seq):
+            theta = self.format_params(theta)
+            def _single_path_e_func(smoothed_path, obs_seq):
+                init_val = self.prior_dist.logpdf(smoothed_path[0], theta.prior) \
+                    + self.emission_kernel.logpdf(obs_seq[0], smoothed_path[0], theta.emission)
+                def _step(particle_pair, obs):
+                    return self.transition_kernel.logpdf(particle_pair[1], particle_pair[0], theta.transition) + \
+                        self.emission_kernel.logpdf(obs, particle_pair[1], theta.emission)
+                smoothed_path_pairwise = smoothed_path.reshape(-1,2)
+                return init_val + jnp.sum(vmap(_step)(smoothed_path_pairwise, obs_seq[1:]))
+            return jnp.mean(vmap(_single_path_e_func, in_axes=(0,None))(smoothed_paths, obs_seq))
+        
+        # @jit
+        def batch_step(carry, x):
+            
+            def step(prev_theta, opt_state, batch, keys):
+
+                def e_step(key, obs_seq, theta):
+                    
+                    formatted_prev_theta = self.format_params(prev_theta)
+                    
+                    key_fwd, key_backwd = random.split(key, 2)
+                    
+                    filt_seq, logl_value = self.smc.compute_filt_state_seq(key_fwd, 
+                            obs_seq, 
+                            formatted_prev_theta)
+
+                    smoothed_paths = self.smc.smooth_from_filt_seq(key_backwd, filt_seq, formatted_prev_theta)
+
+                    return e_from_smoothed_paths(theta, smoothed_paths, obs_seq), logl_value
+
+                grads, logl_values = vmap(grad(e_step, argnums=2, has_aux=True), in_axes=(0,0, None))(keys, batch, prev_theta)
+                avg_grads = tree_util.tree_map(jnp.mean, grads)
+                updates, opt_state = optimizer.update(avg_grads, opt_state, prev_theta)
+                theta = optax.apply_updates(prev_theta, updates)
+                return theta, opt_state, jnp.mean(logl_values)
+
+            data, params, opt_state, subkeys_epoch = carry
+            batch_start = x
+            batch_obs_seq = lax.dynamic_slice_in_dim(data, batch_start, batch_size)
+            batch_keys = lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, batch_size)
+            params, opt_state, avg_logl_batch = step(params, opt_state, batch_obs_seq, batch_keys)
+            return (data, params, opt_state), avg_logl_batch
+        
+        batch_start_indices = jnp.arange(0, num_seqs, batch_size)
+
+        avg_logls = []
+
+        for epoch_nb in range(num_epochs):
+            mc_keys_epoch = mc_keys[epoch_nb]
+            key_batcher, subkey_batcher = random.split(key_batcher, 2)
+            
+            data = random.permutation(subkey_batcher, data)
+
+            (_, params, opt_state), avg_logl_batches = lax.scan(batch_step, 
+                                                                init=(data, params, opt_state, mc_keys_epoch), 
+                                                                xs=batch_start_indices)
+            avg_logls.append(jnp.mean(avg_logl_batches))
+
+        
+        return params, avg_logls
+
+
+
+
+
+
 
 class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
