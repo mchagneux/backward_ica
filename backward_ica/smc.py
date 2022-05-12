@@ -79,7 +79,7 @@ class SMC:
                                         init=(init_log_probs, init_particles), 
                                         xs=(obs_seq[1:], proposal_keys, resampling_keys))[1]
 
-        return (tree_prepend(init_log_probs, log_probs), tree_prepend(init_particles, particles)), jnp.sum(likel) + init_likel
+        return (tree_prepend(init_log_probs, log_probs), tree_prepend(init_particles, particles)), jnp.sum(likel) + init_likel - len(obs_seq)*jnp.log(self.num_particles)
 
     def smooth_from_filt_seq(self, key, filt_seq, params):
 

@@ -375,7 +375,7 @@ class SVITrainer:
         all_params = []
         batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
 
-        for epoch_nb in range(self.num_epochs):
+        for epoch_nb in tqdm(range(self.num_epochs)):
             subkeys_epoch = subkeys[epoch_nb]
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             
