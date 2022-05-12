@@ -29,35 +29,35 @@ class Kalman:
 
     def filter_seq(obs_seq, hmm_params):
         
-        def log_l_term(pred_mean, pred_cov, obs, emission_params):
+        def pred_log_l_term(pred_mean, pred_cov, obs, emission_params):
             B, b, R = emission_params.map.w, emission_params.map.b, emission_params.scale.cov
             return jax_gaussian_logpdf(x=obs, 
                                 mean=B @ pred_mean + b , 
                                 cov=B @ pred_cov @ B.T + R)
 
         init_filt_mean, init_filt_cov = Kalman.init(obs_seq[0], hmm_params.prior, hmm_params.emission)
-        loglikelihood = log_l_term(hmm_params.prior.mean, hmm_params.prior.scale.cov, obs_seq[0], hmm_params.emission)
+        init_pred_loglikelihood = pred_log_l_term(hmm_params.prior.mean, hmm_params.prior.scale.cov, obs_seq[0], hmm_params.emission)
 
         @jit
         def _filter_step(carry, x):
-            loglikelihood, filt_mean, filt_cov = carry
+            filt_mean, filt_cov = carry
             pred_mean, pred_cov = Kalman.predict(filt_mean, filt_cov, hmm_params.transition)
             filt_mean, filt_cov = Kalman.update(pred_mean, pred_cov, x, hmm_params.emission)
 
-            loglikelihood += log_l_term(pred_mean, pred_cov, x, hmm_params.emission)
+            pred_loglikelihood = pred_log_l_term(pred_mean, pred_cov, x, hmm_params.emission)
 
-            return (loglikelihood, filt_mean, filt_cov), (pred_mean, pred_cov, filt_mean, filt_cov)
+            return (filt_mean, filt_cov), (pred_mean, pred_cov, filt_mean, filt_cov, pred_loglikelihood)
 
-        (loglikelihood, *_), (pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq) = lax.scan(f=_filter_step, 
-                                    init=(loglikelihood, init_filt_mean, init_filt_cov), 
-                                    xs=obs_seq[1:])
+        (pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq, pred_loglikelihood_seq) = lax.scan(f=_filter_step, 
+                                    init=(init_filt_mean, init_filt_cov), 
+                                    xs=obs_seq[1:])[1]
 
         pred_mean_seq = tree_prepend(hmm_params.prior.mean, pred_mean_seq) 
         pred_cov_seq =  tree_prepend(hmm_params.prior.scale.cov, pred_cov_seq) 
         filt_mean_seq = tree_prepend(init_filt_mean, filt_mean_seq) 
         filt_cov_seq =  tree_prepend(init_filt_cov, filt_cov_seq)
 
-        return pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq, loglikelihood
+        return pred_mean_seq, pred_cov_seq, filt_mean_seq, filt_cov_seq, init_pred_loglikelihood + jnp.sum(pred_loglikelihood_seq)
 
     def smooth_seq(obs_seq, hmm_params):
 
@@ -110,14 +110,14 @@ def pykalman_filter_seq(obs_seq, hmm_params):
 def pykalman_logl_seq(obs_seq, hmm_params):
 
 
-    engine = KalmanFilter(transition_matrices=hmm_params.transition.map.w, 
-                        observation_matrices=hmm_params.emission.map.w,
-                        transition_covariance=hmm_params.transition.scale.cov,
-                        observation_covariance=hmm_params.emission.scale.cov,
-                        transition_offsets=hmm_params.transition.map.b,
-                        observation_offsets=hmm_params.emission.map.b,
-                        initial_state_mean=hmm_params.prior.mean,
-                        initial_state_covariance=hmm_params.prior.scale.cov)
+    engine = KalmanFilter(transition_matrices=jnp.asarray(hmm_params.transition.map.w), 
+                        observation_matrices=jnp.asarray(hmm_params.emission.map.w),
+                        transition_covariance=jnp.asarray(hmm_params.transition.scale.cov),
+                        observation_covariance=jnp.asarray(hmm_params.emission.scale.cov),
+                        transition_offsets=jnp.asarray(hmm_params.transition.map.b),
+                        observation_offsets=jnp.asarray(hmm_params.emission.map.b),
+                        initial_state_mean=jnp.asarray(hmm_params.prior.mean),
+                        initial_state_covariance=jnp.asarray(hmm_params.prior.scale.cov))
 
     
     return engine.loglikelihood(obs_seq)

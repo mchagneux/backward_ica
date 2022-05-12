@@ -71,8 +71,8 @@ if __name__ == '__main__':
 
     eval_args = argparse.Namespace()
 
-    eval_args.method_1 = 'q_johnson'
-    eval_args.method_2 = 'q_linear'
+    eval_args.method_1 = 'test_johnson_3'
+    eval_args.method_2 = 'test_linear_2'
 
     save_dir = os.path.join('experiments', f'compare_{eval_args.method_1}_vs_{eval_args.method_2}')
     os.mkdir(save_dir)

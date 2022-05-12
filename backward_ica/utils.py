@@ -8,7 +8,6 @@ from jax.scipy.linalg import solve_triangular
 import re
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-import numpy as np 
 import json
 import os 
 import pickle 
@@ -106,7 +105,7 @@ def chol_from_prec(prec):
     identity = jnp.broadcast_to(jnp.identity(prec.shape[-1]), tril_inv.shape)
     return jsp.linalg.solve_triangular(tril_inv, identity, lower=True)
 
-def cov_from_chol(chol):
+def mat_from_chol(chol):
     return jnp.matmul(chol, jnp.swapaxes(chol, -1, -2))
 
 def cholesky(mat):
@@ -168,33 +167,59 @@ BackwardState = namedtuple('BackwardState', ['shared', 'varying', 'inner'])
 @register_pytree_node_class
 class Scale:
 
-    def __init__(self, chol=None, cov=None, prec=None):
+    def __init__(self, cov_chol=None, prec_chol=None, cov=None, prec=None):
 
         if cov is not None:
             self.cov = cov
-            self.chol = cholesky(cov)
+            self.cov_chol = cholesky(cov)
 
         elif prec is not None:
             self.prec = prec
-            self.chol = chol_from_prec(prec)
+            self.prec_chol = cholesky(prec)
 
-        elif chol is not None:
-            self.chol = chol
-            
+        elif cov_chol is not None:
+            self.cov_chol = cov_chol
+
+        elif prec_chol is not None: 
+            self.prec_chol = prec_chol 
         else:
             raise ValueError()        
 
     @lazy_property
     def cov(self):
-        return cov_from_chol(self.chol)
+        if 'cov_chol' in vars(self).keys():
+            return mat_from_chol(self.cov_chol)
+        else: return inv_from_chol(self.prec_chol)
 
     @lazy_property
     def prec(self):
-        return inv_from_chol(self.chol)
+        if 'prec_chol' in vars(self).keys():
+            return mat_from_chol(self.prec_chol)
+        else: return inv_from_chol(self.cov_chol)
+
+
+    @lazy_property
+    def cov_chol(self):
+        return cholesky(self.cov)
+
+    @lazy_property
+    def prec_chol(self):
+        return cholesky(self.prec)
+
+
+    @property
+    def chol(self):
+        if 'cov_chol' in vars(self).keys(): 
+            return self.cov_chol
+        else: 
+            return self.prec_chol
 
     @lazy_property
     def log_det(self):
-        return log_det_from_chol(self.chol)
+        if 'cov_chol' in vars(self).keys():
+            return log_det_from_chol(self.cov_chol)
+        else: return log_det_from_chol(chol_from_prec(self.prec))
+
 
     def tree_flatten(self):
         attrs = vars(self)
@@ -458,8 +483,7 @@ def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence
     num_fits = len(avg_elbos)
     for fit_nb in range(num_fits):
         stored_epoch_nbs_for_fit = stored_epoch_nbs[fit_nb]
-        plt.yscale('symlog')
-        ydata = avg_elbos[fit_nb]
+        ydata = avg_elbos[fit_nb][1:]
         plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$', c='black')
         plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
         idx_color = 0
@@ -480,12 +504,10 @@ def superpose_training_curves(train_logs_1, train_logs_2, name1, name2, save_dir
 
     best_fit_idx_1, _ , avg_elbos_1, avg_evidence = train_logs_1
     best_fit_idx_2, _ , avg_elbos_2, _ = train_logs_2
-
-    plt.yscale('symlog')
     
-    ydata = avg_elbos_1[best_fit_idx_1]
+    ydata = avg_elbos_1[best_fit_idx_1][1:]
     plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$,'+f'{name1}', c=colors[0])
-    ydata = avg_elbos_2[best_fit_idx_2]
+    ydata = avg_elbos_2[best_fit_idx_2][1:]
     plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$,'+f'{name2}', c=colors[1])
     plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
 

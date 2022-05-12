@@ -2,7 +2,6 @@ from jax.scipy.special import logsumexp
 import jax.numpy as jnp
 from jax import vmap, jit, lax, random
 from jax import lax
-from functools import partial
 
 from backward_ica.utils import tree_prepend
 

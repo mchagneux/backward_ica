@@ -10,9 +10,9 @@ enable_x64(True)
 key = random.PRNGKey(0)
 
 state_dim, obs_dim = 1,1
-num_seqs = 1
-seq_length = 3
-num_samples = 10000
+num_seqs = 16
+seq_length = 4
+num_samples = 100000
 
 p = LinearGaussianHMM(state_dim, obs_dim, 'diagonal')
 # theta = p .get_random_params(key)
@@ -29,8 +29,9 @@ p = LinearGaussianHMM(state_dim, obs_dim, 'diagonal')
 # check_linear_gaussian_elbo(p, num_seqs, seq_length)
 
 mc_key = random.PRNGKey(1)
+check_linear_gaussian_elbo(p, num_seqs, seq_length)
 check_backward_linear_elbo(mc_key, p, num_seqs, seq_length, num_samples)
-# check_general_elbo(mc_key, p, num_seqs, seq_length, num_samples)
+check_general_elbo(mc_key, p, num_seqs, seq_length, num_samples)
 
 # mc_key = random.PRNGKey(2)
 # check_backward_linear_elbo(mc_key, p, num_seqs, seq_length, num_samples)

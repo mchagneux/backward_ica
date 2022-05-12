@@ -74,9 +74,10 @@ def main(args, save_dir):
     #                         obs_dim=args.obs_dim,
     #                         transition_matrix_conditionning=args.transition_matrix_conditionning)
 
+
     q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
                                     obs_dim=args.obs_dim, 
-                                    use_johnson=False,
+                                    use_johnson=True,
                                     update_layers=args.update_layers)
 
     # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
@@ -84,16 +85,27 @@ def main(args, save_dir):
     #                         update_layers=args.update_layers,
     #                         backwd_layers=args.backwd_map_layers)
 
-    trainer = SVITrainer(p, q, 
-                        args.optimizer, 
-                        args.learning_rate, 
-                        args.num_epochs, 
-                        args.batch_size, 
-                        args.num_samples, 
-                        schedule=False,
+
+    trainer = SVITrainer(p=p, 
+                        q=q, 
+                        optimizer=args.optimizer, 
+                        learning_rate=args.learning_rate,
+                        num_epochs=args.num_epochs, 
+                        batch_size=args.batch_size, 
+                        schedule=args.schedule,
                         force_full_mc=False)
 
-    params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(*jax.random.split(key_phi,3), obs_seqs, theta, args.num_fits) # returns the best fit (based on the last value of the elbo)
+    key_params, key_batcher, key_montecarlo = jax.random.split(key_phi,3)
+    # phi, avg_logls = q.fit_kalman_rmle(key_params, obs_seqs, args.optimizer, args.learning_rate, args.batch_size, args.num_epochs)
+    # print(avg_logls[-1])
+    # plt.plot(avg_logls)
+    # plt.show()
+
+    params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
+                                                            data=obs_seqs, 
+                                                            theta_star=theta, 
+                                                            num_fits=args.num_fits) # returns the best fit (based on the last value of the elbo)
+    
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
     utils.save_params(params, 'phi', save_dir)
 
@@ -104,7 +116,7 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
 
-    experiment_name = 'q_nonlinear'
+    experiment_name = 'test_johnson_3'
     save_dir = os.path.join(os.path.join('experiments', experiment_name))
     
     os.mkdir(save_dir)
@@ -116,20 +128,23 @@ if __name__ == '__main__':
 
     args.state_dim, args.obs_dim = 1,1
     args.transition_matrix_conditionning = 'diagonal'
-    args.emission_map_layers = () 
+    args.emission_map_layers = (8,8) 
     args.slope = 0
 
-    args.seq_length = 4
+    args.seq_length = 8
     args.num_seqs = 12800
+
 
     args.optimizer = 'adam'
     args.batch_size = 64
-    args.learning_rate = 1e-2
+    args.parametrization = 'cov_chol'
+    args.learning_rate = 1e-2 #{'std':1e-2, 'nn':1e-1}
     args.num_epochs = 600
+    args.schedule = {220:0.1, 500:0.5}
     args.store_every = args.num_epochs // 5
-    args.num_fits = 5
+    args.num_fits = 2
     
-    args.update_layers = (8,8)
+    args.update_layers = (64,)
     args.backwd_map_layers = (16,16)
 
 

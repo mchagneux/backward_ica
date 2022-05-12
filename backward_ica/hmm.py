@@ -1,7 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from jax import numpy as jnp, random, value_and_grad, tree_util, grad
 from jax.tree_util import tree_leaves
-from optax import Updates
 from backward_ica.kalman import Kalman
 from backward_ica.smc import SMC
 import haiku as hk
@@ -17,8 +16,6 @@ _conditionnings = {'diagonal':lambda param: jnp.diag(param),
                 'symetric_def_pos': lambda param: param @ param.T,
                 None:lambda x:x}
 
-def vec_from_linear_gaussian_kernel_params(params, d):
-    return jnp.concatenate((params.map.w.flatten(), params.scale.chol[jnp.tril_indices(d)]))
 
 def xtanh(slope):
     return lambda x: jnp.tanh(x) + slope*x
@@ -61,9 +58,10 @@ def linear_map_format_params(params, conditionning_func):
 
 class Gaussian: 
 
+
     @staticmethod
     def sample(key, params):
-        return params.mean + params.scale.chol @ random.normal(key, (params.mean.shape[0],))
+        return params.mean + params.scale.cov_chol @ random.normal(key, (params.mean.shape[0],))
     
     @staticmethod
     def logpdf(x, params):
@@ -86,15 +84,15 @@ class Gaussian:
             scale = default_base_scale * jnp.ones((dim,))
         else: 
             scale = random.uniform(subkeys[1], shape=(dim,), minval=-1, maxval=1)
-
-        return GaussianParams(mean=mean, scale=scale)
+        if HMM.parametrization == 'prec_chol':scale=1/scale
+        return GaussianParams(mean=mean, scale={HMM.parametrization:scale})
 
     @staticmethod
     def format_params(params):
-        return GaussianParams(mean=params.mean, scale=Scale(chol=jnp.diag(params.scale)))
+        base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
+        return GaussianParams(mean=params.mean, scale=Scale(**base_scale))
 
 class Kernel:
-
 
     def __init__(self,
                 in_dim, 
@@ -121,12 +119,15 @@ class Kernel:
                     scale=default_base_scale * jnp.ones((self.out_dim,))
 
                 else: scale = jnp.random.uniform(subkey, shape=(self.out_dim,), minval=0.01, maxval=1)
+                if HMM.parametrization == 'prec_chol':scale=1/scale
 
-                return KernelParams(map=map_params, scale=scale)
+                return KernelParams(map=map_params, scale={HMM.parametrization:scale})
 
             def format_params(params):
+                base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
+
                 return KernelParams(map=format_map_params(params.map),
-                            scale=Scale(chol=jnp.diag(params.scale)))
+                            scale=Scale(**base_scale))
 
 
 
@@ -153,7 +154,7 @@ class Kernel:
 
                 def format_params(params):
                     return KernelParams(map=format_map_params(params.map),
-                                scale=Scale(chol=jnp.diag(params.scale)))
+                                scale=Scale(cov_chol=jnp.diag(params.scale)))
 
             else: 
                 
@@ -193,9 +194,11 @@ class Kernel:
    
 class HMM: 
 
-    default_prior_base_scale = 1e-1
-    default_transition_base_scale = 1e-1
-    default_emission_base_scale = 1e-2
+    parametrization = 'prec_chol'
+
+    default_prior_base_scale = jnp.sqrt(1e-1)
+    default_transition_base_scale = jnp.sqrt(1e-1)
+    default_emission_base_scale = jnp.sqrt(5e-2)
     default_transition_bias = 0.5
 
     def __init__(self, 
@@ -418,6 +421,8 @@ class LinearBackwardSmoother(Smoother):
 
         return marginals
 
+
+
 class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
     def __init__(self, 
@@ -486,7 +491,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         avg_logls = []
 
-        for _ in range(num_epochs):
+        for epoch_nb in tqdm(range(num_epochs), 'Epoch'):
 
             key_batcher, subkey_batcher = random.split(key_batcher, 2)
             
@@ -499,9 +504,6 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         
         return params, avg_logls
-
-
-
 
 class NonLinearGaussianHMM(HMM):
 
@@ -630,8 +632,6 @@ class NonLinearGaussianHMM(HMM):
 
 
 
-
-
 class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
 
@@ -693,7 +693,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
         prior_params = self.prior_dist.get_random_params(subkeys[0], self.state_dim, default_mean=0, default_base_scale=HMM.default_prior_base_scale)
         transition_params = self.transition_kernel.get_random_params(subkeys[1], default_base_scale=HMM.default_transition_base_scale)
-        dummy_pred_state = GaussianParams(mean=jnp.ones((self.state_dim,)), scale=Scale(chol=jnp.eye(self.state_dim)))
+        dummy_pred_state = GaussianParams(mean=jnp.ones((self.state_dim,)), scale=Scale(cov_chol=jnp.eye(self.state_dim)))
         
         filt_update_params = self.filt_update_init_params(subkeys[2], dummy_obs, dummy_pred_state)
 

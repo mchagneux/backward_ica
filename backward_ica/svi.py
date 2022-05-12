@@ -1,8 +1,6 @@
 import jax
 import optax
-from jax import vmap, lax, config, numpy as jnp
-from jax.random import normal
-from time import time
+from jax import vmap, lax, numpy as jnp
 from .hmm import *
 from .utils import *
 
@@ -313,24 +311,54 @@ class LinearGaussianTowerELBO:
 
 class SVITrainer:
 
-    def __init__(self, p:HMM, q:Smoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_full_mc=False, schedule=False):
+    def __init__(self, p:HMM, q:Smoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_full_mc=False, schedule={}):
 
-        # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
-        if schedule: 
-            schedule_fn = lambda num_batches: optax.piecewise_constant_schedule(1., {k*num_batches: 0.1 for k in [150, 330]})
-            self.optimizer = lambda num_batches: optax.chain(getattr(optax, optimizer)(learning_rate), optax.scale_by_schedule(schedule_fn(num_batches)))
-        else: 
-            self.optimizer = lambda num_batches: getattr(optax, optimizer)(learning_rate)
+
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.q = q 
         self.q.print_num_params()
         self.p = p 
-        if isinstance(self.p, LinearGaussianHMM):
+
+        # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
+        optimizer_method = getattr(optax, optimizer)
+        
+        def get_optimizer(schedule, param_group=None):
+            if param_group is not None:
+                if param_group in schedule.keys(): schedule = schedule[param_group]
+                elif 'common' in schedule.keys(): schedule = schedule['common']
+                else: schedule = {}
+                
+            if len(schedule): 
+                schedule_fn = lambda num_batches: optax.piecewise_constant_schedule(1., {k*num_batches: v for k,v in schedule.items()})
+                optimizer = lambda num_batches, learning_rate: optax.chain(optimizer_method(learning_rate), optax.scale_by_schedule(schedule_fn(num_batches)))
+            else: 
+                optimizer = lambda num_batches, learning_rate: optimizer_method(learning_rate)
+            return optimizer
+
+        if isinstance(self.q, LinearGaussianHMM) or (not isinstance(learning_rate, dict)):
+            self.optimizer = partial(get_optimizer(schedule), learning_rate=learning_rate)
+
+
+        else:
+            param_labels = ('std', 'nn')
+            optimizer_std_params = partial(get_optimizer(schedule, 'std'), learning_rate=learning_rate['std'])
+            optimizer_nn_params = partial(get_optimizer(schedule, 'nn'), learning_rate=0.1*learning_rate['nn'])
+            self.optimizer = lambda num_batches: optax.multi_transform({
+                'std': optimizer_std_params(num_batches),
+                'nn': optimizer_nn_params(num_batches)},
+                param_labels)
+
+
+        if force_full_mc: 
+            self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+            self.get_montecarlo_keys = get_keys
+
+        elif isinstance(self.p, LinearGaussianHMM):
             self.elbo = LinearGaussianTowerELBO(self.p, self.q)
             self.get_montecarlo_keys = get_dummy_keys
         else: 
-            if (not isinstance(self.q, LinearBackwardSmoother)) or force_full_mc:
+            if not isinstance(self.q, LinearBackwardSmoother):
                 
                 self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             
@@ -339,16 +367,32 @@ class SVITrainer:
             self.get_montecarlo_keys = get_keys
 
 
-    def fit(self, key_batcher, key_montecarlo, data, theta, phi):
+    def fit(self, key_params, key_batcher, key_montecarlo, data, theta_star=None):
 
-        if isinstance(self.elbo, LinearGaussianTowerELBO):
-            loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(phi))
-        else:
-            loss = lambda key, seq, phi: -self.elbo(key, seq, self.p.format_params(theta), self.q.format_params(phi))
+        if theta_star is not None: 
+            theta = theta_star
             
         num_seqs = data.shape[0]
         optimizer = self.optimizer(num_seqs // self.batch_size)
-        params = phi 
+        phi = self.q.get_random_params(key_params)
+
+        if isinstance(self.q, LinearGaussianHMM):
+            params = phi 
+            regroup_params = lambda x:x
+            separate_params = lambda x:x
+        else: 
+            if isinstance(self.q, LinearBackwardSmoother):
+                separate_params = lambda x: ((x.prior, x.transition), x.filt_update)
+                regroup_params = lambda x: NeuralLinearBackwardSmootherParams(x[0][0], x[0][1], x[1])
+        params = separate_params(phi)
+
+        if isinstance(self.elbo, LinearGaussianTowerELBO):
+            loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(regroup_params(phi)))
+        else:
+            loss = lambda key, seq, phi: -self.elbo(key, seq, self.p.format_params(theta), self.q.format_params(regroup_params(phi)))
+            
+
+
         opt_state = optimizer.init(params)
         subkeys = self.get_montecarlo_keys(key_montecarlo, num_seqs, self.num_epochs)
 
@@ -375,7 +419,7 @@ class SVITrainer:
         all_params = []
         batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
 
-        for epoch_nb in tqdm(range(self.num_epochs)):
+        for epoch_nb in tqdm(range(self.num_epochs), 'epoch'):
             subkeys_epoch = subkeys[epoch_nb]
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             
@@ -386,7 +430,7 @@ class SVITrainer:
                                                                 xs = batch_start_indices)
 
             avg_elbos.append(jnp.mean(avg_elbo_batches))
-            all_params.append(params)
+            all_params.append(regroup_params(params))
                     
         return all_params, avg_elbos
 
@@ -432,7 +476,7 @@ class SVITrainer:
             avg_elbos = vmap(elbo)(keys, data)
             print('Avg error with Kalman evidence:', jnp.mean(jnp.abs(avg_evidences-avg_elbos)))
 
-    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, theta, num_fits, store_every=None):
+    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, theta_star=None, store_every=None):
 
         # self.check_elbo(data, theta)
 
@@ -443,11 +487,11 @@ class SVITrainer:
         
         print('Starting training...')
         
-        for fit_nb, subkey_params in tqdm(enumerate(jax.random.split(key_params, num_fits))):
+        for fit_nb, subkey_params in tqdm(enumerate(jax.random.split(key_params, num_fits)), 'fit'):
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
-            params, avg_elbos = self.fit(subkey_batcher, subkey_montecarlo, data, theta, self.q.get_random_params(subkey_params))
+            params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, theta_star)
 
 
             if store_every is not None:
@@ -468,7 +512,7 @@ class SVITrainer:
                 print(f'End of fit {fit_nb+1}/{num_fits}, best ELBO {best_elbo:.3f} at epoch {best_epoch}')
             best_elbos.append(best_elbo)
         
-        best_optim = jnp.argmax(np.array(best_elbos))
+        best_optim = jnp.argmax(jnp.array(best_elbos))
         print(f'Best fit is {best_optim+1}.')
         best_params = all_params[best_optim]
 
