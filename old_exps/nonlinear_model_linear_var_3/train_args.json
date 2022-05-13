@@ -1,1 +1,0 @@
-{"seed_theta": 1327, "seed_phi": 4569, "state_dim": 1, "obs_dim": 1, "transition_matrix_conditionning": "diagonal", "hidden_layer_sizes": [4, 4, 4, 4], "slope": 0.8, "seq_length": 16, "num_seqs": 6400, "optimizer": "adam", "batch_size": 64, "learning_rate": 0.01, "num_epochs": 200, "store_every": 40, "num_fits": 5, "num_particles": 1000, "num_samples": 1}

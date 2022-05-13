@@ -167,6 +167,7 @@ BackwardState = namedtuple('BackwardState', ['shared', 'varying', 'inner'])
 @register_pytree_node_class
 class Scale:
 
+    
     def __init__(self, cov_chol=None, prec_chol=None, cov=None, prec=None):
 
         if cov is not None:
@@ -243,6 +244,8 @@ def empty_add(d):
 @register_pytree_node_class
 class GaussianParams: 
 
+    parametrization = 'cov_chol'
+
     def __init__(self, mean=None, scale=None, eta1=None, eta2=None):
 
         if (mean is not None) and (scale is not None):
@@ -270,7 +273,8 @@ class GaussianParams:
     def from_vec(cls, vec, d, chol_add=empty_add):
         mean = vec[:d]
         chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(vec[d:])
-        return cls(mean=mean, scale=Scale(chol=chol + chol_add(d)))
+        scale_kwargs = {cls.parametrization:chol + chol_add(d)}
+        return cls(mean=mean, scale=Scale(**scale_kwargs))
     
     @property
     def vec(self):
@@ -483,7 +487,7 @@ def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence
     num_fits = len(avg_elbos)
     for fit_nb in range(num_fits):
         stored_epoch_nbs_for_fit = stored_epoch_nbs[fit_nb]
-        ydata = avg_elbos[fit_nb][1:]
+        ydata = avg_elbos[fit_nb]
         plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$', c='black')
         plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
         idx_color = 0
@@ -505,9 +509,9 @@ def superpose_training_curves(train_logs_1, train_logs_2, name1, name2, save_dir
     best_fit_idx_1, _ , avg_elbos_1, avg_evidence = train_logs_1
     best_fit_idx_2, _ , avg_elbos_2, _ = train_logs_2
     
-    ydata = avg_elbos_1[best_fit_idx_1][1:]
+    ydata = avg_elbos_1[best_fit_idx_1]
     plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$,'+f'{name1}', c=colors[0])
-    ydata = avg_elbos_2[best_fit_idx_2][1:]
+    ydata = avg_elbos_2[best_fit_idx_2]
     plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$,'+f'{name2}', c=colors[1])
     plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
 

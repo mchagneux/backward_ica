@@ -266,11 +266,11 @@ class Smoother(metaclass=ABCMeta):
     
         def __init__(self, layers, out_dim):
             super().__init__(None)
-            self.update_net = hk.nets.MLP((*layers,out_dim), 
-                            activation=nn.tanh,
-                            w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-                            activate_final=False,
-                            name='update_net')
+            self.update_net = hk.nets.MLP((*layers, out_dim),
+                    w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                    b_init=hk.initializers.RandomNormal(),
+                    activation=xtanh(0.1),
+                    activate_final=False)
 
             self.forget_net = hk.nets.MLP((1,), 
                             activation=nn.sigmoid,
@@ -286,7 +286,7 @@ class Smoother(metaclass=ABCMeta):
             
             forget_state = self.forget_net(input)
 
-            return candidate_filt_state #* (1 - forget_state) + pred_state * forget_state
+            return candidate_filt_state * (1 - forget_state) + pred_state * forget_state
 
     @staticmethod
     def filt_update_forward(obs, pred_state, layers, out_dim):

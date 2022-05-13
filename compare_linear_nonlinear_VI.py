@@ -18,12 +18,9 @@ def main(dir_VI_1, dir_VI_2, eval_args, save_dir):
     
     utils.superpose_training_curves(training_curves_1, training_curves_2, eval_args.method_1, eval_args.method_2, save_dir)
     return 
-    
     key = jax.random.PRNGKey(eval_args.seed)
 
     args_V1 = utils.load_args('train_args', dir_VI_1)
-
-
 
 
     p = hmm.NonLinearGaussianHMM(state_dim=args_V1.state_dim, 
@@ -71,8 +68,8 @@ if __name__ == '__main__':
 
     eval_args = argparse.Namespace()
 
-    eval_args.method_1 = 'test_johnson_3'
-    eval_args.method_2 = 'test_linear_2'
+    eval_args.method_1 = 'q_nonlinear_ours_2022_05_13__11_56_03'
+    eval_args.method_2 = 'q_nonlinear_johnson_2022_05_13__11_55_56'
 
     save_dir = os.path.join('experiments', f'compare_{eval_args.method_1}_vs_{eval_args.method_2}')
     os.mkdir(save_dir)
@@ -84,8 +81,8 @@ if __name__ == '__main__':
     eval_args.step = 50
     eval_args.seed = 0
 
-    dir_VI_1 = os.path.join('experiments',  eval_args.method_1)
-    dir_VI_2 = os.path.join('experiments', eval_args.method_2)
+    dir_VI_1 = os.path.join('experiments/p_nonlinear',  eval_args.method_1)
+    dir_VI_2 = os.path.join('experiments/p_nonlinear', eval_args.method_2)
 
     utils.save_args(eval_args, 'eval_args', save_dir)
 

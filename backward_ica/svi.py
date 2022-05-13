@@ -419,7 +419,7 @@ class SVITrainer:
         all_params = []
         batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
 
-        for epoch_nb in tqdm(range(self.num_epochs), 'epoch'):
+        for epoch_nb in tqdm(range(self.num_epochs), 'Epoch'):
             subkeys_epoch = subkeys[epoch_nb]
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             
@@ -487,7 +487,8 @@ class SVITrainer:
         
         print('Starting training...')
         
-        for fit_nb, subkey_params in tqdm(enumerate(jax.random.split(key_params, num_fits)), 'fit'):
+        for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
+            print(f'Fit {fit_nb+1}/{num_fits}')
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
@@ -499,7 +500,7 @@ class SVITrainer:
                 best_elbo = avg_elbos[best_epoch]
                 all_params.append(params[epoch_nb] for epoch_nb in range(stop=self.num_epochs, step=store_every))
                 all_avg_elbos.append(avg_elbos)
-                print(f'End of fit {fit_nb+1}/{num_fits}, final ELBO {best_elbo:.3f}')
+                print(f'Final ELBO {best_elbo:.3f}')
 
             else: 
                 best_epoch = jnp.argmax(jnp.array(avg_elbos))
@@ -509,7 +510,7 @@ class SVITrainer:
                 all_params.append(params[best_epoch])
                 all_avg_elbos.append(avg_elbos)
 
-                print(f'End of fit {fit_nb+1}/{num_fits}, best ELBO {best_elbo:.3f} at epoch {best_epoch}')
+                print(f'Best ELBO {best_elbo:.3f} at epoch {best_epoch}')
             best_elbos.append(best_elbo)
         
         best_optim = jnp.argmax(jnp.array(best_elbos))

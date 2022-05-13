@@ -11,6 +11,8 @@ utils.enable_x64(True)
 
 def main(args, save_dir):
 
+    hmm.HMM.parametrization = args.parametrization
+    utils.GaussianParams.parametrization = args.parametrization
 
     key_theta = jax.random.PRNGKey(args.seed_theta)
     key_phi = jax.random.PRNGKey(args.seed_phi)
@@ -70,15 +72,18 @@ def main(args, save_dir):
     print('Avg evidence:', avg_evidence)
 
 
-    # q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
-    #                         obs_dim=args.obs_dim,
-    #                         transition_matrix_conditionning=args.transition_matrix_conditionning)
+    if args.q_version == 'linear':
 
+        q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
+                                obs_dim=args.obs_dim,
+                                transition_matrix_conditionning=args.transition_matrix_conditionning)
 
-    q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
-                                    obs_dim=args.obs_dim, 
-                                    use_johnson=True,
-                                    update_layers=args.update_layers)
+    else: 
+        version = args.q_version.split('_')[1]
+        q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
+                                        obs_dim=args.obs_dim, 
+                                        use_johnson=(version == 'johnson'),
+                                        update_layers=args.update_layers)
 
     # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
     #                         obs_dim=args.obs_dim, 
@@ -93,9 +98,11 @@ def main(args, save_dir):
                         num_epochs=args.num_epochs, 
                         batch_size=args.batch_size, 
                         schedule=args.schedule,
+                        num_samples=args.num_samples,
                         force_full_mc=False)
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi,3)
+
     # phi, avg_logls = q.fit_kalman_rmle(key_params, obs_seqs, args.optimizer, args.learning_rate, args.batch_size, args.num_epochs)
     # print(avg_logls[-1])
     # plt.plot(avg_logls)
@@ -113,11 +120,16 @@ if __name__ == '__main__':
 
     import argparse
     import os 
+    from datetime import datetime
+
 
     args = argparse.Namespace()
 
-    experiment_name = 'test_johnson_3'
-    save_dir = os.path.join(os.path.join('experiments', experiment_name))
+    args.q_version = 'nonlinear_ours'
+
+    date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
+
+    save_dir = os.path.join(os.path.join('experiments/p_nonlinear', f'q_{args.q_version}_{date}'))
     
     os.mkdir(save_dir)
 
@@ -131,20 +143,21 @@ if __name__ == '__main__':
     args.emission_map_layers = (8,8) 
     args.slope = 0
 
-    args.seq_length = 8
+
+    args.seq_length = 4
     args.num_seqs = 12800
 
 
     args.optimizer = 'adam'
     args.batch_size = 64
     args.parametrization = 'cov_chol'
-    args.learning_rate = 1e-2 #{'std':1e-2, 'nn':1e-1}
-    args.num_epochs = 600
-    args.schedule = {220:0.1, 500:0.5}
+    args.learning_rate = 1e-2 # {'std':1e-2, 'nn':1e-1}
+    args.num_epochs = 500
+    args.schedule = {} #{'nn':{200:0.1, 250:0.5}}
     args.store_every = args.num_epochs // 5
-    args.num_fits = 2
+    args.num_fits = 5
     
-    args.update_layers = (64,)
+    args.update_layers = (16,16)
     args.backwd_map_layers = (16,16)
 
 

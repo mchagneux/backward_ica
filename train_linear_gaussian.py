@@ -62,11 +62,14 @@ if __name__ == '__main__':
 
     import argparse
     import os 
+    from datetime import datetime 
+    
     args = argparse.Namespace()
 
-    experiment_name = 'test_johnson'
-    save_dir = os.path.join(os.path.join('experiments', experiment_name))
-    os.mkdir(save_dir)
+    experiment_name = 'q_johnson'
+    date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
+
+    save_dir = os.path.join(os.path.join('experiments/p_nonlinear', f'{experiment_name}_{date}'))
 
 
     args.seed_theta = 1326
