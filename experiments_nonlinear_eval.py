@@ -38,7 +38,7 @@ def run_ffbsi_em_on_train_data(train_args, save_dir):
 
     utils.save_train_logs((0, None, [logls_mle]), save_dir, plot=False)
 
-def run_ffbsi_smoothing_on_eval_data(train_args, eval_args):
+def run_ffbsi_smoothing_on_eval_data(train_args, eval_args, ground_truth=True):
 
 
     key = jax.random.PRNGKey(eval_args.seed)
@@ -54,9 +54,13 @@ def run_ffbsi_smoothing_on_eval_data(train_args, eval_args):
     key_gen, key_ffbsi = jax.random.split(key,2)
     obs_seqs = p.sample_multiple_sequences(key_gen, theta, eval_args.num_seqs, eval_args.seq_length)[1]
     timesteps = range(1, eval_args.seq_length, eval_args.step)
-    theta_mle = utils.load_params('phi', train_args.save_dir)
+    if ground_truth:
+        theta = utils.load_params('theta', train_args.save_dir)
+    
+    else: 
+        theta = utils.load_params('phi', train_args.save_dir)
 
-    smoothing_ffbsi = utils.multiple_length_ffbsi_smoothing(key_ffbsi, obs_seqs, p, theta_mle, timesteps)
+    smoothing_ffbsi = utils.multiple_length_ffbsi_smoothing(key_ffbsi, obs_seqs, p, theta, timesteps)
 
     with open(os.path.join(eval_args.save_dir, 'smoothing_results'), 'wb') as f:
         pickle.dump(smoothing_ffbsi, f)
@@ -163,7 +167,7 @@ if __name__ == '__main__':
     eval_args_ffbsi_smoothing.num_particles = mle_train_args.num_particles
 
     utils.save_args(eval_args_ffbsi_smoothing, 'eval_args', ffbsi_smoothing_save_dir)
-    run_ffbsi_smoothing_on_eval_data(mle_train_args, eval_args_ffbsi_smoothing)
+    run_ffbsi_smoothing_on_eval_data(mle_train_args, eval_args_ffbsi_smoothing, ground_truth=False)
 
 
 
