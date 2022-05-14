@@ -12,6 +12,9 @@ import backward_ica.utils as utils
 
 def main(train_args, eval_args, save_dir):
 
+    hmm.HMM.parametrization = train_args.parametrization
+    utils.GaussianParams.parametrization = train_args.parametrization 
+    
     key = jax.random.PRNGKey(eval_args.seed)
 
     p = hmm.LinearGaussianHMM(state_dim=train_args.state_dim, 

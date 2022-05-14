@@ -6,61 +6,68 @@ config.update("jax_enable_x64", True)
 
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
+import os 
+import pickle
 
 
 
-
-def main(train_args, eval_args, save_dir):
+def main(train_args, eval_args):
 
     key = jax.random.PRNGKey(eval_args.seed)
 
     p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
-                            layers=train_args.layers,
+                            layers=train_args.emission_map_layers,
                             slope=train_args.slope) # specify the structure of the true model
 
-    theta = utils.load_params('theta', save_dir)
+    theta = utils.load_params('theta', train_args.save_dir)
 
-    key_gen, key_smc = jax.random.split(key,2)
-    state_seqs, obs_seqs = hmm.sample_multiple_sequences(key_gen, p.sample_seq, theta, eval_args.num_seqs, eval_args.seq_length)
+    key_gen, _ = jax.random.split(key,2)
+    obs_seqs = p.sample_multiple_sequences(key_gen, theta, eval_args.num_seqs, eval_args.seq_length)[1]
     timesteps = range(1, eval_args.seq_length, eval_args.step)
 
-    smoothing_p_theta = utils.multiple_length_ffbsi_smoothing(obs_seqs, p, theta, timesteps, key_smc, eval_args.num_particles)
+
+    if train_args.q_version == 'linear':
+
+        q = hmm.LinearGaussianHMM(state_dim=train_args.state_dim, 
+                                obs_dim=train_args.obs_dim,
+                                transition_matrix_conditionning=train_args.transition_matrix_conditionning)
+
+    else: 
+        version = train_args.q_version.split('_')[1]
+        q = hmm.NeuralLinearBackwardSmoother(state_dim=train_args.state_dim, 
+                                        obs_dim=train_args.obs_dim, 
+                                        use_johnson=(version == 'johnson'),
+                                        update_layers=train_args.update_layers)
 
 
-    q = hmm.LinearGaussianHMM(state_dim=train_args.state_dim, 
-                            obs_dim=train_args.obs_dim, 
-                            transition_matrix_conditionning=train_args.transition_matrix_conditionning)
+    phi = utils.load_params('phi', train_args.save_dir)
 
-    phi = utils.load_params(f'phi_every_{train_args.store_every}_epochs', save_dir)[train_args.num_epochs-1]
-
-    # smoothing_q_phi = dict()
-    # for epoch_nb, phi in phi_at_multiple_epochs.items():
     smoothing_q_phi = utils.multiple_length_linear_backward_smoothing(obs_seqs, q, phi, timesteps)
-
-    utils.plot_multiple_length_smoothing(state_seqs, smoothing_p_theta, smoothing_q_phi, timesteps, f'ffbsi_{eval_args.num_particles}', 'linearVI', save_dir)
+    with open(os.path.join(eval_args.save_dir, 'smoothing_results'), 'wb') as f:
+        pickle.dump(smoothing_q_phi, f)
 
 
 
 if __name__ == '__main__':
-    import os 
+
     import argparse
+    parser = argparse.ArgumentParser()
 
-    eval_args = argparse.Namespace()
-
-    experiment_name = 'nonlinear_model_linear_var'
-    save_dir = os.path.join(os.path.join('experiments', experiment_name))
-    train_args = utils.load_args('train_args',save_dir)
+    parser.add_argument('--train_dir', type=str)
+    parser.add_argument('--save_dir',type=str)
+    eval_args = parser.parse_args()
 
     eval_args.num_seqs = 5
     eval_args.seq_length = 200
     eval_args.num_particles = 1000
     eval_args.step = 10
     eval_args.seed = 0
+    train_args = utils.load_args('train_args', eval_args.train_dir)
 
-    utils.save_args(eval_args, 'eval_args', save_dir)
+    utils.save_args(eval_args, 'eval_args', eval_args.save_dir)
 
-    main(train_args, eval_args, save_dir)
+    main(train_args, eval_args)
 
 

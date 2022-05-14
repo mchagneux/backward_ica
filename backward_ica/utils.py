@@ -451,7 +451,7 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
 def save_args(args, name, save_dir):
     with open(os.path.join(save_dir, f'{name}.json'), 'w') as f:
         args_dict = vars(args)
-        json.dump(args_dict, f)
+        json.dump(args_dict, f, indent=4)
 
 def load_args(name, save_dir):
     with open(os.path.join(save_dir, f'{name}.json'), 'r') as f:
@@ -486,6 +486,7 @@ def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence
 
     num_fits = len(avg_elbos)
     for fit_nb in range(num_fits):
+
         stored_epoch_nbs_for_fit = stored_epoch_nbs[fit_nb]
         ydata = avg_elbos[fit_nb]
         plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$', c='black')
@@ -502,22 +503,15 @@ def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence
         else: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}'))
         plt.clf()
 
-def superpose_training_curves(train_logs_1, train_logs_2, name1, name2, save_dir):
-
+def superpose_training_curves(avg_evidence, avg_elbos_list, method_names, save_dir, start_index=0):
     colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
-
-    best_fit_idx_1, _ , avg_elbos_1, avg_evidence = train_logs_1
-    best_fit_idx_2, _ , avg_elbos_2, _ = train_logs_2
-    
-    ydata = avg_elbos_1[best_fit_idx_1]
-    plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$,'+f'{name1}', c=colors[0])
-    ydata = avg_elbos_2[best_fit_idx_2]
-    plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$,'+f'{name2}', c=colors[1])
+    for nb, (avg_elbos, method_name) in enumerate(zip(avg_elbos_list, method_names)):
+        plt.plot(range(start_index, len(avg_elbos)+start_index), avg_elbos, label=f'{method_name}', c=colors[nb])
     plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
-
     plt.xlabel('Epoch') 
     plt.legend()
     
+    plt.show()
     plt.savefig(os.path.join(save_dir, 'comparison_of_training_curves'))
     plt.clf()
 
@@ -614,7 +608,7 @@ def multiple_length_ffbsi_smoothing(key, obs_seqs, smoother, params, timesteps):
     
     params = smoother.format_params(params)
     key, subkey = random.split(key, 2)
-    compute_filt_state_seq = jit(lambda obs_seq: smoother.compute_filt_state_seq(key, obs_seq, params))
+    compute_filt_state_seq = jit(lambda obs_seq: smoother.compute_filt_state_seq(key, obs_seq, params)[0])
     compute_marginals = lambda filt_seq: smoother.compute_marginals(subkey, filt_seq, params)
 
 
@@ -625,9 +619,11 @@ def multiple_length_ffbsi_smoothing(key, obs_seqs, smoother, params, timesteps):
         results = []
         
         for length in tqdm(timesteps): 
-            results.append(compute_marginals(tree_get_slice(0, length, filt_seq))[0])
+            paths = compute_marginals(tree_get_slice(0, length, filt_seq))
+            results.append(jnp.mean(paths, axis=0))
 
-        results.append(compute_marginals(filt_seq))
+        paths = compute_marginals(filt_seq)
+        results.append((jnp.mean(paths, axis=0), jnp.var(paths, axis=0)))
 
 
         return results
@@ -678,8 +674,6 @@ def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, 
 
     fig, ((ax0, ax1, ax2), (ax3, ax4, ax5)) = plt.subplots(2,3, figsize=(20,15))
     xaxis = list(timesteps) + [len(ref_state_seqs[0])]
-
-
 
 
     if isinstance(approx_results, dict):

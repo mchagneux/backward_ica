@@ -25,9 +25,9 @@ def neural_map(input, layers, slope, out_dim):
     net = hk.nets.MLP((*layers, out_dim), 
                     with_bias=False, 
                     activate_final=True, 
-                    activation=xtanh(slope))
+                    activation=nn.tanh)
 
-    return net(input)
+    return jnp.cos(net(input))
 
 def linear_map_apply(map_params, input):
     out =  jnp.dot(map_params.w, input)
@@ -266,17 +266,20 @@ class Smoother(metaclass=ABCMeta):
     
         def __init__(self, layers, out_dim):
             super().__init__(None)
+
             self.update_net = hk.nets.MLP((*layers, out_dim),
                     w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                     b_init=hk.initializers.RandomNormal(),
-                    activation=xtanh(0.1),
+                    activation=nn.tanh,
                     activate_final=False)
 
             self.forget_net = hk.nets.MLP((1,), 
                             activation=nn.sigmoid,
-                            b_init=hk.initializers.Constant(1),
+                            b_init=hk.initializers.RandomNormal(),
                             activate_final=False,
                             name='forget_net')
+
+                            
 
         def __call__(self, obs, pred_state:GaussianParams):
 
@@ -513,7 +516,7 @@ class NonLinearGaussianHMM(HMM):
                 transition_matrix_conditionning,
                 layers,
                 slope,
-                num_particles=1000):
+                num_particles=100):
 
         nonlinear_map_forward = partial(neural_map, layers=layers, slope=slope)
         transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_matrix_conditionning, False))
@@ -559,7 +562,6 @@ class NonLinearGaussianHMM(HMM):
     
     def fit_ffbsi_em(self, key, data, optimizer, learning_rate, batch_size, num_epochs):
 
-        smc = SMC(self.transition_kernel, self.emission_kernel, self.prior_dist, num_particles=100)
         key_init_params, key_batcher = random.split(key, 2)
         optimizer = getattr(optax, optimizer)(learning_rate)
         params = self.get_random_params(key_init_params)
@@ -590,11 +592,11 @@ class NonLinearGaussianHMM(HMM):
                     
                     key_fwd, key_backwd = random.split(key, 2)
                     
-                    filt_seq, logl_value = smc.compute_filt_state_seq(key_fwd, 
+                    filt_seq, logl_value = self.smc.compute_filt_state_seq(key_fwd, 
                             obs_seq, 
                             formatted_prev_theta)
 
-                    smoothed_paths = smc.smooth_from_filt_seq(key_backwd, filt_seq, formatted_prev_theta)
+                    smoothed_paths = self.smc.smooth_from_filt_seq(key_backwd, filt_seq, formatted_prev_theta)
 
                     return -e_from_smoothed_paths(theta, smoothed_paths, obs_seq), logl_value
 
@@ -624,7 +626,7 @@ class NonLinearGaussianHMM(HMM):
             (_, params, opt_state, _), avg_logl_batches = lax.scan(batch_step, 
                                                                 init=(data, params, opt_state, mc_keys_epoch), 
                                                                 xs=batch_start_indices)
-            avg_logls.extend([logl_batch for logl_batch in avg_logl_batches])
+            avg_logls.append(jnp.mean(avg_logl_batches))
 
         
         return params, avg_logls
@@ -641,7 +643,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         rec_net = hk.nets.MLP((*layers, out_dim),
                     w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                     b_init=hk.initializers.RandomNormal(),
-                    activation=xtanh(0.1),
+                    activation=nn.tanh,
                     activate_final=False)
 
         # R_prec_diagonal = hk.get_parameter('R_prec', 

@@ -1,4 +1,4 @@
-from fcntl import F_SEAL_SEAL
+from argparse import ArgumentParser
 import jax 
 import jax.numpy as jnp
 from jax import config 
@@ -55,10 +55,10 @@ def main(args, save_dir):
     plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
     plt.clf()
     
-    support_stationary = jnp.sort(state_seqs[:,4:,:].flatten()).reshape(-1,1)
-    plt.plot(support_stationary, p.emission_kernel.map(support_stationary, theta.emission).mean)
-    plt.savefig(os.path.join(save_dir,'emission_map_on_states_support_stationary'))
-    plt.clf()
+    # support_stationary = jnp.sort(state_seqs[:,4:,:].flatten()).reshape(-1,1)
+    # plt.plot(support_stationary, p.emission_kernel.map(support_stationary, theta.emission).mean)
+    # plt.savefig(os.path.join(save_dir,'emission_map_on_states_support_stationary'))
+    # plt.clf()
     # return 
 
     smc_keys = jax.random.split(key_smc, args.num_seqs)
@@ -121,18 +121,16 @@ if __name__ == '__main__':
     import argparse
     import os 
     from datetime import datetime
-
-
-    args = argparse.Namespace()
-
-    args.q_version = 'nonlinear_ours'
-
-    date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
-
-    save_dir = os.path.join(os.path.join('experiments/p_nonlinear', f'q_{args.q_version}_{date}'))
     
-    os.mkdir(save_dir)
+    parser = argparse.ArgumentParser()
 
+    parser.add_argument('--q_version',type=str)
+    parser.add_argument('--save_dir', type=str)
+    
+    args = parser.parse_args()
+
+    save_dir = args.save_dir
+    
     # sys.stdout = open(os.path.join(save_dir, 'train_logs.txt'), 'w')
 
     args.seed_theta = 1329
@@ -152,7 +150,7 @@ if __name__ == '__main__':
     args.batch_size = 64
     args.parametrization = 'cov_chol'
     args.learning_rate = 1e-2 # {'std':1e-2, 'nn':1e-1}
-    args.num_epochs = 500
+    args.num_epochs = 100
     args.schedule = {} #{'nn':{200:0.1, 250:0.5}}
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
@@ -166,4 +164,5 @@ if __name__ == '__main__':
 
 
     utils.save_args(args, 'train_args', save_dir)
+
     main(args, save_dir)
