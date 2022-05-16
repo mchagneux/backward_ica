@@ -13,6 +13,7 @@ import os
 import pickle 
 import argparse
 from typing import Any
+from backward_ica import hmm 
 # Containers for parameters of various objects 
 
 def enable_x64(use_x64=True):
@@ -441,8 +442,8 @@ class QuadTerm:
         return cls(*children)
 
 def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
-    true_sequence, pred_means, pred_covs = true_sequence.squeeze()[:64], pred_means.squeeze()[:64], pred_covs.squeeze()[:64]
-    time_axis = range(len(true_sequence))[:64]
+    true_sequence, pred_means, pred_covs = true_sequence.squeeze(), pred_means.squeeze(), pred_covs.squeeze()
+    time_axis = range(len(true_sequence))
     ax.errorbar(x=time_axis, fmt = '_', y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), label='Smoothed z, $1.96\\sigma$')
     ax.scatter(x=time_axis, marker = '_', y=true_sequence, c='r', label='True z')
     ax.set_xlabel('t')
@@ -469,6 +470,11 @@ def load_params(name, save_dir):
         params = pickle.load(f)
     return params
         
+def load_smoothing_results(save_dir):
+    with open(os.path.join(save_dir, 'smoothing_results'), 'rb') as f: 
+        results = pickle.load(f)
+    return results
+
 def save_train_logs(train_logs, save_dir, plot=True):
     with open(os.path.join(save_dir, 'train_logs'), 'wb') as f: 
         pickle.dump(train_logs, f)
@@ -785,67 +791,80 @@ def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, 
         plt.savefig(os.path.join(save_dir, 'smoothing_results'))
         plt.clf()
 
-def compare_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, timesteps, ref_name, approx_name, save_dir):
+def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_names, save_dir):
+
+    
+    train_logs = [load_train_logs(train_dir) for train_dir in train_dirs]
+    
+    avg_evidence = train_logs[0][-1]
+    avg_elbos_list = [train_log[2][train_log[0]] for train_log in train_logs]
+
+    superpose_training_curves(avg_evidence, avg_elbos_list, pretty_names, save_dir, start_index=0)
+
 
     colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
 
-    fig, ((ax0, ax1, ax2, ax3), (ax4, ax5, ax6, ax7)) = plt.subplots(2,4, figsize=(20,15))
-    xaxis = list(timesteps) + [len(ref_state_seqs[0])]
 
-    ax7.set_axis_off()
+    eval_args = load_args('eval_args', eval_dirs[0])
+    key = random.PRNGKey(eval_args.seed)
 
-    for seq_nb, (ref_state_seq, ref_results_seq) in enumerate(zip(ref_state_seqs, ref_results)):
+    train_args = load_args('train_args', train_dirs[0])
+
+    hmm.HMM.parametrization = train_args.parametrization
+    GaussianParams.parametrization = train_args.parametrization 
+
+    p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
+                            obs_dim=train_args.obs_dim, 
+                            transition_matrix_conditionning=train_args.transition_matrix_conditionning,
+                            layers=train_args.emission_map_layers,
+                            slope=train_args.slope,
+                            num_particles=eval_args.num_particles) # specify the structure of the true model
+
+    theta_star = load_params('theta', train_args.save_dir)
+    key_gen, _ = random.split(key,2)
+    state_seqs = p.sample_multiple_sequences(key_gen, theta_star, eval_args.num_seqs, eval_args.seq_length)[0]
+    timesteps = range(1, eval_args.seq_length, eval_args.step)
+
+    ref_results = load_smoothing_results(ref_dir)
+    approx_results = {pretty_name:load_smoothing_results(eval_dir) for pretty_name, eval_dir in zip(pretty_names, eval_dirs)}
+    fig, (ax0, ax1, ax2) = plt.subplots(3, figsize=(20,15))
+    xaxis = list(timesteps) + [len(state_seqs[0])]
+    for seq_nb, (ref_state_seq, ref_results_seq) in enumerate(zip(state_seqs, ref_results)):
         ref_vs_states_additive =  []
         for i, length in enumerate(timesteps):
             ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[i] - ref_state_seq[:length], axis=0)))
         ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[-1][0] - ref_state_seq, axis=0)))
         ax0.plot(xaxis, ref_vs_states_additive, linestyle='dotted', marker='.', c='k')
 
-        ax4.set_title(f'{ref_name} example smoothing')
-    plot_relative_errors_1D(ax4, ref_state_seqs[0], *ref_results[0][-1])
 
     handles = []
     for idx, (method_name, approx_results_for_method) in enumerate(approx_results.items()):
         c = colors[idx]
-        for seq_nb, (ref_state_seq, ref_results_seq, approx_results_seq) in enumerate(zip(ref_state_seqs, ref_results, approx_results_for_method)):
-            approx_vs_states_additive = []
+        for seq_nb, (ref_state_seq, ref_results_seq, approx_results_seq) in enumerate(zip(state_seqs, ref_results, approx_results_for_method)):
             ref_vs_approx_additive = []
 
             for i, length in enumerate(timesteps):
-                approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_state_seq[:length], axis=0)))
                 ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_results_seq[i], axis=0)))
 
-            approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_state_seq, axis=0)))
             ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_results_seq[-1][0], axis=0)))
             ref_vs_approx_marginals = jnp.abs(ref_results_seq[-1][0] - approx_results_seq[-1][0])
 
-            ax1.plot(xaxis, approx_vs_states_additive, linestyle='dotted', marker='.', c=c, label=f'{method_name}')
-            ax2.plot(xaxis, ref_vs_approx_additive, linestyle='dotted', marker='.', c=c, label=f'{method_name}')
-            handle, = ax3.plot(ref_vs_approx_marginals, linestyle='dotted', marker='.', c=c, label=f'{method_name}')
+            ax1.plot(xaxis, ref_vs_approx_additive, linestyle='dotted', marker='.', c=c, label=f'{method_name}')
+            handle, = ax2.plot(ref_vs_approx_marginals, linestyle='dotted', marker='.', c=c, label=f'{method_name}')
         handles.append(handle)
-
-    plot_relative_errors_1D(ax5, ref_state_seqs[0], *approx_results['linearVI'][0][-1])
-    ax5.set_title('LinearVI smoothing with fully fitted params')
-    
-    plot_relative_errors_1D(ax6, ref_state_seqs[0], *approx_results['nonlinearVI'][0][-1])
-    ax6.set_title('NonlinearVI smoothing with fully fitted params')
 
 
     ax1.legend(handles=handles)
     ax2.legend(handles=handles)
-    ax3.legend(handles=handles)
 
-    ax0.set_title(f'{ref_name} vs states (additive)')
+    ax0.set_title(f'FFBSi gt vs states (additive)')
     ax0.set_xlabel('Sequence length')
 
-    ax1.set_title(f'{approx_name} vs states (additive)')
+    ax1.set_title(f'Learnt models vs ground truth smoothing (additive)')
     ax1.set_xlabel('Sequence length')
 
-    ax2.set_title(f'{approx_name} vs {ref_name} (additive)')
+    ax2.set_title(f'Learnt models vs ground truth smoothing (marginals)')
     ax2.set_xlabel('Sequence length')
-
-    ax3.set_title(f'{approx_name} vs {ref_name} (marginals)')
-    ax3.set_xlabel('Sequence length')
 
 
     plt.tight_layout()

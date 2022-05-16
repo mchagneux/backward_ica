@@ -27,12 +27,11 @@ def neural_map(input, layers, slope, out_dim):
                     activate_final=True, 
                     activation=nn.tanh)
 
-    return jnp.cos(net(input))
+    return net(input)
 
 def linear_map_apply(map_params, input):
     out =  jnp.dot(map_params.w, input)
     return out + jnp.broadcast_to(map_params.b, out.shape)
-
 
 def linear_map_init_params(key, dummy_in, out_dim, conditionning, bias):
 
@@ -41,7 +40,11 @@ def linear_map_init_params(key, dummy_in, out_dim, conditionning, bias):
     else: 
         w = random.uniform(key, (out_dim, len(dummy_in)))
     
-    return LinearMapParams(w=w, b=HMM.default_transition_bias * jnp.ones((out_dim,)))
+    if bias: 
+        return LinearMapParams(w=w, b=HMM.default_transition_bias * jnp.ones((out_dim,)))
+    else: 
+        return LinearMapParams(w=w)
+
     # return LinearMapParams(w=w)
 
 def linear_map_format_params(params, conditionning_func):
@@ -145,16 +148,20 @@ class Kernel:
                     key, subkey = random.split(key, 2)
                     map_params = init_map_params(key, jnp.empty((self.in_dim,)))
 
+
                     if default_base_scale is not None: 
                         scale=default_base_scale * jnp.ones((self.out_dim,))
 
                     else: scale = jnp.random.uniform(subkey, shape=(self.out_dim,), minval=0.01, maxval=1)
+                    if HMM.parametrization == 'prec_chol':scale=1/scale
 
-                    return KernelParams(map=map_params, scale=scale)
+                    return KernelParams(map=map_params, scale={HMM.parametrization:scale})
 
                 def format_params(params):
+                    base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
+
                     return KernelParams(map=format_map_params(params.map),
-                                scale=Scale(cov_chol=jnp.diag(params.scale)))
+                                scale=Scale(**base_scale))
 
             else: 
                 
@@ -194,11 +201,11 @@ class Kernel:
    
 class HMM: 
 
-    parametrization = 'prec_chol'
+    parametrization = 'cov_chol'
 
-    default_prior_base_scale = jnp.sqrt(1e-1)
-    default_transition_base_scale = jnp.sqrt(1e-1)
-    default_emission_base_scale = jnp.sqrt(5e-2)
+    default_prior_base_scale = jnp.sqrt(2e-2)
+    default_transition_base_scale = jnp.sqrt(1e-2)
+    default_emission_base_scale = jnp.sqrt(1e-3)
     default_transition_bias = 0.5
 
     def __init__(self, 
@@ -376,7 +383,9 @@ class Smoother(metaclass=ABCMeta):
         filt_state_seq = self.compute_filt_state_seq(obs_seq, formatted_params)
         backwd_state_seq = self.compute_kernel_state_seq(filt_state_seq, formatted_params)
 
-        return self.compute_marginals(tree_get_idx(-1, filt_state_seq), backwd_state_seq)
+        marginals = self.compute_marginals(tree_get_idx(-1, filt_state_seq), backwd_state_seq)
+
+        return marginals.mean, marginals.scale.cov
 
 class LinearBackwardSmoother(Smoother):
 
@@ -434,7 +443,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
                 transition_matrix_conditionning):
 
         transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_matrix_conditionning, False))
-        emission_kernel_def =  ({'homogeneous':True, 'map':'linear'}, (None,False))
+        emission_kernel_def =  ({'homogeneous':True, 'map':'linear'}, (None, False))
 
         HMM.__init__(self, 
                     state_dim, 
@@ -540,7 +549,7 @@ class NonLinearGaussianHMM(HMM):
 
         return self.smc.compute_filt_state_seq(key, 
                                 obs_seq, 
-                                formatted_params)[:-1]
+                                formatted_params)[0]
         
     def compute_marginals(self, key, filt_seq, formatted_params):
 
@@ -554,7 +563,7 @@ class NonLinearGaussianHMM(HMM):
 
         filt_seq = self.smc.compute_filt_state_seq(key, 
                                 obs_seq, 
-                                formatted_params)
+                                formatted_params)[0]
 
         paths = self.smc.smooth_from_filt_seq(subkey, filt_seq, formatted_params)
 
@@ -672,7 +681,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         self.state_dim, self.obs_dim = state_dim, obs_dim 
 
         self.prior_dist:Gaussian = prior_dist
-        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_kernel_matrix_conditionning, True))
+        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_kernel_matrix_conditionning, False))
         self.transition_kernel = Kernel(state_dim, state_dim, transition_kernel_def)
 
         d = state_dim

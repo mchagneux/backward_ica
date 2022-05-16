@@ -14,6 +14,9 @@ import pickle
 def main(train_args, eval_args):
 
     key = jax.random.PRNGKey(eval_args.seed)
+    
+    hmm.HMM.parametrization = train_args.parametrization
+    utils.GaussianParams.parametrization = train_args.parametrization 
 
     p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 

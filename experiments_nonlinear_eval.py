@@ -7,11 +7,13 @@ import pickle
 utils.enable_x64(True)
 
 
-def run_ffbsi_em_on_train_data(train_args, save_dir):
+def run_ffbsi_em_on_train_data(train_args):
 
     key_theta = jax.random.PRNGKey(train_args.seed_theta)
+
     hmm.HMM.parametrization = train_args.parametrization
     utils.GaussianParams.parametrization = train_args.parametrization 
+
     key_params, key_gen, key_mle = jax.random.split(key_theta, 3)
 
     p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
@@ -22,7 +24,7 @@ def run_ffbsi_em_on_train_data(train_args, save_dir):
                             num_particles=train_args.num_particles) # specify the structure of the true model
     
     theta_star = p.get_random_params(key_params)
-    utils.save_params(theta_star, 'theta', save_dir)
+    utils.save_params(theta_star, 'theta', train_args.save_dir)
 
     obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, train_args.num_seqs, train_args.seq_length)[1]
     
@@ -34,14 +36,17 @@ def run_ffbsi_em_on_train_data(train_args, save_dir):
                                         batch_size=train_args.batch_size, 
                                         num_epochs=train_args.num_epochs)
 
-    utils.save_params(theta_mle, 'phi', save_dir)
+    utils.save_params(theta_mle, 'phi', train_args.save_dir)
 
-    utils.save_train_logs((0, None, [logls_mle]), save_dir, plot=False)
+    utils.save_train_logs((0, None, [logls_mle]), train_args.save_dir, plot=False)
 
 def run_ffbsi_smoothing_on_eval_data(train_args, eval_args, ground_truth=True):
 
 
     key = jax.random.PRNGKey(eval_args.seed)
+
+    hmm.HMM.parametrization = train_args.parametrization
+    utils.GaussianParams.parametrization = train_args.parametrization 
 
     p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
@@ -50,43 +55,23 @@ def run_ffbsi_smoothing_on_eval_data(train_args, eval_args, ground_truth=True):
                             slope=train_args.slope,
                             num_particles=eval_args.num_particles) # specify the structure of the true model
 
-    theta = utils.load_params('theta', train_args.save_dir)
+    theta_star = utils.load_params('theta', train_args.save_dir)
     key_gen, key_ffbsi = jax.random.split(key,2)
-    obs_seqs = p.sample_multiple_sequences(key_gen, theta, eval_args.num_seqs, eval_args.seq_length)[1]
+    obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, eval_args.num_seqs, eval_args.seq_length)[1]
     timesteps = range(1, eval_args.seq_length, eval_args.step)
+    
     if ground_truth:
-        theta = utils.load_params('theta', train_args.save_dir)
+        print('Starting FFBSi smoothing with ground truth parameters...')
+        theta = theta_star
     
     else: 
+        print('Starting FFBSi smoothing with MLE parameters...')
         theta = utils.load_params('phi', train_args.save_dir)
 
     smoothing_ffbsi = utils.multiple_length_ffbsi_smoothing(key_ffbsi, obs_seqs, p, theta, timesteps)
 
     with open(os.path.join(eval_args.save_dir, 'smoothing_results'), 'wb') as f:
         pickle.dump(smoothing_ffbsi, f)
-
-def compare(train_dirs, eval_dirs, method_names, save_dir):
-
-    
-    train_logs = [utils.load_train_logs(train_dir) for train_dir in train_dirs]
-    # eval_args_list = [utils.load_args('eval_args', eval_dir) for eval_dir in eval_dirs]
-    
-    avg_evidence = train_logs[0][-1]
-    avg_elbos_list = [train_log[2][train_log[0]] for train_log in train_logs]
-
-    utils.superpose_training_curves(avg_evidence, avg_elbos_list, method_names, save_dir, start_index=0)
-
-    # print(logls_mle[-1])
-    # plt.plot(logls_mle)
-    # plt.savefig(os.path.join(save_dir, 'loss_mle'))
-    # plt.clf()
-
-    
-
-    
-
-    # timesteps = range(1, eval_args.seq_length, eval_args.step)
-
 
 
 
@@ -111,14 +96,14 @@ if __name__ == '__main__':
         train_dirs.append(train_dir)
         eval_dirs.append(eval_dir)
 
-    date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
+    date = "2022_05_16__19_46_36" #datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
 
 
     train_args = utils.load_args('train_args', train_dirs[0])
     mle_name = 'ffbsi_em'
     mle_save_dir = os.path.join(base_dir, 'trainings', mle_name, date)
     mle_train_args = argparse.Namespace()
-    mle_train_args.num_particles = 2
+    mle_train_args.num_particles = 20
     mle_train_args.learning_rate = 1e-1
     mle_train_args.batch_size = train_args.num_seqs
     mle_train_args.q_version = 'mle'
@@ -135,28 +120,28 @@ if __name__ == '__main__':
     mle_train_args.optimizer = train_args.optimizer
     mle_train_args.num_epochs = train_args.num_epochs
     mle_train_args.save_dir = mle_save_dir
-
+    # train_dirs += [mle_save_dir]
 
 
 
     
-    processes = [subprocess.Popen(f'python eval_nonlinear.py \
-                                --train_dir {train_dir} \
-                                --save_dir {eval_dir}', 
-                            shell=True) \
-                    for (train_dir, eval_dir) in zip(train_dirs, eval_dirs)]
+    # processes = [subprocess.Popen(f'python eval_nonlinear.py \
+    #                             --train_dir {train_dir} \
+    #                             --save_dir {eval_dir}', 
+    #                         shell=True) \
+    #                 for (train_dir, eval_dir) in zip(train_dirs, eval_dirs)]
 
-    for process in processes:
-        process.wait()
+    # for process in processes:
+    #     process.wait()
 
-    os.makedirs(mle_save_dir)
+    # os.makedirs(mle_save_dir)
 
-    utils.save_args(mle_train_args, 'train_args', mle_save_dir)   
+    # utils.save_args(mle_train_args, 'train_args', mle_save_dir)   
 
-    run_ffbsi_em_on_train_data(mle_train_args, mle_save_dir)
+    # run_ffbsi_em_on_train_data(mle_train_args)
 
     ffbsi_smoothing_save_dir = os.path.join(base_dir, 'evals', f'{mle_name}_{date}')
-    os.makedirs(ffbsi_smoothing_save_dir)
+    # os.makedirs(ffbsi_smoothing_save_dir)
     eval_args = utils.load_args('eval_args', eval_dirs[0])
     eval_args_ffbsi_smoothing = argparse.Namespace()
     eval_args_ffbsi_smoothing.save_dir = ffbsi_smoothing_save_dir
@@ -164,24 +149,27 @@ if __name__ == '__main__':
     eval_args_ffbsi_smoothing.seq_length = eval_args.seq_length
     eval_args_ffbsi_smoothing.seed = eval_args.seed
     eval_args_ffbsi_smoothing.step = eval_args.step
-    eval_args_ffbsi_smoothing.num_particles = mle_train_args.num_particles
+    eval_args_ffbsi_smoothing.num_particles = 1000
+    # eval_dirs += [ffbsi_smoothing_save_dir]
 
-    utils.save_args(eval_args_ffbsi_smoothing, 'eval_args', ffbsi_smoothing_save_dir)
-    run_ffbsi_smoothing_on_eval_data(mle_train_args, eval_args_ffbsi_smoothing, ground_truth=False)
+    # utils.save_args(eval_args_ffbsi_smoothing, 'eval_args', ffbsi_smoothing_save_dir)
+    # run_ffbsi_smoothing_on_eval_data(mle_train_args, eval_args_ffbsi_smoothing, ground_truth=False)
+    method_names = [q_version_and_date[0] for q_version_and_date in q_versions_and_dates] #+ [f'{mle_name}_{date}']
 
+    ffbsi_smoothing_save_dir = os.path.join(base_dir, 'evals', 'ffbsi_gt')
+    # os.makedirs(ffbsi_smoothing_save_dir)
+    # eval_args_ffbsi_smoothing.save_dir = ffbsi_smoothing_save_dir
+    # utils.save_args(eval_args_ffbsi_smoothing, 'eval_args', ffbsi_smoothing_save_dir)
+    # run_ffbsi_smoothing_on_eval_data(train_args, eval_args_ffbsi_smoothing, ground_truth=True)
+    ref_dir = ffbsi_smoothing_save_dir
 
-
-    train_dirs += [mle_save_dir]
-    method_names = [q_version_and_date[0] for q_version_and_date in q_versions_and_dates] + [f'{mle_name}_{date}']
-    
 
     save_dir = os.path.join(base_dir, 'evals', f'comparison_{date}')
-    os.makedirs(save_dir)
+    # os.makedirs(save_dir)
     with open(os.path.join(save_dir, 'method_names.txt'), 'w') as f: 
         f.write(str([eval_dir.split('/')[-1] for eval_dir in eval_dirs]))
 
-    compare(train_dirs, eval_dirs, method_names, save_dir)
-
+    utils.compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, method_names, save_dir)
 
 
 
