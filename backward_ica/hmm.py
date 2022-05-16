@@ -27,7 +27,7 @@ def neural_map(input, layers, slope, out_dim):
                     activate_final=True, 
                     activation=nn.tanh)
 
-    return jnp.cos(net(input))
+    return net(input)
 
 def linear_map_apply(map_params, input):
     out =  jnp.dot(map_params.w, input)
@@ -203,7 +203,7 @@ class HMM:
 
     default_prior_base_scale = jnp.sqrt(2e-2)
     default_transition_base_scale = jnp.sqrt(1e-2)
-    default_emission_base_scale = jnp.sqrt(1e-6)
+    default_emission_base_scale = jnp.sqrt(1e-4)
     default_transition_bias = 0.5
 
     def __init__(self, 
