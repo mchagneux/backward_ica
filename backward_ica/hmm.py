@@ -27,7 +27,7 @@ def neural_map(input, layers, slope, out_dim):
                     activate_final=True, 
                     activation=nn.tanh)
 
-    return net(input)
+    return jnp.cos(net(input))
 
 def linear_map_apply(map_params, input):
     out =  jnp.dot(map_params.w, input)
@@ -44,8 +44,6 @@ def linear_map_init_params(key, dummy_in, out_dim, conditionning, bias):
         return LinearMapParams(w=w, b=HMM.default_transition_bias * jnp.ones((out_dim,)))
     else: 
         return LinearMapParams(w=w)
-
-    # return LinearMapParams(w=w)
 
 def linear_map_format_params(params, conditionning_func):
 
@@ -205,7 +203,7 @@ class HMM:
 
     default_prior_base_scale = jnp.sqrt(2e-2)
     default_transition_base_scale = jnp.sqrt(1e-2)
-    default_emission_base_scale = jnp.sqrt(1e-3)
+    default_emission_base_scale = jnp.sqrt(1e-6)
     default_transition_bias = 0.5
 
     def __init__(self, 
@@ -442,7 +440,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
                 obs_dim, 
                 transition_matrix_conditionning):
 
-        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_matrix_conditionning, False))
+        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_matrix_conditionning, True))
         emission_kernel_def =  ({'homogeneous':True, 'map':'linear'}, (None, False))
 
         HMM.__init__(self, 
