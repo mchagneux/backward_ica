@@ -138,7 +138,7 @@ if __name__ == '__main__':
 
     args.state_dim, args.obs_dim = 1,1
     args.transition_matrix_conditionning = 'diagonal'
-    args.emission_map_layers = (8,8) 
+    args.emission_map_layers = (64,) 
     args.slope = 0
 
 

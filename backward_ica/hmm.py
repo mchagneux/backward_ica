@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from jax import numpy as jnp, random, value_and_grad, tree_util, grad
+from jax import numpy as jnp, random, value_and_grad, tree_util, grad, config
 from jax.tree_util import tree_leaves
 from backward_ica.kalman import Kalman
 from backward_ica.smc import SMC
@@ -9,7 +9,7 @@ from .utils import *
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf, pdf as gaussian_pdf
 from functools import partial
 from jax import nn
-
+config.update('jax_enable_x64',True)
 import optax
 
 _conditionnings = {'diagonal':lambda param: jnp.diag(param),
@@ -35,13 +35,14 @@ def linear_map_apply(map_params, input):
 
 def linear_map_init_params(key, dummy_in, out_dim, conditionning, bias):
 
+    key_w, key_b = random.split(key, 2)
     if conditionning == 'diagonal':
-        w = random.uniform(key, (out_dim,), minval=-1, maxval=1)
+        w = random.uniform(key_w, (out_dim,), minval=-1, maxval=1)
     else: 
-        w = random.uniform(key, (out_dim, len(dummy_in)))
+        w = random.uniform(key_w, (out_dim, len(dummy_in)))
     
     if bias: 
-        return LinearMapParams(w=w, b=HMM.default_transition_bias * jnp.ones((out_dim,)))
+        return LinearMapParams(w=w, b=random.uniform(key_b, (out_dim,)))
     else: 
         return LinearMapParams(w=w)
 
@@ -203,7 +204,7 @@ class HMM:
 
     default_prior_base_scale = jnp.sqrt(2e-2)
     default_transition_base_scale = jnp.sqrt(1e-2)
-    default_emission_base_scale = jnp.sqrt(1e-4)
+    default_emission_base_scale = jnp.sqrt(4e-4)
     default_transition_bias = 0.5
 
     def __init__(self, 
@@ -226,7 +227,7 @@ class HMM:
     def get_random_params(self, key):
 
         key_prior, key_transition, key_emission = random.split(key, 3)
-        prior_params = self.prior_dist.get_random_params(key_prior, self.state_dim, default_mean=0, default_base_scale=self.default_prior_base_scale)
+        prior_params = self.prior_dist.get_random_params(key_prior, self.state_dim, default_mean=HMM.default_transition_bias, default_base_scale=self.default_prior_base_scale)
         transition_params = self.transition_kernel.get_random_params(key_transition, default_base_scale=self.default_transition_base_scale)
         emission_params = self.emission_kernel.get_random_params(key_emission, default_base_scale=self.default_emission_base_scale)
         return HMMParams(prior_params, transition_params, emission_params)
@@ -438,10 +439,12 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
     def __init__(self, 
                 state_dim, 
                 obs_dim, 
-                transition_matrix_conditionning):
+                transition_matrix_conditionning,
+                transition_bias,
+                emission_bias):
 
-        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_matrix_conditionning, True))
-        emission_kernel_def =  ({'homogeneous':True, 'map':'linear'}, (None, False))
+        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_matrix_conditionning, transition_bias))
+        emission_kernel_def =  ({'homogeneous':True, 'map':'linear'}, (None, emission_bias))
 
         HMM.__init__(self, 
                     state_dim, 
@@ -500,7 +503,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         batch_start_indices = jnp.arange(0, num_seqs, batch_size)
 
         avg_logls = []
-
+        all_params = []
         for epoch_nb in tqdm(range(num_epochs), 'Epoch'):
 
             key_batcher, subkey_batcher = random.split(key_batcher, 2)
@@ -511,9 +514,13 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
                                                                 init=(data, params, opt_state), 
                                                                 xs=batch_start_indices)
             avg_logls.append(jnp.mean(avg_logl_batches))
+            all_params.append(params)
 
+        best_optim = jnp.argmax(jnp.array(avg_logls))
+        print(f'Best fit is epoch {best_optim} with logl {avg_logls[best_optim]}.')
+        best_params = all_params[best_optim]
         
-        return params, avg_logls
+        return best_params, avg_logls
 
 class NonLinearGaussianHMM(HMM):
 

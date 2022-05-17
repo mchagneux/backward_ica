@@ -3,6 +3,7 @@ import optax
 from jax import vmap, lax, numpy as jnp
 from .hmm import *
 from .utils import *
+config.update('jax_enable_x64',True)
 
 def get_keys(key, num_seqs, num_epochs):
     keys = jax.random.split(key, num_seqs * num_epochs)
@@ -494,31 +495,28 @@ class SVITrainer:
 
             params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, theta_star)
 
-
+            best_epoch = jnp.argmax(jnp.array(avg_elbos))
+            best_epochs.append([best_epoch])
+            best_elbo = avg_elbos[best_epoch]
+            best_elbos.append(best_elbo)
+            print(f'Best ELBO {best_elbo:.3f} at epoch {best_epoch}')
+        
             if store_every is not None:
-                best_epoch = -1
-                best_elbo = avg_elbos[best_epoch]
-                all_params.append(params[epoch_nb] for epoch_nb in range(stop=self.num_epochs, step=store_every))
-                all_avg_elbos.append(avg_elbos)
-                print(f'Final ELBO {best_elbo:.3f}')
+                selected_epochs = list(range(0, self.num_epochs+1, store_every))
+                for i in range(1,len(selected_epochs)): selected_epochs[i]-=1
+                all_params.append([[params[epoch_nb] for epoch_nb in selected_epochs], params[best_epoch]])
 
             else: 
-                best_epoch = jnp.argmax(jnp.array(avg_elbos))
-                best_epochs.append([best_epoch])
-
-                best_elbo = avg_elbos[best_epoch]
                 all_params.append(params[best_epoch])
-                all_avg_elbos.append(avg_elbos)
+            all_avg_elbos.append(avg_elbos)
 
-                print(f'Best ELBO {best_elbo:.3f} at epoch {best_epoch}')
-            best_elbos.append(best_elbo)
-        
+
         best_optim = jnp.argmax(jnp.array(best_elbos))
         print(f'Best fit is {best_optim+1}.')
         best_params = all_params[best_optim]
 
         if store_every is not None: 
-            return best_params, (best_optim, [list(range(stop=self.num_epochs, step=store_every)) for _ in range(self.num_fits)], all_avg_elbos)
+            return best_params, (best_optim, [[selected_epochs for _ in range(num_fits)], best_epoch], all_avg_elbos)
         else: 
             return best_params, (best_optim, best_epochs, all_avg_elbos)
 

@@ -1,14 +1,14 @@
 import subprocess
 import os
 from datetime import datetime 
-exp_detail = 'p_noninjective'
+exp_detail = 'p_injective'
 base_dir = os.path.join('experiments', 'p_nonlinear', exp_detail, 'trainings')
 
 q_versions = ['linear',
             'nonlinear_johnson',
             'nonlinear_ours']
 
-os.makedirs(base_dir)
+os.makedirs(base_dir, exist_ok=True)
 
 logfiles = []
 save_dirs = []
@@ -16,7 +16,7 @@ save_dirs = []
 for q_version in q_versions:
     date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
     save_dir = os.path.join(base_dir, q_version, date)
-    os.makedirs(save_dir)
+    os.makedirs(save_dir, exist_ok=True)
     f = open(os.path.join(save_dir, 'stdout.txt'),'w')
 
     logfiles.append(f)
