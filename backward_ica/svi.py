@@ -496,7 +496,7 @@ class SVITrainer:
             params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, theta_star)
 
             best_epoch = jnp.argmax(jnp.array(avg_elbos))
-            best_epochs.append([best_epoch])
+            best_epochs.append(best_epoch)
             best_elbo = avg_elbos[best_epoch]
             best_elbos.append(best_elbo)
             print(f'Best ELBO {best_elbo:.3f} at epoch {best_epoch}')

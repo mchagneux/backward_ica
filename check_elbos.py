@@ -1,20 +1,31 @@
+from argparse import ArgumentParser
 from jax import numpy as jnp, random
 from backward_ica.hmm import LinearGaussianHMM, NeuralLinearBackwardSmoother, NonLinearGaussianHMM
 from backward_ica.svi import check_general_elbo, check_linear_gaussian_elbo, check_backward_linear_elbo
 from backward_ica.kalman import Kalman, pykalman_logl_seq, pykalman_smooth_seq
-from backward_ica.utils import GaussianParams, Scale
+from backward_ica.utils import GaussianParams, Scale, set_global_cov_mode
 import matplotlib.pyplot as plt 
 from backward_ica.utils import enable_x64
 enable_x64(True)
 
 key = random.PRNGKey(0)
 
-state_dim, obs_dim = 1,1
+state_dim, obs_dim = 10,12
 num_seqs = 16
 seq_length = 4
-num_samples = 100000
+num_samples = 100
+import argparse
+import math
+args = argparse.Namespace()
 
-p = LinearGaussianHMM(state_dim, obs_dim, 'diagonal')
+args.default_prior_base_scale = math.sqrt(1e-1)
+args.default_transition_base_scale = math.sqrt(1e-2)
+args.default_emission_base_scale = math.sqrt(1e-2)
+args.default_transition_bias = -0.4
+args.parametrization = 'cov_chol'
+set_global_cov_mode(args)
+
+p = LinearGaussianHMM(state_dim, obs_dim, 'diagonal', True, False)
 # theta = p .get_random_params(key)
 
 # state_seq, obs_seq  = p.sample_seq(key, theta, 16)

@@ -26,7 +26,7 @@ def main(args, save_dir):
     key, subkey = jax.random.split(key, 2)
     obs_seqs = p.sample_multiple_sequences(subkey, theta, args.num_seqs, args.seq_length)[1]
 
-    check_linear_gaussian_elbo(p, 8, 16)
+    check_linear_gaussian_elbo(p, args.num_seqs, args.seq_length)
     print('Computing evidence...')
     avg_evidence = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta))(obs_seqs))
     print('Avg evidence:', avg_evidence)
@@ -80,25 +80,28 @@ if __name__ == '__main__':
     args.seed_theta = 1326
     args.seed_phi = 4569
 
-    args.state_dim, args.obs_dim = 1,1
+    args.state_dim, args.obs_dim = 5,5
     args.transition_matrix_conditionning = 'diagonal'
 
-    args.seq_length = 64
-    args.num_seqs = 4096
+    args.seq_length = 8
+    args.num_seqs = 6400
 
     args.optimizer = 'adam'
     args.batch_size = 64
     args.parametrization = 'cov_chol'
-    args.learning_rate = 1e-2 #{'std':1e-2, 'nn':1e-1}
-    args.num_epochs = 100
+    args.learning_rate = 1e-3 #{'std':1e-2, 'nn':1e-1}
+    args.num_epochs = 300
     args.schedule = {} #{300:0.1}
     args.store_every = args.num_epochs // 5
     args.num_fits = 5
     args.save_dir = save_dir
-    args.default_prior_base_scale = 5e-2
-    args.default_transition_base_scale = 5e-2
-    args.default_emission_base_scale = 2e-2
-    args.transition_bias = True
+    import math
+    
+    args.default_prior_base_scale = math.sqrt(1e-1)
+    args.default_transition_base_scale = math.sqrt(1e-2)
+    args.default_emission_base_scale = math.sqrt(1e-2)
+    args.default_transition_bias = 0.5
+    args.transition_bias = False
     args.emission_bias = False
 
     utils.save_args(args, 'train_args', save_dir)

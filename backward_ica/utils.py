@@ -172,6 +172,7 @@ def set_global_cov_mode(args):
     hmm.HMM.default_prior_base_scale = args.default_prior_base_scale
     hmm.HMM.default_transition_base_scale = args.default_transition_base_scale
     hmm.HMM.default_emission_base_scale = args.default_emission_base_scale
+    hmm.HMM.default_transition_bias = args.default_transition_bias
 
     GaussianParams.parametrization = args.parametrization
 
@@ -255,8 +256,8 @@ def empty_add(d):
 @register_pytree_node_class
 class GaussianParams: 
 
-    parametrization = 'cov_chol'
-
+    parametrization = None
+    
     def __init__(self, mean=None, scale=None, eta1=None, eta2=None):
 
         if (mean is not None) and (scale is not None):
@@ -451,8 +452,10 @@ class QuadTerm:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
-def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs):
-    true_sequence, pred_means, pred_covs = true_sequence.squeeze()[:64], pred_means.squeeze()[:64], pred_covs.squeeze()[:64]
+def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs, limit=False):
+    # up_to = 64
+    true_sequence, pred_means, pred_covs = true_sequence.squeeze(), pred_means.squeeze(), pred_covs.squeeze()
+    if limit: true_sequence, pred_means, pred_covs = true_sequence[:limit], pred_means[:limit], pred_covs[:limit]
     time_axis = range(len(true_sequence))
     ax.errorbar(x=time_axis, fmt = '_', y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), label='Smoothed z, $1.96\\sigma$')
     ax.scatter(x=time_axis, marker = '_', y=true_sequence, c='r', label='True z')
@@ -485,38 +488,45 @@ def load_smoothing_results(save_dir):
         results = pickle.load(f)
     return results
 
-def save_train_logs(train_logs, save_dir, plot=True):
+def save_train_logs(train_logs, save_dir, plot=True, best_epochs_only=False):
     with open(os.path.join(save_dir, 'train_logs'), 'wb') as f: 
         pickle.dump(train_logs, f)
     if plot: 
-        plot_training_curves(*train_logs, save_dir)
+        plot_training_curves(*train_logs, save_dir, plot_only=None, best_epochs_only=best_epochs_only)
 
 def load_train_logs(save_dir):
     with open(os.path.join(save_dir, 'train_logs'), 'rb') as f: 
         train_logs = pickle.load(f)
     return train_logs
         
-def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, save_dir):
+def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, save_dir, plot_only, best_epochs_only):
+    plt.rcParams.update({'font.size': 10.35})
 
     colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
 
     num_fits = len(avg_elbos)
     for fit_nb in range(num_fits):
 
-        stored_epoch_nbs_for_fit = stored_epoch_nbs[0][fit_nb]
-        ydata = avg_elbos[fit_nb]
+        if best_epochs_only: stored_epoch_nbs_for_fit = [stored_epoch_nbs[fit_nb]]
+        else: stored_epoch_nbs_for_fit = stored_epoch_nbs[0][fit_nb]
+        ydata = avg_elbos[fit_nb]#[1:]
         plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$', c='black')
         plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
         idx_color = 0
         for epoch_nb in stored_epoch_nbs_for_fit:
-            plt.axvline(x=epoch_nb, linestyle='dashed', c=colors[idx_color])
-            idx_color+=1
+            if plot_only is not None:
+                if epoch_nb in plot_only:
+                    plt.axvline(x=epoch_nb, linestyle='dashed', c=colors[idx_color])
+                    idx_color+=1
+            else: 
+                plt.axvline(x=epoch_nb, linestyle='dashed', c=colors[idx_color])
+                idx_color+=1               
 
         plt.xlabel('Epoch') 
-        plt.legend()
+        # plt.legend()
         
-        if fit_nb == best_fit_idx: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}(best)'))
-        else: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}'))
+        if fit_nb == best_fit_idx: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}(best).pdf'), format='pdf')
+        else: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}.pdf'), format='pdf')
         plt.clf()
 
 def superpose_training_curves(avg_evidence, avg_elbos_list, method_names, save_dir, start_index=0):
@@ -528,7 +538,7 @@ def superpose_training_curves(avg_evidence, avg_elbos_list, method_names, save_d
     plt.legend()
     
     plt.show()
-    plt.savefig(os.path.join(save_dir, 'comparison_of_training_curves'))
+    plt.savefig(os.path.join(save_dir, 'comparison_of_training_curves.pdf'), format='pdf')
     plt.clf()
 
 def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb, figname, *args):
@@ -623,22 +633,22 @@ def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref
 def multiple_length_ffbsi_smoothing(key, obs_seqs, smoother, params, timesteps):
     
     params = smoother.format_params(params)
-    key, subkey = random.split(key, 2)
-    compute_filt_state_seq = jit(lambda obs_seq: smoother.compute_filt_state_seq(key, obs_seq, params)[0])
-    compute_marginals = lambda filt_seq: smoother.compute_marginals(subkey, filt_seq, params)
+    params.compute_covs()
+    compute_filt_state_seq = jit(lambda key, obs_seq: smoother.compute_filt_state_seq(key, obs_seq, params))
+    compute_marginals = lambda key, filt_seq: smoother.compute_marginals(key, filt_seq, params)
 
 
-    def results_for_single_seq(obs_seq):
+    def results_for_single_seq(key_filt, key_back, obs_seq):
 
-        filt_seq = compute_filt_state_seq(obs_seq)
+        filt_seq = compute_filt_state_seq(key_filt, obs_seq)
 
         results = []
         
         for length in tqdm(timesteps): 
-            paths = compute_marginals(tree_get_slice(0, length, filt_seq))
+            paths = compute_marginals(key_back, tree_get_slice(0, length, filt_seq))
             results.append(jnp.mean(paths, axis=0))
 
-        paths = compute_marginals(filt_seq)
+        paths = compute_marginals(key_back, filt_seq)
         results.append((jnp.mean(paths, axis=0), jnp.var(paths, axis=0)))
 
 
@@ -646,7 +656,9 @@ def multiple_length_ffbsi_smoothing(key, obs_seqs, smoother, params, timesteps):
 
     results = []
     for obs_seq in tqdm(obs_seqs):
-        results.append(results_for_single_seq(obs_seq))
+        key, key_filt, key_back = random.split(key, 3)
+
+        results.append(results_for_single_seq(key_filt, key_back, obs_seq))
 
 
 
@@ -686,6 +698,7 @@ def multiple_length_linear_backward_smoothing(obs_seqs, smoother, params, timest
 
 def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, timesteps, ref_name, approx_name, save_dir):
 
+    plt.rcParams.update({'font.size': 10.35})
     colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
 
     fig, ((ax0, ax1, ax2), (ax3, ax4, ax5)) = plt.subplots(2,3, figsize=(20,15))
@@ -719,21 +732,17 @@ def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, 
             handle, = ax3.plot(ref_vs_approx_marginals, linestyle='dotted', marker='.', c=c, label=f'{name}')
         handles.append(handle)
 
-    ax1.legend(handles=handles)
-    ax2.legend(handles=handles)
-    ax3.legend(handles=handles)
+    # ax0.set_title(f'{ref_name} vs states (additive)')
+    ax0.set_xlabel('$n$')
 
-    ax0.set_title(f'{ref_name} vs states (additive)')
-    ax0.set_xlabel('Sequence length')
+    # ax1.set_title(f'{approx_name} vs states (additive)')
+    ax1.set_xlabel('$n$')
 
-    ax1.set_title(f'{approx_name} vs states (additive)')
-    ax1.set_xlabel('Sequence length')
+    # ax2.set_title(f'{approx_name} vs {ref_name} (additive)')
+    ax2.set_xlabel('$n$')
 
-    ax2.set_title(f'{approx_name} vs {ref_name} (additive)')
-    ax2.set_xlabel('Sequence length')
-
-    ax3.set_title(f'{approx_name} vs {ref_name} (marginals)')
-    ax3.set_xlabel('Sequence length')
+    # ax3.set_title(f'{approx_name} vs {ref_name} (marginals)')
+    ax3.set_xlabel('$n$')
 
     plot_relative_errors_1D(ax4, ref_state_seqs[0], *ref_results[0][-1])
     ax4.set_title(f'{ref_name} smoothing')
@@ -743,12 +752,32 @@ def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, 
 
     ax4.legend()
     ax5.legend()
+
+
+    extent = ax0.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(os.path.join(save_dir,'smoothing_theta_star_vs_states.pdf'), bbox_inches=extent.expanded(2, 2), format='pdf')
+
+    # Save just the portion _inside_ the second axis's boundaries
+    extent = ax2.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(os.path.join(save_dir,'additive.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
+
+    extent = ax3.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(os.path.join(save_dir,'marginal.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
+
+    extent = ax4.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(os.path.join(save_dir,'smoothing_theta_star.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
+
+    extent = ax5.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(os.path.join(save_dir,'smoothing_best_phi.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
+
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'smoothing_results'))
+    plt.savefig(os.path.join(save_dir, 'smoothing_results.pdf'), format='pdf')
     plt.clf()
 
 
 def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_names, save_dir):
+    
+    plt.rcParams.update({'font.size': 20})
 
     
     train_logs = [load_train_logs(train_dir) for train_dir in train_dirs]
@@ -759,8 +788,8 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
     superpose_training_curves(avg_evidence, avg_elbos_list, pretty_names, save_dir, start_index=0)
 
 
-    colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
-
+    colors = ['g','b','r', 'c', 'm', 'y', 'k']
+    markers = ['*', 'o', 'x','-']
 
     eval_args = load_args('eval_args', eval_dirs[0])
     key = random.PRNGKey(eval_args.seed)
@@ -774,55 +803,110 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
                             layers=train_args.emission_map_layers,
                             slope=train_args.slope,
-                            num_particles=eval_args.num_particles) # specify the structure of the true model
+                            transition_bias=train_args.transition_bias,
+                            injective=train_args.injective) # specify the structure of the true model
 
     theta_star = load_params('theta', train_args.save_dir)
     key_gen, _ = random.split(key,2)
-    state_seqs = p.sample_multiple_sequences(key_gen, theta_star, eval_args.num_seqs, eval_args.seq_length)[0]
-    timesteps = range(1, eval_args.seq_length, eval_args.step)
+    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, eval_args.num_seqs, eval_args.seq_length)
+
+    timesteps = range(2, eval_args.seq_length, eval_args.step)
+    print(obs_seqs[0][list(timesteps)[0]])
 
     ref_results = load_smoothing_results(ref_dir)
     approx_results = {pretty_name:load_smoothing_results(eval_dir) for pretty_name, eval_dir in zip(pretty_names, eval_dirs)}
-    fig, (ax0, ax1, ax2) = plt.subplots(3, figsize=(20,15))
+    fig, (ax0, ax1, ax2) = plt.subplots(3, figsize=(20,20))
     xaxis = list(timesteps) + [len(state_seqs[0])]
+    mse = dict()
+    mse['ffbsi'] = []
     for seq_nb, (ref_state_seq, ref_results_seq) in enumerate(zip(state_seqs, ref_results)):
         ref_vs_states_additive =  []
         for i, length in enumerate(timesteps):
             ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[i] - ref_state_seq[:length], axis=0)))
         ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[-1][0] - ref_state_seq, axis=0)))
-        ax0.plot(xaxis, ref_vs_states_additive, linestyle='dotted', marker='.', c='k')
 
+        marginal_errors = ref_results_seq[-1][0] - ref_state_seq
+        mse_seq = marginal_errors.flatten()**2
+        mse['ffbsi'].append((jnp.mean(mse_seq).tolist(),jnp.var(mse_seq).tolist()))
+        ax0.plot(xaxis, ref_vs_states_additive, linestyle='dotted', marker='.', c='k')
 
     handles = []
     for idx, (method_name, approx_results_for_method) in enumerate(approx_results.items()):
+        mse[method_name] = []
         c = colors[idx]
+        m = markers[idx]
         for seq_nb, (ref_state_seq, ref_results_seq, approx_results_seq) in enumerate(zip(state_seqs, ref_results, approx_results_for_method)):
             ref_vs_approx_additive = []
 
             for i, length in enumerate(timesteps):
-                ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_results_seq[i], axis=0)))
+                ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i], axis=0) - jnp.sum(ref_results_seq[i], axis=0)))
+                # ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_state_seq[:length], axis=0)))
 
-            ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_results_seq[-1][0], axis=0)))
-            ref_vs_approx_marginals = jnp.abs(ref_results_seq[-1][0] - approx_results_seq[-1][0])
+            ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0], axis=0) - jnp.sum(ref_results_seq[-1][0], axis=0)))
+            # ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_state_seq, axis=0)))
 
-            ax1.plot(xaxis, ref_vs_approx_additive, linestyle='dotted', marker='.', c=c, label=f'{method_name}')
-            handle, = ax2.plot(ref_vs_approx_marginals, linestyle='dotted', marker='.', c=c, label=f'{method_name}')
+            marginals = approx_results_seq[-1][0] - ref_state_seq
+            # ref_vs_approx_marginals = jnp.abs(ref_state_seq - approx_results_seq[-1][0])
+            mse_seq = marginals.flatten()**2
+            mse[method_name].append((jnp.mean(mse_seq).tolist(), jnp.var(mse_seq).tolist()))
+            handle, = ax1.plot(xaxis, ref_vs_approx_additive, linestyle='dotted', marker=m, c=c, label=f'{method_name}')
+            ax2.scatter(range(len(marginals)), marginals, c=c, label=f'{method_name}', marker=m)
+
         handles.append(handle)
-
 
     ax1.legend(handles=handles)
     ax2.legend(handles=handles)
 
-    ax0.set_title(f'FFBSi gt vs states (additive)')
-    ax0.set_xlabel('Sequence length')
+    # ax0.set_title(f'FFBSi gt vs states (additive)')
+    ax0.set_xlabel('$n$')
 
-    ax1.set_title(f'Learnt models vs ground truth smoothing (additive)')
-    ax1.set_xlabel('Sequence length')
+    # ax1.set_title(f'Learnt models vs ground truth smoothing (additive)')
+    ax1.set_xlabel('$n$')
 
-    ax2.set_title(f'Learnt models vs ground truth smoothing (marginals)')
-    ax2.set_xlabel('Sequence length')
+    # ax2.set_title(f'Learnt models vs ground truth smoothing (marginals)')
+    ax2.set_xlabel('$n$')
+
+
+
+    # extent = ax0.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    # fig.savefig(os.path.join(save_dir,'smoothing_theta_star_vs_states.pdf'), bbox_inches=extent.expanded(2, 2), format='pdf')
+
+    # Save just the portion _inside_ the second axis's boundaries
+    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(os.path.join(save_dir,'additive.pdf'), bbox_inches=extent.expanded(1.261, 1.3), format='pdf')
+
+    extent = ax2.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    fig.savefig(os.path.join(save_dir,'marginal.pdf'), bbox_inches=extent.expanded(1.261, 1.3), format='pdf')
+
+    # extent = ax4.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    # fig.savefig(os.path.join(save_dir,'smoothing_theta_star.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
+
+    # extent = ax5.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    # fig.savefig(os.path.join(save_dir,'smoothing_best_phi.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
 
 
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'smoothing_results'))
+    plt.savefig(os.path.join(save_dir, 'smoothing_results.pdf'), format='pdf')
     plt.clf()
+
+    fig, (ax0, ax1, ax2, ax3, ax4) = plt.subplots(5,1, figsize=(20,20))
+    limit = 100
+    
+
+    plot_relative_errors_1D(ax0, state_seqs[0], *ref_results[0][-1], limit)
+    ax0.set_title(f'FFBSi')
+
+    plot_relative_errors_1D(ax1, state_seqs[0], *approx_results[pretty_names[0]][0][-1], limit)
+    ax1.set_title(f'{pretty_names[0]}')
+
+    plot_relative_errors_1D(ax2, state_seqs[0], *approx_results[pretty_names[1]][0][-1], limit)
+    ax2.set_title(f'{pretty_names[1]}')
+
+    plot_relative_errors_1D(ax3, state_seqs[0], *approx_results[pretty_names[2]][0][-1], limit)
+    ax3.set_title(f'{pretty_names[2]}')
+    with open(os.path.join(save_dir, 'mse_values.json'), 'w') as f:
+        json.dump(mse, f, indent=4)
+    # plot_relative_errors_1D(ax4, state_seqs[0], *approx_results['ffbsi_em_2022_05_18__17_59_59'][0][-1])
+    # ax4.set_title(f'FFBSi EM')
+
+    plt.savefig(os.path.join(save_dir, 'smoothing_visualizations.pdf'), format='pdf')

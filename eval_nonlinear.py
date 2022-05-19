@@ -15,34 +15,39 @@ def main(train_args, eval_args):
 
     key = jax.random.PRNGKey(eval_args.seed)
     
-    hmm.HMM.parametrization = train_args.parametrization
-    utils.GaussianParams.parametrization = train_args.parametrization 
+    utils.set_global_cov_mode(train_args)
 
     p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
                             layers=train_args.emission_map_layers,
-                            slope=train_args.slope) # specify the structure of the true model
+                            slope=train_args.slope,
+                            transition_bias=train_args.transition_bias,
+                            injective=train_args.injective) # specify the structure of the true model
 
     theta = utils.load_params('theta', train_args.save_dir)
 
     key_gen, _ = jax.random.split(key,2)
-    obs_seqs = p.sample_multiple_sequences(key_gen, theta, eval_args.num_seqs, eval_args.seq_length)[1]
-    timesteps = range(1, eval_args.seq_length, eval_args.step)
+    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta, eval_args.num_seqs, eval_args.seq_length)
+    timesteps = range(2, eval_args.seq_length, eval_args.step)
 
+    print(obs_seqs[0][list(timesteps)[0]])
 
     if train_args.q_version == 'linear':
 
         q = hmm.LinearGaussianHMM(state_dim=train_args.state_dim, 
                                 obs_dim=train_args.obs_dim,
-                                transition_matrix_conditionning=train_args.transition_matrix_conditionning)
+                                transition_matrix_conditionning=train_args.transition_matrix_conditionning, 
+                                transition_bias=train_args.transition_bias,
+                                emission_bias=False)
 
     else: 
         version = train_args.q_version.split('_')[1]
         q = hmm.NeuralLinearBackwardSmoother(state_dim=train_args.state_dim, 
                                         obs_dim=train_args.obs_dim, 
                                         use_johnson=(version == 'johnson'),
-                                        update_layers=train_args.update_layers)
+                                        update_layers=train_args.update_layers,
+                                        transition_bias=train_args.transition_bias)
 
 
     phi = utils.load_params('phi', train_args.save_dir)
@@ -60,13 +65,12 @@ if __name__ == '__main__':
 
     parser.add_argument('--train_dir', type=str)
     parser.add_argument('--save_dir',type=str)
-    eval_args = parser.parse_args()
+    parser.add_argument('--seed', type=int)
+    parser.add_argument('--step', type=int)
+    parser.add_argument('--num_seqs', type=int)
+    parser.add_argument('--seq_length', type=int)
 
-    eval_args.num_seqs = 5
-    eval_args.seq_length = 200
-    eval_args.num_particles = 1000
-    eval_args.step = 10
-    eval_args.seed = 0
+    eval_args = parser.parse_args()
     train_args = utils.load_args('train_args', eval_args.train_dir)
 
     utils.save_args(eval_args, 'eval_args', eval_args.save_dir)

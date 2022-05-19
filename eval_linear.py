@@ -9,7 +9,7 @@ import backward_ica.utils as utils
 import matplotlib.pyplot as plt
 import os
 # utils.enable_x64(True)
-
+import pickle
 def main(train_args, eval_args):
 
     utils.set_global_cov_mode(train_args)
@@ -50,10 +50,9 @@ def main(train_args, eval_args):
     # plt.savefig(os.path.join(eval_args.save_dir,'rmle'))
     # plt.clf()
 
-    utils.plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, eval_args.save_dir)
     
     state_seqs, obs_seqs = p.sample_multiple_sequences(key_eval, theta_star, eval_args.num_seqs, eval_args.seq_length)
-    timesteps = range(1, eval_args.seq_length, eval_args.step)
+    timesteps = range(2, eval_args.seq_length, eval_args.step)
 
     smoothing_theta_star = utils.multiple_length_linear_backward_smoothing(obs_seqs, p, theta_star, timesteps)
 
@@ -73,12 +72,18 @@ def main(train_args, eval_args):
     phi_at_multiple_epochs = {k:v for k,v in phi_at_multiple_epochs.items() if k > 40}
     # phi_at_multiple_epochs = dict()
     # phi_at_multiple_epochs[best_epoch] = best_params
+    utils.plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, eval_args.save_dir, plot_only=list(phi_at_multiple_epochs.keys()))
 
 
     smoothing_q_phi = dict()
     for epoch_nb, phi in phi_at_multiple_epochs.items():
         smoothing_q_phi[f'Variational {epoch_nb}'] = utils.multiple_length_linear_backward_smoothing(obs_seqs, q, phi, timesteps)
 
+    with open(os.path.join(eval_args.save_dir, 'smoothing_results'), 'wb') as f:
+        pickle.dump(smoothing_q_phi,f)
+    
+    # with open(os.path.join(eval_args.save_dir, 'smoothing_results'), 'rb') as f:
+    #     smoothing_q_phi = pickle.load(f)
     # smoothing_q_phi['MLE'] = utils.multiple_length_linear_backward_smoothing(obs_seqs, p, theta_mle, timesteps)
 
     utils.plot_multiple_length_smoothing(state_seqs, smoothing_theta_star, smoothing_q_phi, timesteps, 'true', 'variational', eval_args.save_dir)
@@ -99,7 +104,7 @@ if __name__ == '__main__':
     os.makedirs(eval_args.save_dir, exist_ok=True)
     train_args = utils.load_args('train_args', train_path)
 
-    eval_args.num_seqs = 5
+    eval_args.num_seqs = 20
     eval_args.seq_length = 2000
     eval_args.step = 100
     eval_args.seed = 0

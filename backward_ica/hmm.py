@@ -29,6 +29,15 @@ def neural_map(input, layers, slope, out_dim):
 
     return net(input)
 
+def neural_map_noninjective(input, layers, slope, out_dim):
+
+    net = hk.nets.MLP((*layers, out_dim), 
+                    with_bias=False, 
+                    activate_final=True, 
+                    activation=nn.tanh)
+    return jnp.cos(net(input))
+
+
 def linear_map_apply(map_params, input):
     out =  jnp.dot(map_params.w, input)
     return out + jnp.broadcast_to(map_params.b, out.shape)
@@ -37,12 +46,14 @@ def linear_map_init_params(key, dummy_in, out_dim, conditionning, bias):
 
     key_w, key_b = random.split(key, 2)
     if conditionning == 'diagonal':
-        w = random.uniform(key_w, (out_dim,), minval=-1, maxval=1)
+        w = random.uniform(key_w, (out_dim,), minval=-0.9, maxval=-0.8)
     else: 
         w = random.uniform(key_w, (out_dim, len(dummy_in)))
     
     if bias: 
-        return LinearMapParams(w=w, b=random.uniform(key_b, (out_dim,)))
+        if hasattr(HMM, 'default_transition_bias'): b = HMM.default_transition_bias * jnp.ones((out_dim,))
+        else: b = random.uniform(key_b, (out_dim,))
+        return LinearMapParams(w=w, b=b)
     else: 
         return LinearMapParams(w=w)
 
@@ -200,12 +211,10 @@ class Kernel:
    
 class HMM: 
 
-    parametrization = 'cov_chol'
 
-    default_prior_base_scale = jnp.sqrt(2e-2)
-    default_transition_base_scale = jnp.sqrt(1e-2)
-    default_emission_base_scale = jnp.sqrt(4e-4)
-    default_transition_bias = 0.5
+    default_prior_base_scale = None 
+    default_transition_base_scale = None 
+    default_emission_base_scale = None 
 
     def __init__(self, 
                 state_dim, 
@@ -225,9 +234,9 @@ class HMM:
         return sampler(jnp.array(subkeys), params, seq_length)
 
     def get_random_params(self, key):
-
+        print(self.default_transition_bias)
         key_prior, key_transition, key_emission = random.split(key, 3)
-        prior_params = self.prior_dist.get_random_params(key_prior, self.state_dim, default_mean=HMM.default_transition_bias, default_base_scale=self.default_prior_base_scale)
+        prior_params = self.prior_dist.get_random_params(key_prior, self.state_dim, default_mean=0.0, default_base_scale=self.default_prior_base_scale)
         transition_params = self.transition_kernel.get_random_params(key_transition, default_base_scale=self.default_transition_base_scale)
         emission_params = self.emission_kernel.get_random_params(key_emission, default_base_scale=self.default_emission_base_scale)
         return HMMParams(prior_params, transition_params, emission_params)
@@ -262,9 +271,9 @@ class HMM:
         
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))
-        print('Num params:', sum(len(leaf) for leaf in tree_leaves(params)))
-        print('-- in prior + predict:', sum(len(leaf) for leaf in tree_leaves((params.prior, params.transition))))
-        print('-- in update:', sum(len(leaf) for leaf in tree_leaves(params.emission)))
+        print('Num params:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params)))
+        print('-- in prior + predict:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
+        print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.emission)))
 
 class Smoother(metaclass=ABCMeta):
 
@@ -530,10 +539,16 @@ class NonLinearGaussianHMM(HMM):
                 transition_matrix_conditionning,
                 layers,
                 slope,
-                num_particles=100):
+                num_particles=100, 
+                transition_bias=True,
+                injective=True):
 
-        nonlinear_map_forward = partial(neural_map, layers=layers, slope=slope)
-        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_matrix_conditionning, False))
+        if injective:
+            nonlinear_map_forward = partial(neural_map, layers=layers, slope=slope)
+        else: 
+            nonlinear_map_forward = partial(neural_map_noninjective, layers=layers, slope=slope)
+
+        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_matrix_conditionning, transition_bias))
         emission_kernel_def = ({'homogeneous':True, 'map':'nonlinear'}, nonlinear_map_forward)
         
         HMM.__init__(self, 
@@ -679,18 +694,19 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
                 update_layers=(100,), 
                 use_johnson=False,
                 prior_dist=Gaussian, 
-                filt_dist=Gaussian):
+                filt_dist=Gaussian,
+                transition_bias=True):
         
         super().__init__(state_dim, filt_dist)
 
         self.state_dim, self.obs_dim = state_dim, obs_dim 
 
         self.prior_dist:Gaussian = prior_dist
-        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_kernel_matrix_conditionning, False))
+        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_kernel_matrix_conditionning, transition_bias))
         self.transition_kernel = Kernel(state_dim, state_dim, transition_kernel_def)
 
         d = state_dim
-        self.filt_state_shape = d + d*(d+1) // 2
+        self.filt_state_shape = d + (d*(d+1)) // 2
 
         if use_johnson: 
             self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.johnson_update_forward, 
@@ -734,9 +750,9 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))
-        print('Num params:', sum(len(jnp.atleast_1d(leaf)) for leaf in tree_leaves(params)))
-        print('-- in prior + predict + backward:', sum(len(jnp.atleast_1d(leaf)) for leaf in tree_leaves((params.prior, params.transition))))
-        print('-- in update:', sum(len(jnp.atleast_1d(leaf)) for leaf in tree_leaves(params.filt_update)))
+        print('Num params:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params)))
+        print('-- in prior + predict + backward:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
+        print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt_update)))
 
 # class NeuralBackwardSmoother(Smoother):
 

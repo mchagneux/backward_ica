@@ -1,7 +1,8 @@
 import subprocess
 import os
 from datetime import datetime 
-exp_detail = 'p_injective'
+injective = False
+exp_detail = 'p_noninjective_3'
 base_dir = os.path.join('experiments', 'p_nonlinear', exp_detail, 'trainings')
 
 q_versions = ['linear',
@@ -22,9 +23,12 @@ for q_version in q_versions:
     logfiles.append(f)
     save_dirs.append(save_dir)
 
+
+arg = '--injective' if injective else ''
+
 processes = [subprocess.Popen(f'python train_nonlinear.py \
                             --q_version {q_version} \
-                            --save_dir {save_dir}', 
+                            --save_dir {save_dir} {arg}',
                         shell=True, stdout=logfile, stderr=logfile) \
                 for (q_version, save_dir, logfile) in zip(q_versions, save_dirs, logfiles)]
 
