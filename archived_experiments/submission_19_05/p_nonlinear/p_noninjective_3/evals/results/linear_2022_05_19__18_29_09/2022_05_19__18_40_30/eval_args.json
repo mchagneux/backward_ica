@@ -1,0 +1,8 @@
+{
+    "train_dir": "experiments/p_nonlinear/p_noninjective_3/trainings/linear/2022_05_19__18_29_09",
+    "save_dir": "experiments/p_nonlinear/p_noninjective_3/evals/results/linear_2022_05_19__18_29_09/2022_05_19__18_40_30",
+    "seed": 0,
+    "step": 5,
+    "num_seqs": 5,
+    "seq_length": 50
+}

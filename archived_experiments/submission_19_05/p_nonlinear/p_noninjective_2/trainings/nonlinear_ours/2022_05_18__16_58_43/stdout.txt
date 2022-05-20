@@ -1,0 +1,44 @@
+WARNING:absl:No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
+-0.4
+Traceback (most recent call last):
+  File "train_nonlinear.py", line 181, in <module>
+    main(args, save_dir)
+  File "train_nonlinear.py", line 32, in main
+    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta, args.num_seqs, args.seq_length)
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/hmm.py", line 232, in sample_multiple_sequences
+    key, *subkeys = random.split(key, num_seqs+1)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/random.py", line 194, in split
+    return _return_prng_keys(wrapped, _split(key, num))
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/random.py", line 180, in _split
+    return key._split(num)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/prng.py", line 201, in _split
+    return PRNGKeyArray(self.impl, self.impl.split(self._keys, num))
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/prng.py", line 494, in threefry_split
+    return _threefry_split(key, int(num))  # type: ignore
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/traceback_util.py", line 162, in reraise_with_filtered_traceback
+    return fun(*args, **kwargs)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/api.py", line 466, in cache_miss
+    out_flat = xla.xla_call(
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/core.py", line 1771, in bind
+    return call_bind(self, fun, *args, **params)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/core.py", line 1787, in call_bind
+    outs = top_trace.process_call(primitive, fun_, tracers, params)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/core.py", line 660, in process_call
+    return primitive.impl(f, *tracers, **params)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/dispatch.py", line 149, in _xla_call_impl
+    compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/linear_util.py", line 285, in memoized_fun
+    ans = call(fun, *args)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/dispatch.py", line 197, in _xla_callable_uncached
+    return lower_xla_callable(fun, device, backend, name, donated_invars,
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/dispatch.py", line 641, in compile
+    self._executable = XlaCompiledComputation.from_xla_computation(
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/dispatch.py", line 728, in from_xla_computation
+    compiled = compile_or_get_cached(backend, xla_computation, options)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/dispatch.py", line 696, in compile_or_get_cached
+    return backend_compile(backend, computation, compile_options)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/profiler.py", line 206, in wrapper
+    return func(*args, **kwargs)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/dispatch.py", line 650, in backend_compile
+    return backend.compile(built_c, compile_options=options)
+KeyboardInterrupt

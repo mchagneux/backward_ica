@@ -1,0 +1,37 @@
+{
+    "q_version": "nonlinear_johnson",
+    "save_dir": "experiments/p_nonlinear/p_noninjective_3/trainings/nonlinear_johnson/2022_05_19__17_40_20",
+    "injective": false,
+    "seed_theta": 1329,
+    "seed_phi": 4569,
+    "state_dim": 1,
+    "obs_dim": 1,
+    "transition_matrix_conditionning": "diagonal",
+    "emission_map_layers": [],
+    "slope": 0,
+    "seq_length": 4,
+    "num_seqs": 12800,
+    "optimizer": "adam",
+    "batch_size": 64,
+    "parametrization": "cov_chol",
+    "learning_rate": 0.01,
+    "num_epochs": 100,
+    "schedule": {},
+    "store_every": 20,
+    "num_fits": 10,
+    "update_layers": [
+        16,
+        16
+    ],
+    "backwd_map_layers": [
+        16,
+        16
+    ],
+    "num_particles": 1000,
+    "num_samples": 5,
+    "default_prior_base_scale": 0.31622776601683794,
+    "default_transition_base_scale": 0.1,
+    "default_emission_base_scale": 0.1,
+    "default_transition_bias": -0.4,
+    "transition_bias": true
+}

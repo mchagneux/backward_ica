@@ -1,0 +1,26 @@
+WARNING:absl:No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
+-0.4
+Computing evidence...
+Avg evidence: 5.911036598483305
+Traceback (most recent call last):
+  File "train_nonlinear.py", line 182, in <module>
+    main(args, save_dir)
+  File "train_nonlinear.py", line 100, in main
+    trainer = SVITrainer(p=p, 
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/svi.py", line 321, in __init__
+    self.q.print_num_params()
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/hmm.py", line 752, in print_num_params
+    params = self.get_random_params(random.PRNGKey(0))
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/hmm.py", line 730, in get_random_params
+    filt_update_params = self.filt_update_init_params(subkeys[2], dummy_obs, dummy_pred_state)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/transform.py", line 113, in init_fn
+    params, state = f.init(*args, **kwargs)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/transform.py", line 381, in init_fn
+    f(*args, **kwargs)
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/hmm.py", line 686, in johnson_update_forward
+    eta1, log_prec_diag = jnp.split(out,2)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/numpy/lax_numpy.py", line 1096, in split
+    return _split("split", ary, indices_or_sections, axis=axis)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/jax/_src/numpy/lax_numpy.py", line 1088, in _split
+    raise ValueError("array split does not result in an equal division")
+ValueError: array split does not result in an equal division

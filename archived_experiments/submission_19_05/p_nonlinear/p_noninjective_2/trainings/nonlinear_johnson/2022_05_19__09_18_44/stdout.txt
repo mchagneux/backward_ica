@@ -1,0 +1,34 @@
+WARNING:absl:No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
+-0.4
+Traceback (most recent call last):
+  File "train_nonlinear.py", line 181, in <module>
+    main(args, save_dir)
+  File "train_nonlinear.py", line 54, in main
+    plt.plot(support, p.emission_kernel.map(support, theta.emission).mean)
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/hmm.py", line 197, in map
+    mean, scale = self._apply_map(params, state)
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/hmm.py", line 153, in <lambda>
+    apply_map = lambda params, input: (nonlinear_apply_map(params.map, input), params.scale)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/transform.py", line 216, in apply_fn
+    return f.apply(params, None, *args, **kwargs)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/transform.py", line 127, in apply_fn
+    out, state = f.apply(params, {}, *args, **kwargs)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/transform.py", line 400, in apply_fn
+    out = f(*args, **kwargs)
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/hmm.py", line 30, in neural_map
+    return net(input)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/module.py", line 433, in wrapped
+    out = f(*args, **kwargs)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/module.py", line 284, in run_interceptors
+    return bound_method(*args, **kwargs)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/nets/mlp.py", line 113, in __call__
+    out = layer(out)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/module.py", line 433, in wrapped
+    out = f(*args, **kwargs)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/module.py", line 284, in run_interceptors
+    return bound_method(*args, **kwargs)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/basic.py", line 174, in __call__
+    w = hk.get_parameter("w", [input_size, output_size], dtype, init=w_init)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/base.py", line 355, in get_parameter
+    raise ValueError(
+ValueError: 'mlp/~/linear_0/w' with retrieved shape (5, 6) does not match shape=[1, 6] dtype=dtype('float64')

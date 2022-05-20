@@ -1,0 +1,33 @@
+{
+    "q_version": "linear",
+    "seed_theta": 1329,
+    "seed_phi": 4569,
+    "state_dim": 1,
+    "obs_dim": 1,
+    "transition_matrix_conditionning": "diagonal",
+    "emission_map_layers": [
+        8,
+        8
+    ],
+    "slope": 0,
+    "seq_length": 4,
+    "num_seqs": 12800,
+    "optimizer": "adam",
+    "batch_size": 64,
+    "parametrization": "cov_chol",
+    "learning_rate": 0.01,
+    "num_epochs": 500,
+    "schedule": {},
+    "store_every": 100,
+    "num_fits": 5,
+    "update_layers": [
+        16,
+        16
+    ],
+    "backwd_map_layers": [
+        16,
+        16
+    ],
+    "num_particles": 1000,
+    "num_samples": 1
+}

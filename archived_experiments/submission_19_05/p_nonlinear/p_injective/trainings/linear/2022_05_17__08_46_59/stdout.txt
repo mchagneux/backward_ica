@@ -1,0 +1,17 @@
+WARNING:absl:No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
+Traceback (most recent call last):
+  File "train_nonlinear.py", line 168, in <module>
+    main(args, save_dir)
+  File "train_nonlinear.py", line 29, in main
+    theta = p.get_random_params(key_params) # sample params randomly (but covariances are fixed to default values)
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/hmm.py", line 231, in get_random_params
+    emission_params = self.emission_kernel.get_random_params(key_emission, default_base_scale=self.default_emission_base_scale)
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/hmm.py", line 147, in get_random_params
+    map_params = init_map_params(key, jnp.empty((self.in_dim,)))
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/transform.py", line 113, in init_fn
+    params, state = f.init(*args, **kwargs)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/haiku/_src/transform.py", line 381, in init_fn
+    f(*args, **kwargs)
+  File "/home/infres/chagneux/repos/backward_ica/backward_ica/hmm.py", line 25, in neural_map
+    net = hk.nets.MLP((*layers, out_dim), 
+TypeError: 'int' object is not iterable
