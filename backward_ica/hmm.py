@@ -216,6 +216,7 @@ class HMM:
     default_prior_base_scale = None 
     default_transition_base_scale = None 
     default_emission_base_scale = None 
+    default_transition_bias = None
 
     def __init__(self, 
                 state_dim, 
@@ -235,7 +236,6 @@ class HMM:
         return sampler(jnp.array(subkeys), params, seq_length)
 
     def get_random_params(self, key):
-        print(self.default_transition_bias)
         key_prior, key_transition, key_emission = random.split(key, 3)
         prior_params = self.prior_dist.get_random_params(key_prior, self.state_dim, default_mean=0.0, default_base_scale=self.default_prior_base_scale)
         transition_params = self.transition_kernel.get_random_params(key_transition, default_base_scale=self.default_transition_base_scale)
@@ -493,7 +493,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         params = self.get_random_params(key_init_params)
         opt_state = optimizer.init(params)
         num_seqs = data.shape[0]
-
+        
         @jit
         def batch_step(carry, x):
             
