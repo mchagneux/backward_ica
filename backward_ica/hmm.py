@@ -502,7 +502,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
                 avg_grads = tree_util.tree_map(jnp.mean, grads)
                 updates, opt_state = optimizer.update(avg_grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
-                return params, opt_state, jnp.mean(-neg_logl_value)
+                return params, opt_state, -neg_logl_value.sum()
 
             data, params, opt_state = carry
             batch_start = x
@@ -523,7 +523,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
             (_, params, opt_state), avg_logl_batches = lax.scan(batch_step, 
                                                                 init=(data, params, opt_state), 
                                                                 xs=batch_start_indices)
-            avg_logls.append(jnp.mean(avg_logl_batches))
+            avg_logls.append(avg_logl_batches.sum())
             all_params.append(params)
 
         best_optim = jnp.argmax(jnp.array(avg_logls))
