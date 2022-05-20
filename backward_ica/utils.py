@@ -789,7 +789,7 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
 
 
     colors = ['g','b','r', 'c', 'm', 'y', 'k']
-    markers = ['*', 'o', 'x','-']
+    markers = ['*', '.', 'x','-']
 
     eval_args = load_args('eval_args', eval_dirs[0])
     key = random.PRNGKey(eval_args.seed)
@@ -848,14 +848,14 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
             marginals = approx_results_seq[-1][0] - ref_state_seq
             # ref_vs_approx_marginals = jnp.abs(ref_state_seq - approx_results_seq[-1][0])
             mse_seq = marginals.flatten()**2
-            mse[method_name].append((jnp.mean(mse_seq).tolist(), jnp.var(mse_seq).tolist()))
+            mse[method_name].append(ref_vs_approx_additive[-1].tolist())
             handle, = ax1.plot(xaxis, ref_vs_approx_additive, linestyle='dotted', marker=m, c=c, label=f'{method_name}')
-            ax2.scatter(range(len(marginals)), marginals, c=c, label=f'{method_name}', marker=m)
+            ax2.scatter(range(len(marginals)), mse_seq, c=c, label=f'{method_name}', marker=m)
 
         handles.append(handle)
 
-    ax1.legend(handles=handles)
-    ax2.legend(handles=handles)
+    # ax1.legend(handles=handles)
+    # ax2.legend(handles=handles)
 
     # ax0.set_title(f'FFBSi gt vs states (additive)')
     ax0.set_xlabel('$n$')
@@ -893,17 +893,17 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
     limit = 100
     
 
-    plot_relative_errors_1D(ax0, state_seqs[0], *ref_results[0][-1], limit)
-    ax0.set_title(f'FFBSi')
+    # plot_relative_errors_1D(ax0, state_seqs[0], *ref_results[0][-1], limit)
+    # ax0.set_title(f'FFBSi')
 
-    plot_relative_errors_1D(ax1, state_seqs[0], *approx_results[pretty_names[0]][0][-1], limit)
-    ax1.set_title(f'{pretty_names[0]}')
+    # plot_relative_errors_1D(ax1, state_seqs[0], *approx_results[pretty_names[0]][0][-1], limit)
+    # ax1.set_title(f'{pretty_names[0]}')
 
-    plot_relative_errors_1D(ax2, state_seqs[0], *approx_results[pretty_names[1]][0][-1], limit)
-    ax2.set_title(f'{pretty_names[1]}')
+    # plot_relative_errors_1D(ax2, state_seqs[0], *approx_results[pretty_names[1]][0][-1], limit)
+    # ax2.set_title(f'{pretty_names[1]}')
 
-    plot_relative_errors_1D(ax3, state_seqs[0], *approx_results[pretty_names[2]][0][-1], limit)
-    ax3.set_title(f'{pretty_names[2]}')
+    # plot_relative_errors_1D(ax3, state_seqs[0], *approx_results[pretty_names[2]][0][-1], limit)
+    # ax3.set_title(f'{pretty_names[2]}')
     with open(os.path.join(save_dir, 'mse_values.json'), 'w') as f:
         json.dump(mse, f, indent=4)
     # plot_relative_errors_1D(ax4, state_seqs[0], *approx_results['ffbsi_em_2022_05_18__17_59_59'][0][-1])

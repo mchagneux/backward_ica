@@ -50,20 +50,20 @@ def main(args, save_dir):
     # plt.savefig(os.path.join(save_dir,'example_mapped_states'))
     # plt.clf()
 
-    # support = jnp.sort(state_seqs.flatten()).reshape(-1,1)
-    # plt.plot(support, p.emission_kernel.map(support, theta.emission).mean)
-    # plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
-    # plt.clf()
+    support = jnp.sort(state_seqs.flatten()).reshape(-1,1)
+    plt.plot(support, p.emission_kernel.map(support, theta.emission).mean)
+    plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
+    plt.clf()
     
 
     # support = jnp.sort(state_seqs[0].flatten()).reshape(-1,1)
     # plt.plot(support, p.emission_kernel.map(support, theta.emission).mean)
     # plt.savefig(os.path.join(save_dir,'emission_map_on_single_sequence'))
     # plt.clf()
-    # support_stationary = jnp.sort(state_seqs[:,8:,:].flatten()).reshape(-1,1)
-    # plt.plot(support_stationary, p.emission_kernel.map(support_stationary, theta.emission).mean)
-    # plt.savefig(os.path.join(save_dir,'emission_map_on_states_support_stationary'))
-    # plt.clf()
+    support_stationary = jnp.sort(state_seqs[:,2:,:].flatten()).reshape(-1,1)
+    plt.plot(support_stationary, p.emission_kernel.map(support_stationary, theta.emission).mean)
+    plt.savefig(os.path.join(save_dir,'emission_map_on_states_support_stationary'))
+    plt.clf()
 
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
@@ -144,7 +144,7 @@ if __name__ == '__main__':
     args.seed_theta = 1329
     args.seed_phi = 4569
 
-    args.state_dim, args.obs_dim = 1,1
+    args.state_dim, args.obs_dim = 5,5
     args.transition_matrix_conditionning = 'diagonal'
     args.emission_map_layers = () 
     args.slope = 0
@@ -158,10 +158,10 @@ if __name__ == '__main__':
     args.batch_size = 64
     args.parametrization = 'cov_chol'
     args.learning_rate = 1e-3 # {'std':1e-2, 'nn':1e-1}
-    args.num_epochs = 100
+    args.num_epochs = 300
     args.schedule = {} #{'nn':{200:0.1, 250:0.5}}
     args.store_every = args.num_epochs // 5
-    args.num_fits = 10
+    args.num_fits = 6
     
     args.update_layers = (16,16)
     args.backwd_map_layers = (16,16)
@@ -171,10 +171,10 @@ if __name__ == '__main__':
     args.num_samples = 10
     args.parametrization = 'cov_chol'
     import math
-    args.default_prior_base_scale = math.sqrt(1e-1)
+    args.default_prior_base_scale = math.sqrt(1e-2)
     args.default_transition_base_scale = math.sqrt(1e-2)
     args.default_emission_base_scale = math.sqrt(1e-2)
-    args.default_transition_bias = -0.4
+    args.default_transition_bias = 0.3
     args.transition_bias = True
 
     utils.save_args(args, 'train_args', save_dir)

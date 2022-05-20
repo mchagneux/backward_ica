@@ -96,8 +96,8 @@ def eval(exp_date, exp_name, q_versions_and_dates, run=False):
 
     num_eval_seqs = 5
 
-    eval_seqs_length = 20
-    eval_step = 2
+    eval_seqs_length = 500
+    eval_step = 50
     eval_seed = 0
 
     train_args = utils.load_args('train_args', train_dirs[0])
@@ -172,10 +172,10 @@ def eval(exp_date, exp_name, q_versions_and_dates, run=False):
 
 if __name__ == '__main__': 
     from datetime import datetime
-    exp_date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
-    exp_name = 'p_noninjective_3'
-    q_versions_and_dates = [('linear','2022_05_19__17_40_20'),
-                        ('nonlinear_johnson','2022_05_19__17_40_20'),
-                        ('nonlinear_ours','2022_05_19__17_40_20')]
+    exp_date = '2022_05_19__16_24_08' #datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
+    exp_name = 'p_noninjective_2'
+    q_versions_and_dates = [#('linear','2022_05_18__16_58_59'),
+                        ('nonlinear_johnson','2022_05_18__16_58_59'),
+                        ('nonlinear_ours','2022_05_18__16_58_59')]
 
-    eval(exp_date, exp_name, q_versions_and_dates, run=True)
+    eval(exp_date, exp_name, q_versions_and_dates, run=False)

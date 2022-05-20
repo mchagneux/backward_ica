@@ -35,7 +35,8 @@ def neural_map_noninjective(input, layers, slope, out_dim):
                     with_bias=False, 
                     activate_final=True, 
                     activation=nn.tanh)
-    return jnp.cos(net(input))
+    x = net(input)
+    return jnp.exp(-x**3 - x**2)
 
 
 def linear_map_apply(map_params, input):
@@ -46,7 +47,7 @@ def linear_map_init_params(key, dummy_in, out_dim, conditionning, bias):
 
     key_w, key_b = random.split(key, 2)
     if conditionning == 'diagonal':
-        w = random.uniform(key_w, (out_dim,), minval=-0.9, maxval=-0.8)
+        w = random.uniform(key_w, (out_dim,), minval=0.6, maxval=0.9)
     else: 
         w = random.uniform(key_w, (out_dim, len(dummy_in)))
     
