@@ -484,13 +484,35 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
     def gaussianize_filt_state(self, filt_state, params):
         return filt_state
     
-    def fit_kalman_rmle(self, key, data, optimizer, learning_rate, batch_size, num_epochs):
+    def fit_kalman_rmle(self, key, data, optimizer, learning_rate, batch_size, num_epochs, theta_star=None):
                 
-        loss = lambda seq, params: -self.likelihood_seq(seq, params)
+        
         
         key_init_params, key_batcher = random.split(key, 2)
-        optimizer = getattr(optax, optimizer)(learning_rate)
+        base_optimizer = getattr(optax, optimizer)(learning_rate)
+        optimizer = base_optimizer
+        # optimizer = optax.masked(base_optimizer, mask=HMMParams(prior_mask, transition_mask, emission_mask))
+
         params = self.get_random_params(key_init_params)
+
+        # prior_params = theta_star.prior
+        # transition_scale = theta_star.transition.scale
+        # emission_params = theta_star.emission
+        # # emission = theta.emission.scale 
+
+        # def build_params(params):
+        #     # prior_params = 
+        #     # transition_params = KernelParams(non_scale_params[1], transition_scale)
+        #     # emission_params = KernelParams(non_scale_params[2], emission_scale)
+        #     return HMMParams(prior_params, KernelParams(params, transition_scale), emission_params)
+        
+        # params = (params.prior.mean, params.transition.map, params.emission.map)
+
+        build_params = lambda x:x
+        loss = lambda seq, params: -self.likelihood_seq(seq, build_params(params))
+
+        # if theta_star is not None: 
+        #     params = theta_star
         opt_state = optimizer.init(params)
         num_seqs = data.shape[0]
         
@@ -514,6 +536,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         avg_logls = []
         all_params = []
+
         for epoch_nb in tqdm(range(num_epochs), 'Epoch'):
 
             key_batcher, subkey_batcher = random.split(key_batcher, 2)
@@ -530,7 +553,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         print(f'Best fit is epoch {best_optim} with logl {avg_logls[best_optim]}.')
         best_params = all_params[best_optim]
         
-        return best_params, avg_logls
+        return build_params(best_params), avg_logls, best_optim
 
 class NonLinearGaussianHMM(HMM):
 
