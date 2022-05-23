@@ -13,6 +13,8 @@ import os
 import pickle 
 import argparse
 from typing import Any
+from matplotlib.patches import Ellipse
+import matplotlib.transforms as transforms
 from backward_ica import hmm 
 # Containers for parameters of various objects 
 config.update('jax_enable_x64',True)
@@ -43,7 +45,7 @@ def set_host_device_count(n):
     """
     By default, XLA considers all CPU cores as one device. This utility tells XLA
     that there are `n` host (CPU) devices available to use. As a consequence, this
-    allows parallel mapping in JAX :func:`jax.pmap` to work in CPU platform.
+    allows parkallel mapping in JAX :func:`jax.pmap` to work in CPU platform.
     .. note:: This utility only takes effect at the beginning of your program.
         Under the hood, this sets the environment variable
         `XLA_FLAGS=--xla_force_host_platform_device_count=[num_devices]`, where
@@ -168,13 +170,14 @@ BackwardState = namedtuple('BackwardState', ['shared', 'varying', 'inner'])
 def set_global_cov_mode(args):
         
     hmm.HMM.parametrization = args.parametrization 
+    GaussianParams.parametrization = args.parametrization
 
+    hmm.HMM.default_prior_mean = args.default_prior_mean
     hmm.HMM.default_prior_base_scale = args.default_prior_base_scale
     hmm.HMM.default_transition_base_scale = args.default_transition_base_scale
     hmm.HMM.default_emission_base_scale = args.default_emission_base_scale
     hmm.HMM.default_transition_bias = args.default_transition_bias
 
-    GaussianParams.parametrization = args.parametrization
 
 @register_pytree_node_class
 class Scale:
@@ -189,7 +192,7 @@ class Scale:
         elif prec is not None:
             self.prec = prec
             self.prec_chol = cholesky(prec)
-
+        
         elif cov_chol is not None:
             self.cov_chol = cov_chol
 
@@ -460,6 +463,20 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs, limit=Fals
     ax.errorbar(x=time_axis, fmt = '_', y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), label='Smoothed z, $1.96\\sigma$')
     ax.scatter(x=time_axis, marker = '_', y=true_sequence, c='r', label='True z')
     ax.set_xlabel('t')
+    ax.legend()
+
+
+def plot_relative_errors_2D(ax, true_sequence, pred_means, pred_covs, limit=False):
+    # up_to = 64
+    true_sequence, pred_means, pred_covs = true_sequence.squeeze(), pred_means.squeeze(), pred_covs.squeeze()
+    if limit: true_sequence, pred_means, pred_covs = true_sequence[:limit], pred_means[:limit], pred_covs[:limit]
+    # time_axis = range(len(true_sequence))
+    ax.scatter(true_sequence[:,0], true_sequence[:,1], c='r')
+    for mean, cov in zip(pred_means, pred_covs):
+        confidence_ellipse(mean, cov, ax, c='b')
+
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
     ax.legend()
 
 def save_args(args, name, save_dir):
@@ -910,3 +927,35 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
     # ax4.set_title(f'FFBSi EM')
 
     plt.savefig(os.path.join(save_dir, 'smoothing_visualizations.pdf'), format='pdf')
+
+
+def confidence_ellipse(mean, cov, ax, c, n_std=1.96):
+
+
+
+    pearson = cov[0, 1]/jnp.sqrt(cov[0, 0] * cov[1, 1])
+    # Using a special case to obtain the eigenvalues of this
+    # two-dimensionl dataset.
+    ell_radius_x = jnp.sqrt(1 + pearson)
+    ell_radius_y = jnp.sqrt(1 - pearson)
+    ellipse = Ellipse((0, 0), width=ell_radius_x * 2, height=ell_radius_y * 2,
+                      edgecolor=c, alpha=0)
+
+    # Calculating the stdandard deviation of x from
+    # the squareroot of the variance and multiplying
+    # with the given number of standard deviations.
+    scale_x = jnp.sqrt(cov[0, 0]) * n_std
+    mean_x = mean[0]
+
+    # calculating the stdandard deviation of y ...
+    scale_y = jnp.sqrt(cov[1, 1]) * n_std
+    mean_y = mean[1]
+
+    transf = transforms.Affine2D() \
+        .rotate_deg(45) \
+        .scale(scale_x, scale_y) \
+        .translate(mean_x, mean_y)
+
+    ellipse.set_transform(transf + ax.transData)
+    ax.add_patch(ellipse)
+    ax.scatter(mean_x, mean_y, c=c)

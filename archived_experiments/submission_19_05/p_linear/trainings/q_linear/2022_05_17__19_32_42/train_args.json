@@ -18,6 +18,9 @@
     "default_prior_base_scale": 0.05,
     "default_transition_base_scale": 0.05,
     "default_emission_base_scale": 0.02,
+    "default_prior_mean":0.5,
+    "range_transition_map_params":[-1,1],
+    "default_transition_bias":null,
     "transition_bias": true,
     "emission_bias": false
 }

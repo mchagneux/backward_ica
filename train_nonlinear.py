@@ -23,10 +23,12 @@ def main(args, save_dir):
                             slope=args.slope,
                             num_particles=args.num_particles,
                             transition_bias=args.transition_bias,
+                            range_transition_map_params=args.range_transition_map_params,
                             injective=args.injective) # specify the structure of the true model
     key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
 
     theta = p.get_random_params(key_params) # sample params randomly (but covariances are fixed to default values)
+
     utils.save_params(theta, 'theta', save_dir)
 
     state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta, args.num_seqs, args.seq_length)
@@ -81,13 +83,15 @@ def main(args, save_dir):
         q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
                                 obs_dim=args.obs_dim,
                                 transition_matrix_conditionning=args.transition_matrix_conditionning,
-                                transition_bias=args.transition_bias, emission_bias=False)
+                                transition_bias=args.transition_bias, 
+                                emission_bias=False)
 
     else: 
         version = args.q_version.split('_')[1]
         q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
                                         obs_dim=args.obs_dim, 
                                         use_johnson=(version == 'johnson'),
+                                        range_transition_map_params=args.range_transition_map_params,
                                         update_layers=args.update_layers,
                                         transition_bias=args.transition_bias)
 
@@ -127,55 +131,60 @@ if __name__ == '__main__':
     import argparse
     import os 
     from datetime import datetime
+    date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
+
+
     
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--q_version',type=str, default='nonlinear_johnson')
     parser.add_argument('--save_dir', type=str, default='test')
     parser.add_argument('--injective', dest='injective', action='store_true', default=False)
+    parser.add_argument('--args_path', type=str, default='')
 
     args = parser.parse_args()
-    # args.injective = True
 
     save_dir = args.save_dir
-    
-    # sys.stdout = open(os.path.join(save_dir, 'train_logs.txt'), 'w')
 
-    args.seed_theta = 1329
-    args.seed_phi = 4569
+    if args.args_path != '':
+        args = utils.load_args('train_args',args.args_path)
+        args.save_dir = save_dir
+    else:
+        args.seed_theta = 1329
+        args.seed_phi = 4569
 
-    args.state_dim, args.obs_dim = 5,5
-    args.transition_matrix_conditionning = 'diagonal'
-    args.emission_map_layers = () 
-    args.slope = 0
-
-
-    args.seq_length = 4
-    args.num_seqs = 12800
+        args.state_dim, args.obs_dim = 1,1
+        args.transition_matrix_conditionning = 'diagonal'
+        args.emission_map_layers = () 
+        args.slope = 0
 
 
-    args.optimizer = 'adam'
-    args.batch_size = 64
-    args.parametrization = 'cov_chol'
-    args.learning_rate = 1e-3 # {'std':1e-2, 'nn':1e-1}
-    args.num_epochs = 300
-    args.schedule = {} #{'nn':{200:0.1, 250:0.5}}
-    args.store_every = args.num_epochs // 5
-    args.num_fits = 6
-    
-    args.update_layers = (16,16)
-    args.backwd_map_layers = (16,16)
+        args.seq_length = 4
+        args.num_seqs = 12800
 
 
-    args.num_particles = 1000
-    args.num_samples = 10
-    args.parametrization = 'cov_chol'
-    import math
-    args.default_prior_base_scale = math.sqrt(1e-2)
-    args.default_transition_base_scale = math.sqrt(1e-2)
-    args.default_emission_base_scale = math.sqrt(1e-2)
-    args.default_transition_bias = 0.3
-    args.transition_bias = True
+        args.optimizer = 'adam'
+        args.batch_size = 64
+        args.parametrization = 'cov_chol'
+        args.learning_rate = 1e-3 # {'std':1e-2, 'nn':1e-1}
+        args.num_epochs = 300
+        args.schedule = {} #{'nn':{200:0.1, 250:0.5}}
+        args.store_every = args.num_epochs // 5
+        args.num_fits = 6
+        
+        args.update_layers = (16,16)
+        args.backwd_map_layers = (16,16)
+
+
+        args.num_particles = 1000
+        args.num_samples = 10
+        args.parametrization = 'cov_chol'
+        import math
+        args.default_prior_base_scale = math.sqrt(1e-2)
+        args.default_transition_base_scale = math.sqrt(1e-2)
+        args.default_emission_base_scale = math.sqrt(1e-2)
+        args.default_transition_bias = 0.3
+        args.transition_bias = True
 
     utils.save_args(args, 'train_args', save_dir)
 

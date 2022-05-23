@@ -29,6 +29,8 @@
     ],
     "num_particles": 1000,
     "num_samples": 1,
+    "default_prior_mean":0.0,
+    "range_transition_map_params":[-0.9,-0.8],
     "default_prior_base_scale": 0.31622776601683794,
     "default_transition_base_scale": 0.1,
     "default_emission_base_scale": 0.03162277660168379,
