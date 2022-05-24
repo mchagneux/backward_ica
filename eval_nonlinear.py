@@ -20,6 +20,7 @@ def main(train_args, eval_args):
     p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
+                            range_transition_map_params=train_args.range_transition_map_params,
                             layers=train_args.emission_map_layers,
                             slope=train_args.slope,
                             transition_bias=train_args.transition_bias,
@@ -38,6 +39,7 @@ def main(train_args, eval_args):
         q = hmm.LinearGaussianHMM(state_dim=train_args.state_dim, 
                                 obs_dim=train_args.obs_dim,
                                 transition_matrix_conditionning=train_args.transition_matrix_conditionning, 
+                                range_transition_map_params=train_args.range_transition_map_params,
                                 transition_bias=train_args.transition_bias,
                                 emission_bias=False)
 
@@ -46,6 +48,7 @@ def main(train_args, eval_args):
         q = hmm.NeuralLinearBackwardSmoother(state_dim=train_args.state_dim, 
                                         obs_dim=train_args.obs_dim, 
                                         use_johnson=(version == 'johnson'),
+                                        range_transition_map_params=train_args.range_transition_map_params,
                                         update_layers=train_args.update_layers,
                                         transition_bias=train_args.transition_bias)
 

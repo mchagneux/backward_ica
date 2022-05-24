@@ -36,7 +36,7 @@ def neural_map_noninjective(input, layers, slope, out_dim):
                     activate_final=True, 
                     activation=nn.tanh)
     x = net(input)
-    return jnp.exp(-x**3 - x**2)
+    return jnp.cos(x)
 
 
 def linear_map_apply(map_params, input):

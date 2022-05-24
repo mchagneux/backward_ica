@@ -818,6 +818,7 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
     p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
+                            range_transition_map_params=train_args.range_transition_map_params,
                             layers=train_args.emission_map_layers,
                             slope=train_args.slope,
                             transition_bias=train_args.transition_bias,

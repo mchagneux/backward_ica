@@ -155,6 +155,7 @@ if __name__ == '__main__':
 
         args.state_dim, args.obs_dim = 1,1
         args.transition_matrix_conditionning = 'diagonal'
+
         args.emission_map_layers = () 
         args.slope = 0
 
@@ -166,24 +167,26 @@ if __name__ == '__main__':
         args.optimizer = 'adam'
         args.batch_size = 64
         args.parametrization = 'cov_chol'
-        args.learning_rate = 1e-3 # {'std':1e-2, 'nn':1e-1}
+        args.learning_rate = 1e-2 # {'std':1e-2, 'nn':1e-1}
         args.num_epochs = 300
         args.schedule = {} #{'nn':{200:0.1, 250:0.5}}
         args.store_every = args.num_epochs // 5
-        args.num_fits = 6
+        args.num_fits = 5
         
         args.update_layers = (16,16)
         args.backwd_map_layers = (16,16)
 
 
         args.num_particles = 1000
-        args.num_samples = 10
+        args.num_samples = 1
         args.parametrization = 'cov_chol'
         import math
-        args.default_prior_base_scale = math.sqrt(1e-2)
+        args.default_prior_mean = 0.0
+        args.range_transition_map_params = [-0.9, -0.8]
+        args.default_prior_base_scale = math.sqrt(1e-1)
         args.default_transition_base_scale = math.sqrt(1e-2)
-        args.default_emission_base_scale = math.sqrt(1e-2)
-        args.default_transition_bias = 0.3
+        args.default_emission_base_scale = math.sqrt(1e-3)
+        args.default_transition_bias = -0.4
         args.transition_bias = True
 
     utils.save_args(args, 'train_args', save_dir)

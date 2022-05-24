@@ -85,7 +85,7 @@ if __name__ == '__main__':
         args.transition_matrix_conditionning = 'diagonal'
 
         args.seq_length = 64
-        args.num_seqs = 4094
+        args.num_seqs = 4096
 
         args.optimizer = 'adam'
         args.batch_size = 64

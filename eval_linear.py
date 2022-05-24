@@ -8,8 +8,8 @@ import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 import matplotlib.pyplot as plt
 import os
-# utils.enable_x64(True)
 import pickle
+
 def main(train_args, eval_args):
 
     utils.set_global_cov_mode(train_args)
@@ -19,36 +19,15 @@ def main(train_args, eval_args):
     p = hmm.LinearGaussianHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
+                            range_transition_map_params=train_args.range_transition_map_params,
                             transition_bias=train_args.transition_bias,
                             emission_bias=train_args.emission_bias) # specify the structure of the true model
 
     theta_star = utils.load_params('theta', train_args.save_dir)
 
-    # key, subkey = jax.random.split(key_mle, 2)
-    # key, subkey = jax.random.split(key, 2)
-    # obs_seqs = p.sample_multiple_sequences(subkey, theta_star, train_args.num_seqs, train_args.seq_length)[1]
-
-    # print('Computing evidence...')
-    # avg_evidence_rmle = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta_star))(obs_seqs))
-    # print('Avg evidence:', avg_evidence_rmle)
-
-    # theta_mle, logls_mle = p.fit_kalman_rmle(key, 
-    #                                         obs_seqs, 
-    #                                         train_args.optimizer, 
-    #                                         train_args.learning_rate, 
-    #                                         train_args.batch_size, 
-    #                                         train_args.num_epochs)
-
-    # print('Computing evidence...')
-    # avg_evidence_rmle = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta_mle))(obs_seqs))
-    # print('Avg evidence fitted RMLE:', avg_evidence_rmle)
 
     (best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence) = utils.load_train_logs(train_args.save_dir)
 
-    # plt.axhline(y=avg_evidence_rmle, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
-    # plt.plot(logls_mle, label='rmle')
-    # plt.savefig(os.path.join(eval_args.save_dir,'rmle'))
-    # plt.clf()
 
     
     state_seqs, obs_seqs = p.sample_multiple_sequences(key_eval, theta_star, eval_args.num_seqs, eval_args.seq_length)
@@ -60,6 +39,7 @@ def main(train_args, eval_args):
     q = hmm.LinearGaussianHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
+                            range_transition_map_params=train_args.range_transition_map_params,
                             transition_bias=train_args.transition_bias,
                             emission_bias=train_args.emission_bias)
 
@@ -72,7 +52,7 @@ def main(train_args, eval_args):
     phi_at_multiple_epochs = {k:v for k,v in phi_at_multiple_epochs.items() if k > 40}
     # phi_at_multiple_epochs = dict()
     # phi_at_multiple_epochs[best_epoch] = best_params
-    utils.plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, eval_args.save_dir, plot_only=list(phi_at_multiple_epochs.keys()))
+    utils.plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, eval_args.save_dir, plot_only=list(phi_at_multiple_epochs.keys()), best_epochs_only=False)
 
 
     smoothing_q_phi = dict()
@@ -96,7 +76,7 @@ if __name__ == '__main__':
 
     eval_args = argparse.Namespace()
 
-    train_path = 'experiments/p_linear/trainings/q_linear/2022_05_17__19_32_42'
+    train_path = 'experiments/p_linear/trainings/q_linear/2022_05_23__19_20_11'
     train_path_splitted = train_path.split('/')
     eval_name = f'{train_path_splitted[-2]}_{train_path_splitted[-1]}'
 
