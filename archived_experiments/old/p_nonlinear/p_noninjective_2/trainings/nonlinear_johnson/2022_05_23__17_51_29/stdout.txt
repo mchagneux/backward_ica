@@ -1,2 +1,0 @@
-WARNING:absl:No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
-HMMParams(prior={'mean': DeviceArray([0.], dtype=float64), 'scale': {'cov_chol': DeviceArray([0.31622777], dtype=float64)}}, transition=KernelParams(map={'w': DeviceArray([-0.96007736], dtype=float64), 'b': DeviceArray([-0.4], dtype=float64)}, scale={'cov_chol': DeviceArray([0.1], dtype=float64)}), emission=KernelParams(map={'mlp/~/linear_0': {'w': DeviceArray([[-1.54554694]], dtype=float64)}}, scale={'cov_chol': DeviceArray([0.03162278], dtype=float64)}))

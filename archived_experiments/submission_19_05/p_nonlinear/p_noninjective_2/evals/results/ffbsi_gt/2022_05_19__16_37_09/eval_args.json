@@ -1,9 +1,0 @@
-{
-    "save_dir": "experiments/p_nonlinear/p_noninjective_2/evals/results/ffbsi_gt/2022_05_19__16_37_09",
-    "num_seqs": 5,
-    "seq_length": 500,
-    "seed": 2,
-    "step": 50,
-    "num_particles": 1000,
-    "path_phi": "experiments/p_nonlinear/p_noninjective_2/trainings/ffbsi_em/2022_05_19__16_37_09"
-}
