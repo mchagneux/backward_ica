@@ -109,7 +109,7 @@ def main(args, save_dir):
                         batch_size=args.batch_size, 
                         schedule=args.schedule,
                         num_samples=args.num_samples,
-                        force_full_mc=True)
+                        force_full_mc=False)
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi,3)
 

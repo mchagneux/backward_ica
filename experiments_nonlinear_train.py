@@ -16,7 +16,7 @@ for q_version in q_versions:
     date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
     save_dir = os.path.join(base_dir, q_version, date)
     os.makedirs(save_dir, exist_ok=True)
-    f = open(os.path.join(save_dir, 'stdout.txt'),'w')
+    f = open(os.path.join(save_dir, 'logfile.txt'),'w')
 
     logfiles.append(f)
     save_dirs.append(save_dir)
