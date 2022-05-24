@@ -3,8 +3,8 @@ import jax
 import jax.numpy as jnp
 from backward_ica import hmm, utils
 
-state_dim, obs_dim = 1,2
-seq_length = 20
+state_dim, obs_dim = 10,10
+seq_length = 10
 num_seqs = 10000
 jax.config.update('jax_enable_x64',True)
 utils.enable_x64(True)
@@ -12,10 +12,11 @@ import matplotlib.pyplot as plt
 import math
 
 args = argparse.Namespace()
+args.default_prior_mean = 0.0
 args.default_transition_bias = 0.5 
 args.default_prior_base_scale = math.sqrt(1)
-args.default_transition_base_scale = math.sqrt(1)
-args.default_emission_base_scale = math.sqrt(1)
+args.default_transition_base_scale = math.sqrt(0.1)
+args.default_emission_base_scale = math.sqrt(0.1)
 args.parametrization = 'cov_chol'
 
 utils.set_global_cov_mode(args)
@@ -60,13 +61,13 @@ plt.axhline(y=avg_likelihood, linestyle='dotted', label='true logl')
 best_logls = []
 theta_mles = []
 p_mle = hmm.LinearGaussianHMM(state_dim, obs_dim, 'diagonal')
-for nb, key in enumerate(jax.random.split(key_mle, 1)):
+for nb, key in enumerate(jax.random.split(key_mle, 10)):
     theta_mle, avg_logls, best_optim = p_mle.fit_kalman_rmle(key, 
                                     obs_seqs, 
                                     'sgd', 
                                     1e-3, 
                                     num_seqs // 100, 
-                                    20, 
+                                    30, 
                                     theta_star)
     theta_mles.append(theta_mle)
     best_logls.append(avg_logls[best_optim])
@@ -78,7 +79,7 @@ plt.show()
 
 key, key_gen_test = jax.random.split(key, 2)
 
-# theta_mle = theta_mles[jnp.argmax(jnp.array(best_logls))]
+theta_mle = theta_mles[jnp.argmax(jnp.array(best_logls))]
 state_seq, obs_seq = p_star.sample_seq(key_gen_test, theta_star, 100)
 
 means, covs = p_star.smooth_seq(obs_seq, theta_star)
