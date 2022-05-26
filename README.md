@@ -48,3 +48,9 @@ q_versions_and_dates = [('nonlinear_johnson','<date-of-the-training>'),
 then run this evaluation script.
 
 All results for the comparisons of the two methods will be put into `experiments/p_nonlinear/p_noninjective/evals/comparisons/<date-of-the-evaluation>`, which includes figures from section 5.2. MSE valus are in the .json file of that folder.
+
+## Other 
+
+- The hyperparameters used for the final results of the paper are those in the training files as found when first opening this codebase. Those can be modified to run experiments in different conditions (short comments on the role of each hyperparameter are in code). 
+- You can see the sensitivity to the starting point of the optimization by checking the different training logs. 
+- If you want to reproduce the multidimensional smoothing of Figure 6 in the appendix, run [train_linear_multidimensional.py](train_linear_multidimensional.py). The smoothed results will be in the created training folder.

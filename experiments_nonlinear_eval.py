@@ -176,7 +176,7 @@ if __name__ == '__main__':
     from datetime import datetime
     exp_date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
     exp_name = 'p_noninjective'
-    q_versions_and_dates = [('nonlinear_johnson','2022_05_24__13_45_05'),
-                        ('nonlinear_ours','2022_05_24__13_45_05')]
+    q_versions_and_dates = [('nonlinear_johnson','2022_05_26__12_01_08'),
+                        ('nonlinear_ours','2022_05_26__12_01_08')]
 
     eval(exp_date, exp_name, q_versions_and_dates, run=True)

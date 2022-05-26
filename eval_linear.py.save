@@ -76,8 +76,8 @@ if __name__ == '__main__':
 
     eval_args = argparse.Namespace()
 
-    train_path = 'experiments/p_linear/trainings/q_linear/2022_05_26__11_52_16'
-    train_path_splitted = train_path.split('/')
+    train_path = 'experiments/p_linear/trainings/q_linear/2022_05_23__19_20_11'
+2022_05_26__11_52_16    train_path_splitted = train_path.split('/')
     eval_name = f'{train_path_splitted[-2]}_{train_path_splitted[-1]}'
 
     eval_args.save_dir = os.path.join(os.path.join('experiments', 'p_linear', 'evals', eval_name))
