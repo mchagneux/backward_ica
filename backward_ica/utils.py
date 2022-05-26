@@ -526,7 +526,7 @@ def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence
 
         if best_epochs_only: stored_epoch_nbs_for_fit = [stored_epoch_nbs[fit_nb]]
         else: stored_epoch_nbs_for_fit = stored_epoch_nbs[0][fit_nb]
-        ydata = avg_elbos[fit_nb]#[1:]
+        ydata = avg_elbos[fit_nb][1:]
         plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$', c='black')
         plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
         idx_color = 0
@@ -721,12 +721,13 @@ def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, 
     fig, ((ax0, ax1, ax2), (ax3, ax4, ax5)) = plt.subplots(2,3, figsize=(20,15))
     xaxis = list(timesteps) + [len(ref_state_seqs[0])]
 
-
+    
     for seq_nb, (ref_state_seq, ref_results_seq) in enumerate(zip(ref_state_seqs, ref_results)):
         ref_vs_states_additive =  []
         for i, length in enumerate(timesteps):
             ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[i] - ref_state_seq[:length], axis=0)))
         ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[-1][0] - ref_state_seq, axis=0)))
+
         ax0.plot(xaxis, ref_vs_states_additive, linestyle='dotted', marker='.', c='k')
 
     handles = []

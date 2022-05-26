@@ -312,7 +312,7 @@ class LinearGaussianTowerELBO:
 
 class SVITrainer:
 
-    def __init__(self, p:HMM, q:Smoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_full_mc=False, schedule={}):
+    def __init__(self, p:HMM, q:Smoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_full_mc=False, schedule={}, fix_covariances_and_emission=False):
 
 
         self.num_epochs = num_epochs
@@ -320,6 +320,7 @@ class SVITrainer:
         self.q = q 
         self.q.print_num_params()
         self.p = p 
+        self.fix_covariances_and_emission = fix_covariances_and_emission
 
         # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
         optimizer_method = getattr(optax, optimizer)
@@ -377,6 +378,19 @@ class SVITrainer:
         optimizer = self.optimizer(num_seqs // self.batch_size)
         phi = self.q.get_random_params(key_params)
 
+        if self.fix_covariances_and_emission: 
+            prior_scale = theta_star.prior.scale 
+            transition_scale = theta_star.transition.scale
+            emission_params = theta_star.emission
+
+            def build_params(params):
+                return HMMParams(GaussianParams(params[0],prior_scale), 
+                                            KernelParams(params[1], transition_scale), 
+                                            emission_params)
+            
+        else: 
+            build_params = lambda x:x
+
         if isinstance(self.q, LinearGaussianHMM):
             params = phi 
             regroup_params = lambda x:x
@@ -387,8 +401,11 @@ class SVITrainer:
                 regroup_params = lambda x: NeuralLinearBackwardSmootherParams(x[0][0], x[0][1], x[1])
         params = separate_params(phi)
 
+        if self.fix_covariances_and_emission:
+            params = (phi.prior.mean, phi.transition.map, phi.emission.map)
+
         if isinstance(self.elbo, LinearGaussianTowerELBO):
-            loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(regroup_params(phi)))
+            loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(build_params(regroup_params(phi))))
         else:
             loss = lambda key, seq, phi: -self.elbo(key, seq, self.p.format_params(theta), self.q.format_params(regroup_params(phi)))
             
@@ -431,7 +448,7 @@ class SVITrainer:
                                                                 xs = batch_start_indices)
 
             avg_elbos.append(jnp.mean(avg_elbo_batches))
-            all_params.append(regroup_params(params))
+            all_params.append(build_params(regroup_params(params)))
                     
         return all_params, avg_elbos
 

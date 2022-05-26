@@ -496,14 +496,16 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         params = self.get_random_params(key_init_params)
 
-        # prior_params = theta_star.prior
-        # transition_scale = theta_star.transition.scale
+        prior_scale = theta_star.prior.scale
+        transition_scale = theta_star.transition.scale
         emission_params = theta_star.emission
 
         def build_params(params):
-            return HMMParams(params[0], params[1], emission_params)
+            return HMMParams(GaussianParams(mean=params[0], scale=prior_scale), 
+                            KernelParams(params[1], transition_scale), 
+                            emission_params)
         
-        params = (params.prior, params.transition)
+        params = (params.prior.mean, params.transition.map)
 
         # build_params = lambda x:x
         loss = lambda seq, params: -self.likelihood_seq(seq, build_params(params))
