@@ -173,12 +173,12 @@ if __name__ == '__main__':
         args.store_every = args.num_epochs // 5
         args.num_fits = 5
         
-        args.update_layers = (16,16)
-        args.backwd_map_layers = (16,16)
+        args.update_layers = (16,16) # number of hidden layers in the MLP
+        # args.backwd_map_layers = (16,16)
 
 
-        args.num_particles = 1000
-        args.num_samples = 1
+        args.num_particles = 1000 # number of particules used to compute the reference loglikelihood
+        args.num_samples = 1 # number of samples for the monte carlo sampling at learning
         args.parametrization = 'cov_chol'
         import math
         args.default_prior_mean = 0.0
