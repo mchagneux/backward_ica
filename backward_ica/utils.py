@@ -460,10 +460,9 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs, limit=Fals
     true_sequence, pred_means, pred_covs = true_sequence.squeeze(), pred_means.squeeze(), pred_covs.squeeze()
     if limit: true_sequence, pred_means, pred_covs = true_sequence[:limit], pred_means[:limit], pred_covs[:limit]
     time_axis = range(len(true_sequence))
-    ax.errorbar(x=time_axis, fmt = '_', y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), label='Smoothed z, $1.96\\sigma$')
-    ax.scatter(x=time_axis, marker = '_', y=true_sequence, c='r', label='True z')
-    ax.set_xlabel('t')
-    ax.legend()
+    ax.errorbar(x=time_axis, fmt = '.', y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs))
+    ax.scatter(x=time_axis, marker = '*', y=true_sequence, c='r')
+    ax.set_xlabel('n')
 
 
 def plot_relative_errors_2D(ax, true_sequence, pred_means, pred_covs, limit=False):
