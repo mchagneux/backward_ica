@@ -52,7 +52,8 @@ def linear_map_init_params(key, dummy_in, out_dim, conditionning, bias, range_pa
         w = random.uniform(key_w, (out_dim, len(dummy_in)))
     
     if bias: 
-        if HMM.default_transition_bias is not None: b = HMM.default_transition_bias * jnp.ones((out_dim,))
+        if HMM.default_transition_bias is not None: 
+            b = HMM.default_transition_bias * jnp.ones((out_dim,))
         else: b = random.uniform(key_b, (out_dim,))
         return LinearMapParams(w=w, b=b)
     else: 
@@ -115,14 +116,18 @@ class Kernel:
 
         self.in_dim = in_dim
         self.out_dim = out_dim 
-        kernel_type, kernel_args = kernel_def
 
-        if kernel_type['map'] == 'linear':
-            conditionning, bias, range_params = kernel_args
+
+        if kernel_def['map_type'] == 'linear':
 
             apply_map = lambda params, input: (linear_map_apply(params.map, input), params.scale)
-            init_map_params = partial(linear_map_init_params, out_dim=out_dim, conditionning=conditionning, bias=bias, range_params=range_params)
-            format_map_params = partial(linear_map_format_params, conditionning_func=_conditionnings[conditionning])
+
+            init_map_params = partial(linear_map_init_params, out_dim=out_dim, 
+                                    conditionning=kernel_def['map_info']['conditionning'], 
+                                    bias=kernel_def['map_info']['bias'], range_params=kernel_def['map_info']['range_params'])
+
+            format_map_params = partial(linear_map_format_params, 
+                                        conditionning_func=_conditionnings[kernel_def['map_info']['conditionning']])
 
             def get_random_params(key, default_base_scale=None):
                 key, subkey = random.split(key, 2)
@@ -142,13 +147,10 @@ class Kernel:
                 return KernelParams(map=format_map_params(params.map),
                             scale=Scale(**base_scale))
 
-
-
-        else:
-            if kernel_type['homogeneous']:
-            
-                map_forward = kernel_args 
-                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(map_forward, 
+        elif kernel_def['map_type'] == 'nonlinear':
+            if kernel_def['map_info']['homogeneous']: 
+        
+                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(kernel_def['map'], 
                                                                                     out_dim=out_dim)))
                 apply_map = lambda params, input: (nonlinear_apply_map(params.map, input), params.scale)
 
@@ -157,7 +159,6 @@ class Kernel:
                 def get_random_params(key, default_base_scale=None):
                     key, subkey = random.split(key, 2)
                     map_params = init_map_params(key, jnp.empty((self.in_dim,)))
-
 
                     if default_base_scale is not None: 
                         scale=default_base_scale * jnp.ones((self.out_dim,))
@@ -171,19 +172,17 @@ class Kernel:
                     base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
 
                     return KernelParams(map=format_map_params(params.map),
-                                scale=Scale(**base_scale))
+                            scale=Scale(**base_scale))
 
             else: 
                 
-                map_forward, varying_params_shape = kernel_args
-
-                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(map_forward, 
-                                                                                out_dim=out_dim)))
+                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(kernel_def['map'], 
+                                                                                state_dim=out_dim)))
                 
-                apply_map = lambda params, input: nonlinear_apply_map(params.amortized, params.varying,  input)
+                apply_map = lambda params, input: nonlinear_apply_map(params.inner, params.varying, input)
 
                 def get_random_params(key):
-                    return init_map_params(key, jnp.empty((varying_params_shape,)), jnp.empty((self.in_dim,)))
+                    return init_map_params(key, jnp.empty((kernel_def['map_info']['varying_params_shape'],)), jnp.empty((self.in_dim,)))
                 
                 def format_params(params):
                     return params 
@@ -237,10 +236,17 @@ class HMM:
 
     def get_random_params(self, key):
         key_prior, key_transition, key_emission = random.split(key, 3)
-        prior_params = self.prior_dist.get_random_params(key_prior, self.state_dim, default_mean=self.default_prior_mean, default_base_scale=self.default_prior_base_scale)
-        transition_params = self.transition_kernel.get_random_params(key_transition, default_base_scale=self.default_transition_base_scale)
-        emission_params = self.emission_kernel.get_random_params(key_emission, default_base_scale=self.default_emission_base_scale)
-        return HMMParams(prior_params, transition_params, emission_params)
+        prior_params = self.prior_dist.get_random_params(key_prior, 
+                                                        self.state_dim, 
+                                                        default_mean=self.default_prior_mean, 
+                                                        default_base_scale=self.default_prior_base_scale)
+        transition_params = self.transition_kernel.get_random_params(key_transition, 
+                                                            default_base_scale=self.default_transition_base_scale)
+        emission_params = self.emission_kernel.get_random_params(key_emission, 
+                                                                default_base_scale=self.default_emission_base_scale)
+        return HMMParams(prior_params, 
+                        transition_params, 
+                        emission_params)
         
     def format_params(self, params):
 
@@ -278,62 +284,6 @@ class HMM:
 
 class Smoother(metaclass=ABCMeta):
 
-    class UpdateNet(hk.Module):
-    
-        def __init__(self, layers, out_dim):
-            super().__init__(None)
-
-            self.update_net = hk.nets.MLP((*layers, out_dim),
-                    w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-                    b_init=hk.initializers.RandomNormal(),
-                    activation=nn.tanh,
-                    activate_final=False)
-
-            self.forget_net = hk.nets.MLP((1,), 
-                            activation=nn.sigmoid,
-                            b_init=hk.initializers.RandomNormal(),
-                            activate_final=False,
-                            name='forget_net')
-
-                            
-
-        def __call__(self, obs, pred_state:GaussianParams):
-
-            input = jnp.concatenate((obs, pred_state))
-
-            candidate_filt_state = self.update_net(input)
-            
-            forget_state = self.forget_net(input)
-
-            return candidate_filt_state * (1 - forget_state) + pred_state * forget_state
-
-    @staticmethod
-    def filt_update_forward(obs, pred_state, layers, out_dim):
-
-        d = pred_state.mean.shape[0]
-
-        net = Smoother.UpdateNet(layers, out_dim)
-        out = net(obs, pred_state.vec)
-
-        return GaussianParams.from_vec(out, d)
-
-    @staticmethod
-    def backwd_kernel_map_forward(varying_params, next_state, layers, out_dim):
-
-        d = out_dim
-        out_dim = d + (d * (d+1)) // 2
-
-        net = hk.nets.MLP((*layers, out_dim),
-                w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-                activation=nn.tanh,
-                activate_final=False)
-        
-        out = net(jnp.concatenate((varying_params, next_state)))
-        mean = out[:d]
-        chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
-
-        return mean, Scale(chol=chol)
-
 
     def __init__(self, filt_dist, kernel):
 
@@ -365,7 +315,6 @@ class Smoother(metaclass=ABCMeta):
         raise NotImplementedError
 
     def compute_filt_state_seq(self, obs_seq, formatted_params):
-        formatted_params.compute_covs()
 
         init_filt_state = self.init_filt_state(obs_seq[0], formatted_params)
 
@@ -401,14 +350,17 @@ class LinearBackwardSmoother(Smoother):
 
     def __init__(self, state_dim, filt_dist=Gaussian):
 
-        backwd_kernel_def = ({'homogeneous':False, 'map':'linear'}, (None, True, (0,1)))
+        backwd_kernel_def = {'map_type':'linear',
+                            'map_info' : {'conditionning': None, 
+                                        'bias': True,
+                                        'range_params':(0,1)}}
 
         super().__init__(filt_dist, Kernel(state_dim, state_dim, backwd_kernel_def))
 
     def new_kernel_state(self, filt_state, params):
 
         A, a, Q = params.transition.map.w, params.transition.map.b, params.transition.scale.cov
-        mu, Sigma = filt_state.mean, filt_state.scale.cov
+        mu, Sigma = filt_state.out.mean, filt_state.out.scale.cov
         I = jnp.eye(self.state_dim)
 
         K = Sigma @ A.T @ inv(A @ Sigma @ A.T + Q)
@@ -423,7 +375,7 @@ class LinearBackwardSmoother(Smoother):
     def compute_marginals(self, last_filt_state, backwd_state_seq):
 
 
-        last_filt_state_mean, last_filt_state_cov = last_filt_state.mean, last_filt_state.scale.cov
+        last_filt_state_mean, last_filt_state_cov = last_filt_state.out.mean, last_filt_state.out.scale.cov
 
         @jit
         def _step(filt_state, backwd_state):
@@ -442,7 +394,9 @@ class LinearBackwardSmoother(Smoother):
 
         return marginals
 
-
+    def compute_filt_state_seq(self, obs_seq, formatted_params):
+        formatted_params.compute_covs()
+        return super().compute_filt_state_seq(obs_seq, formatted_params)
 
 class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
@@ -454,8 +408,15 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
                 transition_bias=False,
                 emission_bias=False):
 
-        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_matrix_conditionning, transition_bias, range_transition_map_params))
-        emission_kernel_def =  ({'homogeneous':True, 'map':'linear'}, (None, emission_bias, (0,1)))
+        transition_kernel_def = {'map_type':'linear',
+                            'map_info' : {'conditionning': transition_matrix_conditionning, 
+                                        'bias': transition_bias,
+                                        'range_params':range_transition_map_params}}
+                                        
+        emission_kernel_def = {'map_type':'linear',
+                            'map_info' : {'conditionning': None, 
+                                        'bias': emission_bias,
+                                        'range_params':(0,1)}}                             
 
         HMM.__init__(self, 
                     state_dim, 
@@ -469,14 +430,15 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         mean, cov =  Kalman.init(obs, params.prior, params.emission)
 
-        return GaussianParams(mean=mean, scale=Scale(cov=cov))
+        filt_state = GaussianParams(mean=mean, scale=Scale(cov=cov))
+        return FiltState(filt_state, filt_state)
 
     def new_filt_state(self, obs, filt_state, params):
 
-        pred_mean, pred_cov = Kalman.predict(filt_state.mean, filt_state.scale.cov, params.transition)
+        pred_mean, pred_cov = Kalman.predict(filt_state.out.mean, filt_state.out.scale.cov, params.transition)
         mean, cov = Kalman.update(pred_mean, pred_cov, obs, params.emission)
-
-        return GaussianParams(mean=mean, scale=Scale(cov=cov))
+        filt_state = GaussianParams(mean=mean, scale=Scale(cov=cov))
+        return FiltState(filt_state, filt_state)
 
     def likelihood_seq(self, obs_seq, params):
 
@@ -572,9 +534,16 @@ class NonLinearGaussianHMM(HMM):
         else: 
             nonlinear_map_forward = partial(neural_map_noninjective, layers=layers, slope=slope)
 
-        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_matrix_conditionning, transition_bias, range_transition_map_params))
-        emission_kernel_def = ({'homogeneous':True, 'map':'nonlinear'}, nonlinear_map_forward)
-        
+        transition_kernel_def = {'map_type':'linear',
+                            'map_info' : {'conditionning': transition_matrix_conditionning, 
+                                        'bias': transition_bias,
+                                        'range_params':range_transition_map_params}}
+
+
+        emission_kernel_def = {'map_type':'nonlinear',
+                            'map_info' : {'homogeneous': True},
+                            'map': nonlinear_map_forward}
+                                                
         HMM.__init__(self, 
                     state_dim, 
                     obs_dim, 
@@ -685,9 +654,7 @@ class NonLinearGaussianHMM(HMM):
         return params, avg_logls
 
 
-
-
-class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
+class JohnsonBackwardSmoother(LinearBackwardSmoother):
 
 
     @staticmethod
@@ -699,25 +666,19 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
                     activation=nn.tanh,
                     activate_final=False)
 
-        # R_prec_diagonal = hk.get_parameter('R_prec', 
-        #                 shape=(pred_state.mean.shape[0],), 
-        #                 dtype=jnp.float64, init=hk.initializers.Constant(1 / HMM.default_emission_base_scale**2))
-
-        # R_prec = jnp.diag(R_prec_diagonal)
-
 
         out = rec_net(obs)
         eta1, log_prec_diag = jnp.split(out,2)
         eta2 = - 0.5 * jnp.diag(nn.softplus(log_prec_diag))
-        return GaussianParams(eta1 = eta1 + pred_state.eta1, eta2 = eta2 + pred_state.eta2)
+        filt_state = GaussianParams(eta1 = eta1 + pred_state.eta1, eta2 = eta2 + pred_state.eta2)
+        return FiltState(filt_state, filt_state)
 
     def __init__(self, 
                 state_dim, 
                 obs_dim, 
-                transition_kernel_matrix_conditionning='diagonal', 
+                transition_matrix_conditionning='diagonal', 
                 range_transition_map_params=(0,1),
                 update_layers=(100,), 
-                use_johnson=False,
                 prior_dist=Gaussian, 
                 filt_dist=Gaussian,
                 transition_bias=True):
@@ -727,20 +688,21 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         self.state_dim, self.obs_dim = state_dim, obs_dim 
 
         self.prior_dist:Gaussian = prior_dist
-        transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_kernel_matrix_conditionning, transition_bias, range_transition_map_params))
+
+        transition_kernel_def = {'map_type':'linear',
+                            'map_info' : {'conditionning': transition_matrix_conditionning, 
+                                        'bias': transition_bias,
+                                        'range_params':range_transition_map_params}}
+
         self.transition_kernel = Kernel(state_dim, state_dim, transition_kernel_def)
 
         d = state_dim
         self.filt_state_shape = d + (d*(d+1)) // 2
 
-        if use_johnson: 
-            self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.johnson_update_forward, 
-                                                                                layers=update_layers, 
-                                                                                out_dim=self.filt_state_shape)))
-        else: 
-            self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.filt_update_forward, 
-                                                                    layers=update_layers, 
-                                                                    out_dim=self.filt_state_shape)))
+        self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.johnson_update_forward, 
+                                                                            layers=update_layers, 
+                                                                            out_dim=self.filt_state_shape)))
+
                                 
     def get_random_params(self, key):
 
@@ -762,7 +724,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
     def new_filt_state(self, obs, filt_state, params):
 
-        pred_mean, pred_cov = Kalman.predict(filt_state.mean, filt_state.scale.cov, params.transition)
+        pred_mean, pred_cov = Kalman.predict(filt_state.hidden.mean, filt_state.hidden.scale.cov, params.transition)
 
         pred_state = GaussianParams(mean=pred_mean, scale=Scale(cov=pred_cov))
 
@@ -779,81 +741,103 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         print('-- in prior + predict + backward:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
         print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt_update)))
 
-# class NeuralBackwardSmoother(Smoother):
+class GeneralBackwardSmoother(Smoother):
+
+    @staticmethod
+    def filt_update_forward(obs, prev_state, layers, state_dim):
+
+        d = state_dim 
+
+        out_dim = d + d * (d+1) // 2 
+
+        net = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in [*layers, out_dim]])
+
+        out, new_state = net(obs, prev_state)
+        return GaussianParams.from_vec(out, d), new_state
+
+
+    @staticmethod
+    def backwd_update_forward(varying_params, next_state, layers, state_dim):
+
+        d = state_dim
+        out_dim = d + (d * (d+1)) // 2
+
+        net = hk.nets.MLP((*layers, out_dim),
+                w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                activation=nn.tanh,
+                activate_final=False)
+        
+        out = net(jnp.concatenate((varying_params, next_state)))
+        mean = out[:d]
+        cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
+
+        return mean, Scale(cov_chol=cov_chol)
+
+    def __init__(self, 
+                state_dim, 
+                obs_dim,
+                update_layers=(16,16),
+                backwd_layers=(16,16),
+                filt_dist=Gaussian):
+
+
+
+        self.state_dim = state_dim 
+        self.obs_dim = obs_dim 
+
+        self.update_layers = update_layers
+
+
+        d = state_dim 
+
+        self.filt_state_shape = d + d * (d+1) // 2
+
+        self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.filt_update_forward, 
+                                                                            layers=update_layers, 
+                                                                            state_dim=state_dim)))  
+        backwd_kernel_def = {'map_type':'nonlinear',
+                            'map':partial(self.backwd_update_forward, layers=backwd_layers, state_dim=state_dim),
+                            'map_info':{'homogeneous':False, 'varying_params_shape': self.filt_state_shape}}
+
+        super().__init__(filt_dist, Kernel(state_dim, state_dim, backwd_kernel_def, Gaussian))
+
+    def get_random_params(self, key):
+        dummy_obs = jnp.ones((self.obs_dim,))
+        dummy_state = tuple([jnp.zeros([size]) for size in (*self.update_layers, self.filt_state_shape)])
+        key_filt, key_back = random.split(key, 2)
+
+        filt_update_params = self.filt_update_init_params(key_filt, dummy_obs, dummy_state) 
+        backwd_params = self.kernel.get_random_params(key_back)
+
+        return GeneralBackwardSmootherParams(filt=filt_update_params, 
+                                            backwd=backwd_params)
+
+
+    def format_params(self, params):
+        return params
+    
+    def init_filt_state(self, obs, params):
+        init_state = tuple([jnp.zeros([size]) for size in (*self.update_layers, self.filt_state_shape)])
+        return FiltState(*self.filt_update_apply(params.filt, obs, init_state))
+
+    def new_filt_state(self, obs, filt_state:FiltState, params:GeneralBackwardSmootherParams):
+        return FiltState(*self.filt_update_apply(params.filt, obs, filt_state.hidden))
+
+    def new_kernel_state(self, filt_state:FiltState, params:GeneralBackwardSmootherParams):
+        return BackwardState(params.backwd, filt_state.out.vec)
+
+    def compute_marginals(self, last_filt_state, backwd_state_seq):
+        return super().compute_marginals(last_filt_state, backwd_state_seq)
+
+    def print_num_params(self):
+        params:GeneralBackwardSmootherParams = self.get_random_params(random.PRNGKey(0))
+        print('Num params:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params)))
+        print('-- filt net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.filt))))
+        print('-- backwd net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.backwd)))
+
+    
 
         
-#     def __init__(self, state_dim, obs_dim,
-#                 transition_kernel_matrix_conditionning='diagonal',
-#                 update_layers=(10,),
-#                 backwd_layers=(10,),
-#                 prior_dist=Gaussian, 
-#                 filt_dist=Gaussian,
-#                 backwd_dist=Gaussian):
-
-
-#         self.state_dim, self.obs_dim = state_dim, obs_dim
-#         self.prior_dist = prior_dist 
-
-#         d = state_dim
-#         self.filt_state_shape = d + d*(d+1) // 2
-#         transition_kernel_def = ({'homogeneous':True, 'map':'linear'}, (transition_kernel_matrix_conditionning, True))
-#         self.transition_kernel = Kernel(state_dim, state_dim, transition_kernel_def)
-
-#         backwd_kernel_def = ({'homogeneous':False, 'map':'nonlinear'}, 
-#                         (partial(Smoother.backwd_kernel_map_forward, layers=backwd_layers), self.filt_state_shape))
-
-#         super().__init__(filt_dist, Kernel(state_dim, state_dim, backwd_kernel_def, backwd_dist))
-
-#         self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(Smoother.filt_update_forward, 
-#                                                                                 layers=update_layers, 
-#                                                                                 out_dim=self.filt_state_shape)))
-
-#     def get_random_params(self, key):
-
-
-#         subkeys = random.split(key, 4)
-
-#         dummy_obs = jnp.empty((self.obs_dim,))
-
-#         prior_params = self.prior_dist.get_random_params(subkeys[0], self.state_dim, HMM.default_prior_base_scale)
-#         transition_params = self.transition_kernel.get_random_params(subkeys[1], HMM.default_transition_base_scale)
-#         filt_update_params = self.filt_update_init_params(subkeys[2], dummy_obs, jnp.empty((self.filt_state_shape,)))        
-#         backwd_map_params = self.kernel.get_random_params(subkeys[3])
-
-#         return NeuralBackwardSmootherParams(prior_params, transition_params, filt_update_params, backwd_map_params)
-
-#     def format_params(self, params):
-#         formatted_prior_params = self.prior_dist.format_params(params.prior)
-#         formatted_transition_params = self.transition_kernel.format_params(params.transition)
-
-#         return NeuralBackwardSmootherParams(formatted_prior_params, formatted_transition_params, params.filt_update, params.backwd_map)
-
-
-#     def init_filt_state(self, obs, params):
-
-#         return self.filt_update_apply(params.filt_update, obs, params.prior)
-
-#     def new_filt_state(self, obs, filt_state, params):
-
-#         pred_mean, pred_cov = Kalman.predict(filt_state.mean, filt_state.scale.cov, params.transition)
-#         pred_state = vec_from_gaussian_params(GaussianParams(mean=pred_mean, scale=Scale(cov=pred_cov)), self.state_dim)
-
-#         filt_state  = self.filt_update_apply(params.filt_update, obs, pred_state)
-
-#         return gaussian_params_from_vec(filt_state, self.state_dim)
-    
-#     def new_kernel_state(self, filt_state, params):
-#         return BackwardState(vec_from_gaussian_params(filt_state, self.state_dim), params.backwd_map)
-
-#     def compute_marginals(self, last_filt_state, backwd_state_seq):
-#         pass 
-
-#     def print_num_params(self):
-#         params = self.get_random_params(random.PRNGKey(0))
-#         print('Num params:', sum(len(jnp.atleast_1d(leaf)) for leaf in tree_leaves(params)))
-#         print('-- in prior + predict/transition', sum(len(jnp.atleast_1d(leaf)) for leaf in tree_leaves((params.prior, params.transition))))
-#         print('-- in backward map',  sum(len(jnp.atleast_1d(leaf)) for leaf in tree_leaves((params.backwd_map))))
-#         print('-- in update:', sum(len(jnp.atleast_1d(leaf)) for leaf in tree_leaves(params.filt_update)))
 
 
 # class NeuralLinearForwardSmoother(Smoother):

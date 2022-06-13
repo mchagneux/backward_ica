@@ -25,6 +25,7 @@ def main(args, save_dir):
                             transition_bias=args.transition_bias,
                             range_transition_map_params=args.range_transition_map_params,
                             injective=args.injective) # specify the structure of the true model
+                            
     key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
 
     theta = p.get_random_params(key_params) # sample params randomly (but covariances are fixed to default values)
@@ -33,49 +34,16 @@ def main(args, save_dir):
 
     state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta, args.num_seqs, args.seq_length)
 
-    import matplotlib.pyplot as plt 
-
-
-        # for state_seq in state_seqs: 
-        #     plt.scatter(range(len(state_seq)), state_seq)
-        # plt.savefig(os.path.join(save_dir,'example_states'))
-        # plt.clf()
-    # state_seqs_1st_coord = state_seqs[:100]
-    # for state_seq in state_seqs_1st_coord: 
-    #     plt.plot(state_seq, linestyle='dotted', marker='.')
-    # plt.savefig(os.path.join(save_dir,'example_states'))
-    # plt.clf()
-
-    # mapped_state_seqs_1st_coord = p.emission_kernel.map(state_seqs_1st_coord, theta.emission).mean
-    # for mapped_state_seq in mapped_state_seqs_1st_coord:
-    #     plt.plot(mapped_state_seq, linestyle='dotted', marker='.')
-    # plt.savefig(os.path.join(save_dir,'example_mapped_states'))
-    # plt.clf()
-
-    support = jnp.sort(state_seqs.flatten()).reshape(-1,1)
-    plt.plot(support, p.emission_kernel.map(support, theta.emission).mean)
-    plt.savefig(os.path.join(save_dir,'emission_map_on_states_support'))
-    plt.clf()
-    
-
-    # support = jnp.sort(state_seqs[0].flatten()).reshape(-1,1)
-    # plt.plot(support, p.emission_kernel.map(support, theta.emission).mean)
-    # plt.savefig(os.path.join(save_dir,'emission_map_on_single_sequence'))
-    # plt.clf()
-    support_stationary = jnp.sort(state_seqs[:,2:,:].flatten()).reshape(-1,1)
-    plt.plot(support_stationary, p.emission_kernel.map(support_stationary, theta.emission).mean)
-    plt.savefig(os.path.join(save_dir,'emission_map_on_states_support_stationary'))
-    plt.clf()
 
     smc_keys = jax.random.split(key_smc, args.num_seqs)
 
-    print('Computing evidence...')
+    # print('Computing evidence...')
 
-    avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(key, obs_seq, 
-                                                                        theta)))(obs_seqs, smc_keys))
+    # avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(key, obs_seq, 
+    #                                                                     theta)))(obs_seqs, smc_keys))
 
 
-    print('Avg evidence:', avg_evidence)
+    # print('Avg evidence:', avg_evidence)
 
 
     if args.q_version == 'linear':
@@ -86,19 +54,18 @@ def main(args, save_dir):
                                 transition_bias=args.transition_bias, 
                                 emission_bias=False)
 
-    else: 
-        version = args.q_version.split('_')[1]
-        q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
+    elif args.q_version == 'nonlinear_johnson':
+        q = hmm.JohnsonBackwardSmoother(state_dim=args.state_dim, 
                                         obs_dim=args.obs_dim, 
-                                        use_johnson=(version == 'johnson'),
                                         range_transition_map_params=args.range_transition_map_params,
                                         update_layers=args.update_layers,
                                         transition_bias=args.transition_bias)
 
-    # q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
-    #                         obs_dim=args.obs_dim, 
-    #                         update_layers=args.update_layers,
-    #                         backwd_layers=args.backwd_map_layers)
+    else:
+        q = hmm.GeneralBackwardSmoother(state_dim=args.state_dim, 
+                                        obs_dim=args.obs_dim, 
+                                        update_layers=args.update_layers,
+                                        backwd_layers=args.backwd_map_layers)
 
 
     trainer = SVITrainer(p=p, 
@@ -112,11 +79,6 @@ def main(args, save_dir):
                         force_full_mc=False)
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi,3)
-
-    # phi, avg_logls = q.fit_kalman_rmle(key_params, obs_seqs, args.optimizer, args.learning_rate, args.batch_size, args.num_epochs)
-    # print(avg_logls[-1])
-    # plt.plot(avg_logls)
-    # plt.show()
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
                                                             data=obs_seqs, 
@@ -137,8 +99,8 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--q_version',type=str, default='nonlinear_johnson')
-    parser.add_argument('--save_dir', type=str, default='test')
+    parser.add_argument('--q_version',type=str, default='nonlinear_general')
+    parser.add_argument('--save_dir', type=str, default='experiments/tests')
     parser.add_argument('--injective', dest='injective', action='store_true', default=False)
     parser.add_argument('--args_path', type=str, default='')
 
@@ -153,7 +115,7 @@ if __name__ == '__main__':
         args.seed_theta = 1329
         args.seed_phi = 4569
 
-        args.state_dim, args.obs_dim = 1,1
+        args.state_dim, args.obs_dim = 2,3
         args.transition_matrix_conditionning = 'diagonal'
 
         args.emission_map_layers = () 
@@ -161,7 +123,7 @@ if __name__ == '__main__':
 
 
         args.seq_length = 4
-        args.num_seqs = 12800
+        args.num_seqs = 512
 
 
         args.optimizer = 'adam'
@@ -173,8 +135,8 @@ if __name__ == '__main__':
         args.store_every = args.num_epochs // 5
         args.num_fits = 5
         
-        args.update_layers = (16,16)
-        args.backwd_map_layers = (16,16)
+        args.update_layers = (16,)
+        args.backwd_map_layers = (16,)
 
 
         args.num_particles = 1000
@@ -182,12 +144,12 @@ if __name__ == '__main__':
         args.parametrization = 'cov_chol'
         import math
         args.default_prior_mean = 0.0
-        args.range_transition_map_params = [-0.9, -0.8]
+        args.range_transition_map_params = [0.9,1]
         args.default_prior_base_scale = math.sqrt(1e-1)
         args.default_transition_base_scale = math.sqrt(1e-2)
         args.default_emission_base_scale = math.sqrt(1e-3)
         args.default_transition_bias = -0.4
-        args.transition_bias = True
+        args.transition_bias = False
 
     utils.save_args(args, 'train_args', save_dir)
 

@@ -102,13 +102,12 @@ class GeneralBackwardELBO:
         filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
         backwd_state_seq = self.q.compute_kernel_state_seq(filt_state_seq, phi)
 
-        
-        def _monte_carlo_sample(key, obs_seq, last_filt_state, backwd_state_seq):
+        def _monte_carlo_sample(key, obs_seq, last_filt_state:FiltState, backwd_state_seq):
 
             keys = jax.random.split(key, obs_seq.shape[0])
-            last_sample = self.q.filt_dist.sample(keys[-1], last_filt_state)
+            last_sample = self.q.filt_dist.sample(keys[-1], last_filt_state.out)
 
-            last_term = -self.q.filt_dist.logpdf(last_sample, last_filt_state) \
+            last_term = -self.q.filt_dist.logpdf(last_sample, last_filt_state.out) \
                     + self.p.emission_kernel.logpdf(obs_seq[-1], last_sample, theta.emission)
 
             def _sample_step(next_sample, x):
@@ -171,8 +170,8 @@ class BackwardLinearTowerELBO:
                                                 xs=obs_seq[1:])
 
 
-        kl_term =  expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state) \
-                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
+        kl_term =  expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state.out) \
+                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
                     + 0.5*self.p.state_dim
 
 
@@ -197,34 +196,6 @@ class BackwardLinearTowerELBO:
         
         mc_samples = parallel_sampler(keys, obs_seq, marginals)
 
-        # def sample_one_path(key, obs_seq, last_filt_state, backwd_state_seq):
-
-        #     keys = jax.random.split(key, len(obs_seq))
-
-        #     last_sample = self.q.filt_dist.sample(keys[-1], last_filt_state)
-
-        #     last_term = self.p.emission_kernel.logpdf(obs_seq[-1], last_sample, theta.emission)
-
-        #     def _sample_step(next_sample, x):
-                
-        #         key, obs, backwd_state = x
-
-        #         sample = self.q.kernel.sample(key, next_sample, backwd_state)
-
-        #         emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
-
-        #         return sample, emission_term_p
-            
-        #     terms = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], obs_seq[:-1], backwd_state_seq), reverse=True)[1]
-
-        #     return jnp.sum(terms) + last_term
-
-        # parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
-
-        # keys = jax.random.split(key, self.num_samples)
-
-        # mc_samples = parallel_sampler(keys, obs_seq, q_last_filt_state, q_backwd_state_seq)
-        # print('Variance via autoregressive:',jnp.var(mc_samples))
         return kl_term + jnp.mean(mc_samples)
 
 class LinearGaussianTowerELBO:
@@ -265,54 +236,18 @@ class LinearGaussianTowerELBO:
                     + 0.5*self.p.state_dim
 
 
-# class GeneralForwardELBO:
-
-#     def __init__(self, p:HMM, q:ForwardSmoother, num_samples=2):
-
-#         self.p = p
-#         self.q = q
-#         self.num_samples = num_samples
-
-#     def __call__(self, key, obs_seq, theta:HMMParams, phi):
-
-#         filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
-#         fwd_state_seq = self.q.compute_fwd_seq(filt_state_seq, phi)
-
-#         def _monte_carlo_sample(key, obs_seq, init_filt_state, fwd_state_seq):
-
-#             keys = jax.random.split(key, obs_seq.shape[0])
-#             first_sample = self.q.filt_dist.sample(keys[0], init_filt_state)
-
-#             first_term = -self.q.filt_dist.logpdf(first_sample, init_filt_state) \
-#                     + self.p.emission_kernel.logpdf(obs_seq[0], first_sample, theta.emission) \
-#                     + self.p.prior_dist.logpdf(init_sample, theta.prior)
-
-#             def _sample_step(prev_sample, x):
-                
-#                 key, obs, fwd_state = x
-#                 sample = self.q.fwd_kernel.sample(key, prev_sample, fwd_state)
-
-#                 emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
-#                 transition_term_p = self.p.transition_kernel.logpdf(sample, prev_sample, theta.transition)
-#                 backwd_term_q = -self.q.fwd_kernel.logpdf(sample, prev_sample, fwd_state)
-
-#                 return sample, emission_term_p + transition_term_p + backwd_term_q
-            
-#             init_sample, terms = lax.scan(_sample_step, init=first_sample, xs=(keys[1:], obs_seq[1:], fwd_state_seq), reverse=False)
-
-#             return first_term + jnp.sum(terms)
-
-#         parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
-
-#         keys = jax.random.split(key, self.num_samples)
-#         init_filt_state =  tree_get_idx(0, filt_state_seq)
-#         mc_samples = parallel_sampler(keys, obs_seq, init_filt_state, fwd_state_seq)
-#         return jnp.mean(mc_samples)
-
-
 class SVITrainer:
 
-    def __init__(self, p:HMM, q:Smoother, optimizer, learning_rate, num_epochs, batch_size, num_samples=1, force_full_mc=False, schedule={}, fix_covariances_and_emission=False):
+    def __init__(self, p:HMM, 
+                    q:Smoother, 
+                    optimizer, 
+                    learning_rate, 
+                    num_epochs, 
+                    batch_size, 
+                    num_samples=1, 
+                    force_full_mc=False, 
+                    schedule={}, 
+                    fixed_covariances=False):
 
 
         self.num_epochs = num_epochs
@@ -320,9 +255,8 @@ class SVITrainer:
         self.q = q 
         self.q.print_num_params()
         self.p = p 
-        self.fix_covariances_and_emission = fix_covariances_and_emission
+        self.fixed_covariances = fixed_covariances
 
-        # schedule = lambda num_batches: optax.piecewise_constant_schedule(learning_rate, {150 * num_batches:0.1})
         optimizer_method = getattr(optax, optimizer)
         
         def get_optimizer(schedule, param_group=None):
@@ -378,30 +312,28 @@ class SVITrainer:
         optimizer = self.optimizer(num_seqs // self.batch_size)
         phi = self.q.get_random_params(key_params)
 
-        if self.fix_covariances_and_emission: 
+        if self.fixed_covariances: 
             prior_scale = theta_star.prior.scale 
             transition_scale = theta_star.transition.scale
-            emission_params = theta_star.emission
+            emission_scale = theta_star.emission.scale
 
             def build_params(params):
-                return HMMParams(GaussianParams(params[0],prior_scale), 
-                                            KernelParams(params[1], transition_scale), 
-                                            emission_params)
+                return HMMParams(GaussianParams(params[0], prior_scale), 
+                                KernelParams(params[1], transition_scale), 
+                                KernelParams(params[2], emission_scale))
             
         else: 
             build_params = lambda x:x
 
-        if isinstance(self.q, LinearGaussianHMM):
-            params = phi 
+        if isinstance(self.q, LinearGaussianHMM) or isinstance(self.q, GeneralBackwardSmoother):
             regroup_params = lambda x:x
             separate_params = lambda x:x
         else: 
-            if isinstance(self.q, LinearBackwardSmoother):
-                separate_params = lambda x: ((x.prior, x.transition), x.filt_update)
-                regroup_params = lambda x: NeuralLinearBackwardSmootherParams(x[0][0], x[0][1], x[1])
+            separate_params = lambda x: ((x.prior, x.transition), x.filt_update)
+            regroup_params = lambda x: NeuralLinearBackwardSmootherParams(x[0][0], x[0][1], x[1])
         params = separate_params(phi)
 
-        if self.fix_covariances_and_emission:
+        if self.fixed_covariances:
             params = (phi.prior.mean, phi.transition.map, phi.emission.map)
 
         if isinstance(self.elbo, LinearGaussianTowerELBO):
