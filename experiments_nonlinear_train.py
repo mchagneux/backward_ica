@@ -1,12 +1,11 @@
 import subprocess
 import os
 from datetime import datetime 
-injective = False
-exp_detail = 'p_noninjective'
+injective = True
+exp_detail = 'p_nonlinear_higher_dim'
 base_dir = os.path.join('experiments', 'p_nonlinear', exp_detail, 'trainings')
 
-q_versions = ['nonlinear_johnson',
-            'nonlinear_ours']
+q_versions = ['linear']
 
 os.makedirs(base_dir, exist_ok=True)
 

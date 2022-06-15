@@ -312,8 +312,8 @@ class Smoother(metaclass=ABCMeta):
 
     @abstractmethod
     def compute_marginals(self, last_filt_state, backwd_state_seq):
-        raise NotImplementedError
 
+        raise NotImplementedError
     def compute_filt_state_seq(self, obs_seq, formatted_params):
 
         init_filt_state = self.init_filt_state(obs_seq[0], formatted_params)
@@ -533,7 +533,7 @@ class NonLinearGaussianHMM(HMM):
             nonlinear_map_forward = partial(neural_map, layers=layers, slope=slope)
         else: 
             nonlinear_map_forward = partial(neural_map_noninjective, layers=layers, slope=slope)
-
+            
         transition_kernel_def = {'map_type':'linear',
                             'map_info' : {'conditionning': transition_matrix_conditionning, 
                                         'bias': transition_bias,
@@ -658,9 +658,10 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
 
 
     @staticmethod
-    def johnson_update_forward(obs, pred_state:GaussianParams, layers, out_dim):
+    def johnson_update_forward(obs, pred_state:GaussianParams, layers, state_dim):
 
-        rec_net = hk.nets.MLP((*layers, out_dim),
+        d = state_dim 
+        rec_net = hk.nets.MLP((*layers, 2*d),
                     w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                     b_init=hk.initializers.RandomNormal(),
                     activation=nn.tanh,
@@ -696,12 +697,10 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
 
         self.transition_kernel = Kernel(state_dim, state_dim, transition_kernel_def)
 
-        d = state_dim
-        self.filt_state_shape = d + (d*(d+1)) // 2
 
         self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.johnson_update_forward, 
                                                                             layers=update_layers, 
-                                                                            out_dim=self.filt_state_shape)))
+                                                                            state_dim=state_dim)))
 
                                 
     def get_random_params(self, key):
@@ -812,7 +811,6 @@ class GeneralBackwardSmoother(Smoother):
         return GeneralBackwardSmootherParams(filt=filt_update_params, 
                                             backwd=backwd_params)
 
-
     def format_params(self, params):
         return params
     
@@ -826,8 +824,40 @@ class GeneralBackwardSmoother(Smoother):
     def new_kernel_state(self, filt_state:FiltState, params:GeneralBackwardSmootherParams):
         return BackwardState(params.backwd, filt_state.out.vec)
 
-    def compute_marginals(self, last_filt_state, backwd_state_seq):
-        return super().compute_marginals(last_filt_state, backwd_state_seq)
+
+    def smooth_seq(self, key, obs_seq, params, num_samples):
+        
+        formatted_params = self.format_params(params)
+
+        filt_state_seq = self.compute_filt_state_seq(obs_seq, formatted_params)
+        backwd_state_seq = self.compute_kernel_state_seq(filt_state_seq, formatted_params)
+
+        keys = random.split(key, num_samples*len(obs_seq))
+        keys = jnp.array(keys).reshape(num_samples, len(obs_seq), -1)
+        marginals = self.compute_marginals(keys, tree_get_idx(-1, filt_state_seq), backwd_state_seq)
+
+        return jnp.mean(marginals, axis=0), jnp.var(marginals, axis=0)
+
+
+    def compute_marginals(self, keys, last_filt_state, backwd_state_seq):
+
+        def _sample_path(keys, last_filt_state:FiltState, backwd_state_seq):
+            
+            last_sample = self.filt_dist.sample(keys[-1], last_filt_state.out)
+
+            def _sample_step(next_sample, x):
+                
+                key, backwd_state = x
+                sample = self.kernel.sample(key, next_sample, backwd_state)
+                return sample, sample
+            
+            samples = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], backwd_state_seq), reverse=True)[1]
+
+            return tree_append(samples, last_sample)
+
+        parallel_sampler = vmap(_sample_path, in_axes=(0,None,None))
+
+        return parallel_sampler(keys, last_filt_state, backwd_state_seq)
 
     def print_num_params(self):
         params:GeneralBackwardSmootherParams = self.get_random_params(random.PRNGKey(0))

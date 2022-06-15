@@ -35,15 +35,33 @@ def main(args, save_dir):
     state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta, args.num_seqs, args.seq_length)
 
 
-    smc_keys = jax.random.split(key_smc, args.num_seqs)
+    key_smoothing, key_evidence = jax.random.split(key_smc, 2)
 
-    # print('Computing evidence...')
+    state_seq, obs_seq = state_seqs[0], obs_seqs[0]
 
-    # avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda obs_seq, key: p.likelihood_seq(key, obs_seq, 
-    #                                                                     theta)))(obs_seqs, smc_keys))
+    means_smc, covs_smc = p.smooth_seq(key_smoothing, obs_seq, theta)
+
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(args.state_dim, figsize=(30,30))
+    for dim_nb in range(args.state_dim):
+        
+        utils.plot_relative_errors_1D(axes[dim_nb], state_seq[:,dim_nb], means_smc[:,dim_nb], covs_smc[:,dim_nb])
+        utils.plot_relative_errors_1D(axes[dim_nb], state_seq[:,dim_nb], means_smc[:,dim_nb], covs_smc[:,dim_nb])
+
+    plt.autoscale(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, 'smc_smoothing_on_first_seq.pdf'),format='pdf')
+    plt.clf()
+
+    evidence_keys = jax.random.split(key_evidence, args.num_seqs)
+
+    print('Computing evidence...')
+
+    avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, 
+                                                                        theta)))(evidence_keys, obs_seqs))
 
 
-    # print('Avg evidence:', avg_evidence)
+    print('Avg evidence:', avg_evidence)
 
 
     if args.q_version == 'linear':
@@ -57,7 +75,6 @@ def main(args, save_dir):
     elif args.q_version == 'nonlinear_johnson':
         q = hmm.JohnsonBackwardSmoother(state_dim=args.state_dim, 
                                         obs_dim=args.obs_dim, 
-                                        range_transition_map_params=args.range_transition_map_params,
                                         update_layers=args.update_layers,
                                         transition_bias=args.transition_bias)
 
@@ -99,9 +116,9 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--q_version',type=str, default='nonlinear_general')
+    parser.add_argument('--q_version',type=str, default='nonlinear_johnson')
     parser.add_argument('--save_dir', type=str, default='experiments/tests')
-    parser.add_argument('--injective', dest='injective', action='store_true', default=False)
+    parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
 
     args = parser.parse_args()
@@ -115,15 +132,15 @@ if __name__ == '__main__':
         args.seed_theta = 1329
         args.seed_phi = 4569
 
-        args.state_dim, args.obs_dim = 2,3
+        args.state_dim, args.obs_dim = 3,4
         args.transition_matrix_conditionning = 'diagonal'
 
         args.emission_map_layers = () 
         args.slope = 0
 
 
-        args.seq_length = 4
-        args.num_seqs = 512
+        args.seq_length = 50
+        args.num_seqs = 2048
 
 
         args.optimizer = 'adam'
@@ -144,11 +161,11 @@ if __name__ == '__main__':
         args.parametrization = 'cov_chol'
         import math
         args.default_prior_mean = 0.0
-        args.range_transition_map_params = [0.9,1]
-        args.default_prior_base_scale = math.sqrt(1e-1)
+        args.range_transition_map_params = [0.99,1]
+        args.default_prior_base_scale = math.sqrt(1e-2)
         args.default_transition_base_scale = math.sqrt(1e-2)
         args.default_emission_base_scale = math.sqrt(1e-3)
-        args.default_transition_bias = -0.4
+        args.default_transition_bias = 0
         args.transition_bias = False
 
     utils.save_args(args, 'train_args', save_dir)
