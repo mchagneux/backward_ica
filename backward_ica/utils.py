@@ -378,7 +378,7 @@ class HMMParams:
 
 @register_pytree_node_class
 @dataclass(init=True)
-class NeuralLinearBackwardSmootherParams:
+class JohnsonBackwardSmootherParams:
 
     prior: GaussianParams 
     transition:KernelParams

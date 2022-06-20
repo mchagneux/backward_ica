@@ -93,7 +93,8 @@ def main(args, save_dir):
                         batch_size=args.batch_size, 
                         schedule=args.schedule,
                         num_samples=args.num_samples,
-                        force_full_mc=False)
+                        force_full_mc=False,
+                        fixed_covariances=True)
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi,3)
 
@@ -133,14 +134,14 @@ if __name__ == '__main__':
         args.seed_theta = 1329
         args.seed_phi = 4569
 
-        args.state_dim, args.obs_dim = 3,4
+        args.state_dim, args.obs_dim = 2,2
         args.transition_matrix_conditionning = 'diagonal'
 
         args.emission_map_layers = () 
         args.slope = 0
 
 
-        args.seq_length = 50
+        args.seq_length = 20
         args.num_seqs = 2048
 
 
@@ -153,7 +154,7 @@ if __name__ == '__main__':
         args.store_every = args.num_epochs // 5
         args.num_fits = 5
         
-        args.update_layers = (16,)
+        args.update_layers = (8,)
         args.backwd_map_layers = (16,)
 
 

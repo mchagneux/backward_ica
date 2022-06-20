@@ -715,7 +715,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
         
         filt_update_params = self.filt_update_init_params(subkeys[2], dummy_obs, dummy_pred_state)
 
-        return NeuralLinearBackwardSmootherParams(prior_params, transition_params, filt_update_params)
+        return JohnsonBackwardSmootherParams(prior_params, transition_params, filt_update_params)
 
     def init_filt_state(self, obs, params):
 
@@ -730,7 +730,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
         return self.filt_update_apply(params.filt_update, obs, pred_state)
     
     def format_params(self, params):
-        return NeuralLinearBackwardSmootherParams(self.prior_dist.format_params(params.prior),
+        return JohnsonBackwardSmootherParams(self.prior_dist.format_params(params.prior),
                                                 self.transition_kernel.format_params(params.transition),
                                                 params.filt_update)
 

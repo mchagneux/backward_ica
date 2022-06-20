@@ -305,12 +305,24 @@ class SVITrainer:
         if self.fixed_covariances: 
             prior_scale = theta_star.prior.scale 
             transition_scale = theta_star.transition.scale
-            emission_scale = theta_star.emission.scale
 
-            def build_params(params):
-                return HMMParams(GaussianParams(params[0], prior_scale), 
-                                KernelParams(params[1], transition_scale), 
-                                KernelParams(params[2], emission_scale))
+            if isinstance(self.q, LinearGaussianHMM):
+                emission_scale = theta_star.emission.scale
+                def build_params(params):
+                    return HMMParams(GaussianParams(params[0], prior_scale), 
+                                    KernelParams(params[1], transition_scale), 
+                                    KernelParams(params[2], emission_scale))
+
+            elif isinstance(self.q, JohnsonBackwardSmoother):
+
+                def build_params(params):
+                    return JohnsonBackwardSmootherParams(GaussianParams(params[0], prior_scale), 
+                                                            KernelParams(params[1], transition_scale), 
+                                                            params[2])
+
+            else: 
+                raise NotImplementedError
+
             
         else: 
             build_params = lambda x:x
@@ -320,16 +332,21 @@ class SVITrainer:
             separate_params = lambda x:x
         else: 
             separate_params = lambda x: ((x.prior, x.transition), x.filt_update)
-            regroup_params = lambda x: NeuralLinearBackwardSmootherParams(x[0][0], x[0][1], x[1])
+            regroup_params = lambda x: JohnsonBackwardSmootherParams(x[0][0], x[0][1], x[1])
         params = separate_params(phi)
 
         if self.fixed_covariances:
-            params = (phi.prior.mean, phi.transition.map, phi.emission.map)
+            if isinstance(self.q, LinearGaussianHMM):
+                params = (phi.prior.mean, phi.transition.map, phi.emission.map)
+            elif isinstance(self.q, JohnsonBackwardSmoother):
+                params = (phi.prior.mean, phi.transition.map, phi.filt_update)
+            else:
+                raise NotImplementedError
 
         if isinstance(self.elbo, LinearGaussianTowerELBO):
             loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(build_params(regroup_params(phi))))
         else:
-            loss = lambda key, seq, phi: -self.elbo(key, seq, self.p.format_params(theta), self.q.format_params(regroup_params(phi)))
+            loss = lambda key, seq, phi: -self.elbo(key, seq, self.p.format_params(theta), self.q.format_params(build_params(regroup_params(phi))))
             
 
 
