@@ -48,14 +48,15 @@ def main(args, save_dir):
                         num_epochs=args.num_epochs, 
                         batch_size=args.batch_size, 
                         schedule=args.schedule,
-                        fix_covariances_and_emission=True)
+                        fixed_covariances=True)
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
                                                                         obs_seqs, 
                                                                         args.num_fits, 
                                                                         theta, 
-                                                                        store_every=args.store_every) 
+                                                                        store_every=args.store_every,
+                                                                        log_dir=save_dir) 
 
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
     utils.save_params(params, 'phi', save_dir)
@@ -105,7 +106,7 @@ if __name__ == '__main__':
         args.seed_theta = 0
         args.seed_phi = 1
 
-        args.state_dim, args.obs_dim = 3,4
+        args.state_dim, args.obs_dim = 1,1
         args.transition_matrix_conditionning = 'diagonal'
 
         args.seq_length = 10

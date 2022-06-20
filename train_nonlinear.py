@@ -100,7 +100,8 @@ def main(args, save_dir):
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
                                                             data=obs_seqs, 
                                                             theta_star=theta, 
-                                                            num_fits=args.num_fits) # returns the best fit (based on the last value of the elbo)
+                                                            num_fits=args.num_fits,
+                                                            log_dir=save_dir) # returns the best fit (based on the last value of the elbo)
     
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True, best_epochs_only=True)
     utils.save_params(params, 'phi', save_dir)
@@ -116,7 +117,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--q_version',type=str, default='nonlinear_johnson')
+    parser.add_argument('--q_version',type=str, default='linear')
     parser.add_argument('--save_dir', type=str, default='experiments/tests')
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')

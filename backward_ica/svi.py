@@ -222,8 +222,8 @@ class LinearGaussianTowerELBO:
                                                 xs=obs_seq[1:])[0]
 
 
-        return expect_quadratic_term_under_gaussian(result, q_last_filt_state) \
-                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.scale.log_det) \
+        return expect_quadratic_term_under_gaussian(result, q_last_filt_state.out) \
+                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
                     + 0.5*self.p.state_dim
 
 
@@ -372,9 +372,9 @@ class SVITrainer:
 
             if log_writer is not None:
                 with log_writer.as_default():
-                    tf.summary.scalar('Epoch ELBO', mean_elbo)
-                    for avg_elbo_batch in avg_elbo_batches:
-                        tf.summary.scalar('Minibatch ELBO', avg_elbo_batch)
+                    tf.summary.scalar('Epoch ELBO', mean_elbo, epoch_nb)
+                    for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
+                        tf.summary.scalar('Minibatch ELBO', avg_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
 
             avg_elbos.append(mean_elbo)
             all_params.append(build_params(regroup_params(params)))
@@ -423,7 +423,7 @@ class SVITrainer:
             avg_elbos = vmap(elbo)(keys, data)
             print('Avg error with Kalman evidence:', jnp.mean(jnp.abs(avg_evidences-avg_elbos)))
 
-    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, theta_star=None, store_every=None, logdir=''):
+    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, theta_star=None, store_every=None, log_dir=''):
 
         # self.check_elbo(data, theta)
 
@@ -435,7 +435,7 @@ class SVITrainer:
         print('Starting training...')
         
         for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
-            log_writer = tf.summary.create_file_writer(os.path.join(logdir, f'fit_{fit_nb}'))
+            log_writer = tf.summary.create_file_writer(os.path.join(log_dir, f'fit_{fit_nb}'))
 
             print(f'Fit {fit_nb+1}/{num_fits}')
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
