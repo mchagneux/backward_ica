@@ -3,6 +3,9 @@ import optax
 from jax import vmap, lax, numpy as jnp
 from .hmm import *
 from .utils import *
+import tensorboard
+import tensorflow as tf
+
 config.update('jax_enable_x64',True)
 
 def get_keys(key, num_seqs, num_epochs):
@@ -13,18 +16,6 @@ def get_keys(key, num_seqs, num_epochs):
 def get_dummy_keys(key, num_seqs, num_epochs): 
     return jnp.empty((num_epochs, num_seqs, 1))
 
-def init_rep_net_forward(state_dim, out_dim):
-    d = state_dim
-    eta1_num_params = d 
-    eta2_num_params = (d * (d+1)) // 2 
-    def rep_net_forward(x):
-        net = hk.nets.MLP((8, eta1_num_params + eta2_num_params))
-        out = net(x)
-        eta1 = out[:eta1_num_params]
-        eta2 = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[eta1_num_params:])
-        return eta1, - eta2 @ eta2.T
-    dummy_obs = jnp.empty((out_dim,))
-    return hk.without_apply_rng(hk.transform(rep_net_forward(dummy_obs)))
 
 def constant_terms_from_log_gaussian(dim:int, log_det:float)->float:
     """Utility function to compute the log of the term that is against the exponential for a multivariate Normal
@@ -302,8 +293,7 @@ class SVITrainer:
 
             self.get_montecarlo_keys = get_keys
 
-
-    def fit(self, key_params, key_batcher, key_montecarlo, data, theta_star=None):
+    def fit(self, key_params, key_batcher, key_montecarlo, data, theta_star=None, log_writer=None):
 
         if theta_star is not None: 
             theta = theta_star
@@ -378,8 +368,15 @@ class SVITrainer:
             (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
                                                                 init=(data, params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
+            mean_elbo = jnp.mean(avg_elbo_batches)
 
-            avg_elbos.append(jnp.mean(avg_elbo_batches))
+            if log_writer is not None:
+                with log_writer.as_default():
+                    tf.summary.scalar('Epoch ELBO', mean_elbo)
+                    for avg_elbo_batch in avg_elbo_batches:
+                        tf.summary.scalar('Minibatch ELBO', avg_elbo_batch)
+
+            avg_elbos.append(mean_elbo)
             all_params.append(build_params(regroup_params(params)))
                     
         return all_params, avg_elbos
@@ -426,7 +423,7 @@ class SVITrainer:
             avg_elbos = vmap(elbo)(keys, data)
             print('Avg error with Kalman evidence:', jnp.mean(jnp.abs(avg_evidences-avg_elbos)))
 
-    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, theta_star=None, store_every=None):
+    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, theta_star=None, store_every=None, logdir=''):
 
         # self.check_elbo(data, theta)
 
@@ -438,11 +435,13 @@ class SVITrainer:
         print('Starting training...')
         
         for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
+            log_writer = tf.summary.create_file_writer(os.path.join(logdir, f'fit_{fit_nb}'))
+
             print(f'Fit {fit_nb+1}/{num_fits}')
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
-            params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, theta_star)
+            params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, theta_star, log_writer)
 
             best_epoch = jnp.argmax(jnp.array(avg_elbos))
             best_epochs.append(best_epoch)
