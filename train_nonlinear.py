@@ -7,7 +7,7 @@ import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 from backward_ica.svi import SVITrainer
 utils.enable_x64(True)
-
+import tensorflow as tf
 
 def main(args, save_dir):
 
@@ -58,10 +58,10 @@ def main(args, save_dir):
     print('Computing evidence...')
 
     avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, 
-                                                                        theta)))(evidence_keys, obs_seqs))
+                                                                        theta)))(evidence_keys, obs_seqs)) / args.seq_length
 
 
-    print('Avg evidence:', avg_evidence)
+    print('Oracle evidence:', avg_evidence)
 
 
     if args.q_version == 'linear':
@@ -72,7 +72,7 @@ def main(args, save_dir):
                                 transition_bias=args.transition_bias, 
                                 emission_bias=False)
 
-    elif args.q_version == 'nonlinear_johnson':
+    elif 'nonlinear_johnson' in args.q_version:
         q = hmm.JohnsonBackwardSmoother(state_dim=args.state_dim, 
                                         obs_dim=args.obs_dim, 
                                         update_layers=args.update_layers,
@@ -93,8 +93,8 @@ def main(args, save_dir):
                         batch_size=args.batch_size, 
                         schedule=args.schedule,
                         num_samples=args.num_samples,
-                        force_full_mc=False,
-                        fixed_covariances=True)
+                        force_full_mc=args.full_mc,
+                        froze_subset_params=True)
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi,3)
 
@@ -118,12 +118,12 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--q_version',type=str, default='linear')
+    parser.add_argument('--q_version',type=str, default='nonlinear_johnson')
     parser.add_argument('--save_dir', type=str, default='experiments/tests')
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
-
     args = parser.parse_args()
+
 
     save_dir = args.save_dir
 
@@ -141,25 +141,25 @@ if __name__ == '__main__':
         args.slope = 0
 
 
-        args.seq_length = 20
-        args.num_seqs = 2048
+        args.seq_length = 10
+        args.num_seqs = 4096
 
 
         args.optimizer = 'adam'
-        args.batch_size = 64
+        args.batch_size = 128
         args.parametrization = 'cov_chol'
         args.learning_rate = 1e-2 # {'std':1e-2, 'nn':1e-1}
-        args.num_epochs = 300
+        args.num_epochs = 200
         args.schedule = {} #{'nn':{200:0.1, 250:0.5}}
         args.store_every = args.num_epochs // 5
-        args.num_fits = 5
+        args.num_fits = 2
         
         args.update_layers = (8,)
         args.backwd_map_layers = (16,)
 
 
         args.num_particles = 1000
-        args.num_samples = 1
+        args.num_samples = 5
         args.parametrization = 'cov_chol'
         import math
         args.default_prior_mean = 0.0
@@ -169,6 +169,7 @@ if __name__ == '__main__':
         args.default_emission_base_scale = math.sqrt(1e-3)
         args.default_transition_bias = 0
         args.transition_bias = False
+        args.full_mc = 'full_mc' in args.q_version
 
     utils.save_args(args, 'train_args', save_dir)
 

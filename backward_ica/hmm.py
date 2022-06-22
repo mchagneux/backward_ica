@@ -2,7 +2,7 @@ from abc import ABCMeta, abstractmethod
 from jax import numpy as jnp, random, value_and_grad, tree_util, grad, config
 from jax.tree_util import tree_leaves
 from backward_ica.kalman import Kalman
-from backward_ica.smc import SMC
+from backward_ica.smc import SMC, exp_and_normalize
 import haiku as hk
 from jax import lax, vmap
 from .utils import *
@@ -334,6 +334,11 @@ class Smoother(metaclass=ABCMeta):
         
         return vmap(self.new_kernel_state, in_axes=(0,None))(tree_droplast(filt_seq), formatted_params)
 
+
+    def filt_seq(self, obs_seq, params):
+        filt_state_seq = self.compute_filt_state_seq(obs_seq, self.format_params(params)).out
+        return filt_state_seq
+
     def smooth_seq(self, obs_seq, params):
         
         formatted_params = self.format_params(params)
@@ -563,10 +568,17 @@ class NonLinearGaussianHMM(HMM):
         return self.smc.compute_filt_state_seq(key, 
                                 obs_seq, 
                                 formatted_params)[0]
+
+    def filt_seq(self, key, obs_seq, params):
+
+        log_probs, particles = self.compute_filt_state_seq(key, obs_seq, self.format_params(params))
+
+        return vmap(exp_and_normalize)(log_probs), particles
         
     def compute_marginals(self, key, filt_seq, formatted_params):
 
         return self.smc.smooth_from_filt_seq(key, filt_seq, formatted_params)
+    
     
     def smooth_seq(self, key, obs_seq, params):
 
@@ -578,9 +590,7 @@ class NonLinearGaussianHMM(HMM):
                                 obs_seq, 
                                 formatted_params)[0]
 
-        paths = self.smc.smooth_from_filt_seq(subkey, filt_seq, formatted_params)
-
-        return jnp.mean(paths, axis=0), jnp.var(paths, axis=0)
+        return self.smc.smooth_from_filt_seq(subkey, filt_seq, formatted_params)
     
     def fit_ffbsi_em(self, key, data, optimizer, learning_rate, batch_size, num_epochs):
 
@@ -652,7 +662,6 @@ class NonLinearGaussianHMM(HMM):
 
         
         return params, avg_logls
-
 
 class JohnsonBackwardSmoother(LinearBackwardSmoother):
 
@@ -823,7 +832,6 @@ class GeneralBackwardSmoother(Smoother):
 
     def new_kernel_state(self, filt_state:FiltState, params:GeneralBackwardSmootherParams):
         return BackwardState(params.backwd, filt_state.out.vec)
-
 
     def smooth_seq(self, key, obs_seq, params, num_samples):
         

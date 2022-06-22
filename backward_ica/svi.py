@@ -167,8 +167,16 @@ class BackwardLinearTowerELBO:
 
 
 
-        marginals = self.q.compute_marginals(q_last_filt_state, q_backwd_state_seq)
 
+        # def sample_one_path_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq):
+
+        #     keys = jax.random.split(key, len(obs_seq))
+
+        #     init_sample = 
+
+
+
+        marginals = self.q.compute_marginals(q_last_filt_state, q_backwd_state_seq)
 
         def sample_one_path(key, obs_seq, marginal_params_seq):
 
@@ -226,7 +234,6 @@ class LinearGaussianTowerELBO:
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
                     + 0.5*self.p.state_dim
 
-
 class SVITrainer:
 
     def __init__(self, p:HMM, 
@@ -238,7 +245,7 @@ class SVITrainer:
                     num_samples=1, 
                     force_full_mc=False, 
                     schedule={}, 
-                    fixed_covariances=False):
+                    froze_subset_params=False):
 
 
         self.num_epochs = num_epochs
@@ -246,36 +253,20 @@ class SVITrainer:
         self.q = q 
         self.q.print_num_params()
         self.p = p 
-        self.fixed_covariances = fixed_covariances
+        self.froze_subset_params = froze_subset_params
 
         optimizer_method = getattr(optax, optimizer)
         
-        def get_optimizer(schedule, param_group=None):
-            if param_group is not None:
-                if param_group in schedule.keys(): schedule = schedule[param_group]
-                elif 'common' in schedule.keys(): schedule = schedule['common']
-                else: schedule = {}
-                
+        def get_optimizer(schedule):
             if len(schedule): 
                 schedule_fn = lambda num_batches: optax.piecewise_constant_schedule(1., {k*num_batches: v for k,v in schedule.items()})
                 optimizer = lambda num_batches, learning_rate: optax.chain(optimizer_method(learning_rate), optax.scale_by_schedule(schedule_fn(num_batches)))
             else: 
                 optimizer = lambda num_batches, learning_rate: optimizer_method(learning_rate)
+
             return optimizer
 
-        if isinstance(self.q, LinearGaussianHMM) or (not isinstance(learning_rate, dict)):
-            self.optimizer = partial(get_optimizer(schedule), learning_rate=learning_rate)
-
-
-        else:
-            param_labels = ('std', 'nn')
-            optimizer_std_params = partial(get_optimizer(schedule, 'std'), learning_rate=learning_rate['std'])
-            optimizer_nn_params = partial(get_optimizer(schedule, 'nn'), learning_rate=0.1*learning_rate['nn'])
-            self.optimizer = lambda num_batches: optax.multi_transform({
-                'std': optimizer_std_params(num_batches),
-                'nn': optimizer_nn_params(num_batches)},
-                param_labels)
-
+        self.optimizer = partial(get_optimizer(schedule), learning_rate=learning_rate)
 
         if force_full_mc: 
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
@@ -286,7 +277,6 @@ class SVITrainer:
             self.get_montecarlo_keys = get_dummy_keys
         else: 
             if not isinstance(self.q, LinearBackwardSmoother):
-                
                 self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             
             else: self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
@@ -302,57 +292,42 @@ class SVITrainer:
         optimizer = self.optimizer(num_seqs // self.batch_size)
         phi = self.q.get_random_params(key_params)
 
-        if self.fixed_covariances: 
-            prior_scale = theta_star.prior.scale 
-            transition_scale = theta_star.transition.scale
+
+        if self.froze_subset_params: 
 
             if isinstance(self.q, LinearGaussianHMM):
-                emission_scale = theta_star.emission.scale
-                def build_params(params):
-                    return HMMParams(GaussianParams(params[0], prior_scale), 
-                                    KernelParams(params[1], transition_scale), 
-                                    KernelParams(params[2], emission_scale))
+                params = phi.emission
 
+                def build_params(params):
+                    return HMMParams(theta_star.prior, 
+                                    theta_star.transition,
+                                    params)
+            
             elif isinstance(self.q, JohnsonBackwardSmoother):
+                params = phi.filt_update
 
                 def build_params(params):
-                    return JohnsonBackwardSmootherParams(GaussianParams(params[0], prior_scale), 
-                                                            KernelParams(params[1], transition_scale), 
-                                                            params[2])
+                    return JohnsonBackwardSmootherParams(theta_star.prior, theta_star.transition, params)
 
             else: 
                 raise NotImplementedError
-
-            
+    
         else: 
+            params = phi
             build_params = lambda x:x
 
-        if isinstance(self.q, LinearGaussianHMM) or isinstance(self.q, GeneralBackwardSmoother):
-            regroup_params = lambda x:x
-            separate_params = lambda x:x
-        else: 
-            separate_params = lambda x: ((x.prior, x.transition), x.filt_update)
-            regroup_params = lambda x: JohnsonBackwardSmootherParams(x[0][0], x[0][1], x[1])
-        params = separate_params(phi)
-
-        if self.fixed_covariances:
-            if isinstance(self.q, LinearGaussianHMM):
-                params = (phi.prior.mean, phi.transition.map, phi.emission.map)
-            elif isinstance(self.q, JohnsonBackwardSmoother):
-                params = (phi.prior.mean, phi.transition.map, phi.filt_update)
-            else:
-                raise NotImplementedError
 
         if isinstance(self.elbo, LinearGaussianTowerELBO):
-            loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(build_params(regroup_params(phi))))
+            loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(build_params(phi)))
         else:
-            loss = lambda key, seq, phi: -self.elbo(key, seq, self.p.format_params(theta), self.q.format_params(build_params(regroup_params(phi))))
+            loss = lambda key, seq, phi: -self.elbo(key, seq, self.p.format_params(theta), self.q.format_params(build_params(phi)))
             
 
 
         opt_state = optimizer.init(params)
         subkeys = self.get_montecarlo_keys(key_montecarlo, num_seqs, self.num_epochs)
 
+        seq_length = len(data[0])
 
         @jax.jit
         def batch_step(carry, x):
@@ -362,7 +337,7 @@ class SVITrainer:
                 avg_grads = jax.tree_util.tree_map(jnp.mean, grads)
                 updates, opt_state = optimizer.update(avg_grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
-                return params, opt_state, jnp.mean(-neg_elbo_values)
+                return params, opt_state, -jnp.mean(neg_elbo_values / seq_length)
 
             data, params, opt_state, subkeys_epoch = carry
             batch_start = x
@@ -385,64 +360,23 @@ class SVITrainer:
             (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
                                                                 init=(data, params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
-            mean_elbo = jnp.mean(avg_elbo_batches)
+            avg_elbo_epoch = jnp.mean(avg_elbo_batches)
 
             if log_writer is not None:
                 with log_writer.as_default():
-                    tf.summary.scalar('Epoch ELBO', mean_elbo, epoch_nb)
+                    tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', avg_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
 
-            avg_elbos.append(mean_elbo)
-            all_params.append(build_params(regroup_params(params)))
+            avg_elbos.append(avg_elbo_epoch)
+            all_params.append(build_params(params))
                     
         return all_params, avg_elbos
 
-    def profile(self, key, data, theta):
 
-        params_key, monte_carlo_key = jax.random.split(key, 2)
-        phi = self.q.get_random_params(params_key)
-
-        if self.use_johnson: 
-            aux_params = self.aux_init_params(params_key, data[0][0])
-        else:
-            aux_params = None        
-        if self.use_johnson: 
-            loss = lambda seq, key, phi, aux_params: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), aux_params)
-            params = (phi, aux_params)
-        else: 
-            loss = lambda seq, key, phi: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), None)
-            params = phi
-
-        num_seqs = data.shape[0]
-        subkeys = self.get_montecarlo_keys(monte_carlo_key, num_seqs, 1).squeeze()
-
-        @jit
-        def step(params, batch, keys):
-            return jax.vmap(loss, in_axes=(0,0,None))(batch, keys, params)
-
-        step(params, data[:self.batch_size], subkeys[:self.batch_size])
-
-        with jax.profiler.trace('./profiling/'):
-            print(step(params, data[:2], subkeys[:2]))
-
-    def check_elbo(self, data, theta):
-        if isinstance(self.p, LinearGaussianHMM):
-            print('Checking ELBO quality...')
-
-            avg_evidences = vmap(jit(lambda seq: self.p.likelihood_seq(seq, theta)))(data)
-            theta = self.p.format_params(theta)
-            if isinstance(self.elbo, LinearGaussianTowerELBO):
-                elbo = jit(lambda key, seq:self.elbo(seq, theta, theta))
-            else: 
-                elbo = jit(lambda key, seq: self.elbo(key, seq, theta, theta))
-            keys = jax.random.split(jax.random.PRNGKey(0), data.shape[0])
-            avg_elbos = vmap(elbo)(keys, data)
-            print('Avg error with Kalman evidence:', jnp.mean(jnp.abs(avg_evidences-avg_elbos)))
 
     def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, theta_star=None, store_every=None, log_dir=''):
 
-        # self.check_elbo(data, theta)
 
         all_avg_elbos = []
         all_params = []
@@ -485,6 +419,47 @@ class SVITrainer:
         else: 
             return best_params, (best_optim, best_epochs, all_avg_elbos)
 
+    def profile(self, key, data, theta):
+
+        params_key, monte_carlo_key = jax.random.split(key, 2)
+        phi = self.q.get_random_params(params_key)
+
+        if self.use_johnson: 
+            aux_params = self.aux_init_params(params_key, data[0][0])
+        else:
+            aux_params = None        
+        if self.use_johnson: 
+            loss = lambda seq, key, phi, aux_params: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), aux_params)
+            params = (phi, aux_params)
+        else: 
+            loss = lambda seq, key, phi: self.loss(seq, key, self.p.format_params(theta), self.q.format_params(phi), None)
+            params = phi
+
+        num_seqs = data.shape[0]
+        subkeys = self.get_montecarlo_keys(monte_carlo_key, num_seqs, 1).squeeze()
+
+        @jit
+        def step(params, batch, keys):
+            return jax.vmap(loss, in_axes=(0,0,None))(batch, keys, params)
+
+        step(params, data[:self.batch_size], subkeys[:self.batch_size])
+
+        with jax.profiler.trace('./profiling/'):
+            print(step(params, data[:2], subkeys[:2]))
+
+    def check_elbo(self, data, theta):
+        if isinstance(self.p, LinearGaussianHMM):
+            print('Checking ELBO quality...')
+
+            avg_evidences = vmap(jit(lambda seq: self.p.likelihood_seq(seq, theta)))(data)
+            theta = self.p.format_params(theta)
+            if isinstance(self.elbo, LinearGaussianTowerELBO):
+                elbo = jit(lambda key, seq:self.elbo(seq, theta, theta))
+            else: 
+                elbo = jit(lambda key, seq: self.elbo(key, seq, theta, theta))
+            keys = jax.random.split(jax.random.PRNGKey(0), data.shape[0])
+            avg_elbos = vmap(elbo)(keys, data)
+            print('Avg error with Kalman evidence:', jnp.mean(jnp.abs(avg_evidences-avg_elbos)))
 
 
 def check_linear_gaussian_elbo(p:LinearGaussianHMM, num_seqs, seq_length):

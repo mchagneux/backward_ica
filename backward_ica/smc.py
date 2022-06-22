@@ -107,6 +107,6 @@ class SMC:
 
         paths = vmap(_sample_path, in_axes=(0,None,None))(keys, log_probs_seq, particles_seq)
 
-        return paths
+        return jnp.transpose(paths, axes=(1,0,2))
         
 

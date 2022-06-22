@@ -48,7 +48,7 @@ def main(args, save_dir):
                         num_epochs=args.num_epochs, 
                         batch_size=args.batch_size, 
                         schedule=args.schedule,
-                        fixed_covariances=True)
+                        froze_subset_params=True)
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
