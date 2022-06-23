@@ -336,8 +336,9 @@ class Smoother(metaclass=ABCMeta):
 
 
     def filt_seq(self, obs_seq, params):
+        
         filt_state_seq = self.compute_filt_state_seq(obs_seq, self.format_params(params)).out
-        return filt_state_seq
+        return vmap(lambda x:x.mean)(filt_state_seq), vmap(lambda x:x.scale.cov)(filt_state_seq)
 
     def smooth_seq(self, obs_seq, params):
         
