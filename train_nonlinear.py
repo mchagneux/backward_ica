@@ -37,21 +37,21 @@ def main(args, save_dir):
 
     key_smoothing, key_evidence = jax.random.split(key_smc, 2)
 
-    state_seq, obs_seq = state_seqs[0], obs_seqs[0]
+    # state_seq, obs_seq = state_seqs[0], obs_seqs[0]
 
-    means_smc, covs_smc = p.smooth_seq(key_smoothing, obs_seq, theta)
+    # means_smc, covs_smc = p.smooth_seq(key_smoothing, obs_seq, theta)
 
-    import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(args.state_dim, figsize=(30,30))
-    for dim_nb in range(args.state_dim):
+    # import matplotlib.pyplot as plt
+    # fig, axes = plt.subplots(args.state_dim, figsize=(30,30))
+    # for dim_nb in range(args.state_dim):
         
-        utils.plot_relative_errors_1D(axes[dim_nb], state_seq[:,dim_nb], means_smc[:,dim_nb], covs_smc[:,dim_nb])
-        utils.plot_relative_errors_1D(axes[dim_nb], state_seq[:,dim_nb], means_smc[:,dim_nb], covs_smc[:,dim_nb])
+    #     utils.plot_relative_errors_1D(axes[dim_nb], state_seq[:,dim_nb], means_smc[:,dim_nb], covs_smc[:,dim_nb])
+    #     utils.plot_relative_errors_1D(axes[dim_nb], state_seq[:,dim_nb], means_smc[:,dim_nb], covs_smc[:,dim_nb])
 
-    plt.autoscale(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'smc_smoothing_on_first_seq.pdf'),format='pdf')
-    plt.clf()
+    # plt.autoscale(True)
+    # plt.tight_layout()
+    # plt.savefig(os.path.join(save_dir, 'smc_smoothing_on_first_seq.pdf'),format='pdf')
+    # plt.clf()
 
     evidence_keys = jax.random.split(key_evidence, args.num_seqs)
 
@@ -79,10 +79,13 @@ def main(args, save_dir):
                                         transition_bias=args.transition_bias)
 
     else:
+        transition_kernel = p.transition_kernel if args.explicit_backward else None
+
         q = hmm.GeneralBackwardSmoother(state_dim=args.state_dim, 
                                         obs_dim=args.obs_dim, 
                                         update_layers=args.update_layers,
-                                        backwd_layers=args.backwd_map_layers)
+                                        backwd_layers=args.backwd_map_layers,
+                                        transition_kernel=transition_kernel)
 
 
     trainer = SVITrainer(p=p, 
@@ -94,9 +97,9 @@ def main(args, save_dir):
                         schedule=args.schedule,
                         num_samples=args.num_samples,
                         force_full_mc=args.full_mc,
-                        froze_subset_params=True)
+                        freeze_subset_params=args.freeze_subset_params)
 
-    key_params, key_batcher, key_montecarlo = jax.random.split(key_phi,3)
+    key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
                                                             data=obs_seqs, 
@@ -118,14 +121,19 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--q_version',type=str, default='nonlinear_johnson')
-    parser.add_argument('--save_dir', type=str, default='experiments/tests')
+    parser.add_argument('--q_version',type=str, default='nonlinear_general_explicit_backward')
+    parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
     args = parser.parse_args()
 
 
+
     save_dir = args.save_dir
+
+    if save_dir=='':
+        save_dir = os.path.join('experiments','tests',date)
+        os.makedirs(save_dir, exist_ok=True)
 
     if args.args_path != '':
         args = utils.load_args('train_args',args.args_path)
@@ -137,29 +145,29 @@ if __name__ == '__main__':
         args.state_dim, args.obs_dim = 2,2
         args.transition_matrix_conditionning = 'diagonal'
 
-        args.emission_map_layers = () 
+        args.emission_map_layers = ()
         args.slope = 0
 
 
-        args.seq_length = 10
+        args.seq_length = 50
         args.num_seqs = 4096
 
 
         args.optimizer = 'adam'
-        args.batch_size = 128
+        args.batch_size = 256
         args.parametrization = 'cov_chol'
         args.learning_rate = 1e-2 # {'std':1e-2, 'nn':1e-1}
-        args.num_epochs = 200
-        args.schedule = {} #{'nn':{200:0.1, 250:0.5}}
+        args.num_epochs = 300
+        args.schedule = {} # {20:0.1} #{'nn':{200:0.1, 250:0.5}}
         args.store_every = args.num_epochs // 5
-        args.num_fits = 2
+        args.num_fits = 3
         
-        args.update_layers = (8,)
-        args.backwd_map_layers = (16,)
+        args.update_layers = (8,8)
+        args.backwd_map_layers = (8,8)
 
 
         args.num_particles = 1000
-        args.num_samples = 5
+        args.num_samples = 1
         args.parametrization = 'cov_chol'
         import math
         args.default_prior_mean = 0.0
@@ -170,6 +178,8 @@ if __name__ == '__main__':
         args.default_transition_bias = 0
         args.transition_bias = False
         args.full_mc = 'full_mc' in args.q_version
+        args.freeze_subset_params = True if 'with_help' in args.q_version else False
+        args.explicit_backward = True if 'explicit_backward' in args.q_version else False
 
     utils.save_args(args, 'train_args', save_dir)
 

@@ -245,7 +245,7 @@ class SVITrainer:
                     num_samples=1, 
                     force_full_mc=False, 
                     schedule={}, 
-                    froze_subset_params=False):
+                    freeze_subset_params=False):
 
 
         self.num_epochs = num_epochs
@@ -253,7 +253,7 @@ class SVITrainer:
         self.q = q 
         self.q.print_num_params()
         self.p = p 
-        self.froze_subset_params = froze_subset_params
+        self.freeze_subset_params = freeze_subset_params
 
         optimizer_method = getattr(optax, optimizer)
         
@@ -275,12 +275,15 @@ class SVITrainer:
         elif isinstance(self.p, LinearGaussianHMM):
             self.elbo = LinearGaussianTowerELBO(self.p, self.q)
             self.get_montecarlo_keys = get_dummy_keys
-        else: 
-            if not isinstance(self.q, LinearBackwardSmoother):
+        elif isinstance(self.q, LinearBackwardSmoother):
+            self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
+            self.get_montecarlo_keys = get_keys
+
+        else:
+            if self.q.transition_kernel is not None: self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
+            else:
                 self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             
-            else: self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
-
             self.get_montecarlo_keys = get_keys
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, theta_star=None, log_writer=None):
@@ -293,24 +296,38 @@ class SVITrainer:
         phi = self.q.get_random_params(key_params)
 
 
-        if self.froze_subset_params: 
+        if self.freeze_subset_params: 
 
             if isinstance(self.q, LinearGaussianHMM):
-                params = phi.emission
+                if isinstance(self.p, LinearGaussianHMM):
+                    params = (phi.prior.mean, phi.transition.map)
 
-                def build_params(params):
-                    return HMMParams(theta_star.prior, 
-                                    theta_star.transition,
-                                    params)
+                    def build_params(params):
+                        return HMMParams(GaussianParams(params[0], theta_star.prior.scale),
+                                        KernelParams(params[1], theta_star.transition.scale),
+                                        theta_star.emission)
+                else:
+                    params = phi.emission
+
+                    def build_params(params):
+                        return HMMParams(theta_star.prior, 
+                                        theta_star.transition,
+                                        params)    
             
             elif isinstance(self.q, JohnsonBackwardSmoother):
-                params = phi.filt_update
 
+                params = phi.filt_update
                 def build_params(params):
-                    return JohnsonBackwardSmootherParams(theta_star.prior, theta_star.transition, params)
+                    return JohnsonBackwardSmootherParams(theta_star.prior, 
+                                                        theta_star.transition, 
+                                                        params)
 
             else: 
-                raise NotImplementedError
+                params = phi 
+                def build_params(params):
+                    return GeneralBackwardSmootherParamsWithHelp(prior=params[0], 
+                                                                filt=params[1], 
+                                                                transition=theta_star.transition)
     
         else: 
             params = phi
@@ -373,8 +390,6 @@ class SVITrainer:
                     
         return all_params, avg_elbos
 
-
-
     def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, theta_star=None, store_every=None, log_dir=''):
 
 
@@ -385,8 +400,10 @@ class SVITrainer:
         
         print('Starting training...')
         
+        tensorboard_subdir = os.path.join(log_dir, 'tensorboard_logs')
+        os.makedirs(tensorboard_subdir, exist_ok=True)
         for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
-            log_writer = tf.summary.create_file_writer(os.path.join(log_dir, f'fit_{fit_nb}'))
+            log_writer = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}'))
 
             print(f'Fit {fit_nb+1}/{num_fits}')
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)

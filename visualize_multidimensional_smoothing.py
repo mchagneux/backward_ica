@@ -1,5 +1,4 @@
 #%%
-import argparse
 import haiku as hk 
 import jax 
 import jax.numpy as jnp
@@ -8,10 +7,9 @@ import backward_ica.utils as utils
 import backward_ica.smc as smc
 import seaborn as sns
 import os 
-import shutil
 import matplotlib.pyplot as plt
 
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_2_with_help/trainings/linear/2022_06_22__11_41_05'
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_2_2/trainings/nonlinear_johnson/2022_06_24__16_04_01'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -55,13 +53,14 @@ else:
     q = hmm.GeneralBackwardSmoother(state_dim=args.state_dim, 
                                     obs_dim=args.obs_dim, 
                                     update_layers=args.update_layers,
-                                    backwd_layers=args.backwd_map_layers)
+                                    backwd_layers=args.backwd_map_layers,
+                                    transition_kernel=p.transition_kernel if args.freeze_subset_params else None)
 
 
 phi = utils.load_params('phi', exp_dir)
 
 key_theta, key_gen, key_ffbsi = jax.random.split(key_theta,3)
-state_seq, obs_seq = p.sample_seq(key_gen, theta_star, 50)
+state_seq, obs_seq = p.sample_seq(key_gen, theta_star, 200)
 
 filt_weights, filt_particles = p.filt_seq(key_ffbsi, obs_seq, theta_star)
 smoothing_paths = p.smooth_seq(key_ffbsi, obs_seq, theta_star)
@@ -72,23 +71,6 @@ os.makedirs(filt_dir, exist_ok=True)
 os.makedirs(smooth_dir, exist_ok=True)
 
 
-# for timestep in range(len(filt_weights)):
-#     smoothing_particles_t = smoothing_paths[timestep]
-#     filt_weights_t = filt_weights[timestep]
-#     filt_particles_t = filt_particles[timestep]
-
-#     g = sns.JointGrid(x=filt_particles_t[:,0], y=filt_particles_t[:,1])
-
-#     g.plot_marginals(sns.histplot, weights=filt_weights_t)
-#     g.plot_joint(sns.kdeplot, weights=filt_weights_t)
-
-#     g.savefig(os.path.join(filt_dir, str(timestep)))
-
-
-#     g = sns.JointGrid(x=smoothing_particles_t[:,0], y=smoothing_particles_t[:,1])
-#     g.plot_joint(sns.kdeplot, bins=10)
-#     g.plot_marginals(sns.histplot, bins=10)
-#     g.savefig(os.path.join(sm²ooth_dir, str(timestep)))
 
 means_filt_ffbsi = jax.vmap(lambda particles, weights: jnp.average(a=particles, axis=0, weights=weights))(filt_particles, filt_weights)
 covs_filt_ffbsi = jax.vmap(lambda mean, particles, weights: jnp.average(a=(particles-mean)**2, axis=0, weights=weights))(means_filt_ffbsi, filt_particles, filt_weights)
@@ -102,50 +84,68 @@ if isinstance(q, hmm.GeneralBackwardSmoother):
 else:     
     means_smooth_q, covs_smooth_q = q.smooth_seq(obs_seq, phi)
 
-if isinstance(q, hmm.GeneralBackwardSmoother):
+if isinstance(q, hmm.GeneralBackwardSmoother) and (not q.backward_help):
     means_filt_q, covs_filt_q = q.filt_seq(key_filt_q, obs_seq, phi, 1000)
 else:     
     means_filt_q, covs_filt_q = q.filt_seq(obs_seq, phi)
+#%%
+# bins=100
+# for timestep in range(len(filt_weights)):
+#     smoothing_particles_t = smoothing_paths[timestep]
+#     filt_weights_t = filt_weights[timestep]
+#     filt_particles_t = filt_particles[timestep]
+
+#     if args.state_dim == 2:
+#         g = sns.JointGrid(x=filt_particles_t[:,0], y=filt_particles_t[:,1], xlim=(-1.5, 1.5), ylim=(-1.5,1.5))
+
+#         g.plot_marginals(sns.histplot, weights=filt_weights_t, bins=bins, binrange=(-1.5, 1.5))
+#         g.plot_joint(sns.kdeplot, weights=filt_weights_t, fill=True)
+
+#         g.savefig(os.path.join(filt_dir, str(timestep)))
+
+#         g = sns.JointGrid(x=smoothing_particles_t[:,0], y=smoothing_particles_t[:,1])
+#         g.plot_joint(sns.kdeplot, fill=True)
+#         g.plot_marginals(sns.histplot, bins=bins, binrange=(-1.5, 1.5))
+#         g.savefig(os.path.join(smooth_dir, str(timestep)))
+
+#     elif args.state_dim == 1: 
+#         g = sns.displot(x=filt_particles_t[:,0], kde=True, weights = filt_weights_t, binrange=(-1.5, 1.5), bins=bins)
+#         g.savefig(os.path.join(filt_dir, str(timestep)))
+
+#         g = sns.displot(smoothing_particles_t, kde=True, bins=bins, binrange=(-1.5, 1.5))
+#         g.savefig(os.path.join(smooth_dir, str(timestep)))
+
+#     else: 
+#         pass
+
+
 
 
 #%%
-fig, axes = plt.subplots(args.state_dim, 2, figsize=(15,15))
 import numpy as np
-axes = np.atleast_2d(axes)
 
-for dim_nb in range(args.state_dim):
+means_ffbsi = [means_smooth_ffbsi, means_filt_ffbsi]
+covs_ffbsi = [covs_smooth_ffbsi, covs_filt_ffbsi]
+means_q = [means_smooth_q, means_filt_q]
+covs_q = [covs_smooth_q, covs_filt_q]
+names = ['smoothing_eval', 'filt_eval']
 
-    utils.plot_relative_errors_1D(axes[dim_nb,0], state_seq[:,dim_nb], means_smooth_ffbsi[:,dim_nb], covs_smooth_ffbsi[:,dim_nb])
+for mean_ffbsi, cov_ffbsi, mean_q, cov_q, name in zip(means_ffbsi, covs_ffbsi, means_q, covs_q, names):
+    fig, axes = plt.subplots(args.state_dim, 2, figsize=(15,15))
+    axes = np.atleast_2d(axes)
 
-for dim_nb in range(args.state_dim):
+    for dim_nb in range(args.state_dim):
 
-    if isinstance(q, hmm.LinearBackwardSmoother):
-        utils.plot_relative_errors_1D(axes[dim_nb,1], state_seq[:,dim_nb], means_smooth_q[:,dim_nb], covs_smooth_q[:,dim_nb,dim_nb])
-    else:
-        utils.plot_relative_errors_1D(axes[dim_nb,1], state_seq[:,dim_nb], means_smooth_q[:,dim_nb], covs_smooth_q[:,dim_nb])
+        utils.plot_relative_errors_1D(axes[dim_nb,0], state_seq[:,dim_nb], mean_ffbsi[:,dim_nb], cov_ffbsi[:,dim_nb])
 
-plt.autoscale(True)
-plt.tight_layout()
-plt.savefig(os.path.join(eval_dir, 'smoothing_eval'))
-plt.clf()
+    for dim_nb in range(args.state_dim):
 
+        if isinstance(q, hmm.LinearBackwardSmoother) or q.backward_help:
+            utils.plot_relative_errors_1D(axes[dim_nb,1], state_seq[:,dim_nb], mean_q[:,dim_nb], cov_q[:,dim_nb,dim_nb])
+        else:
+            utils.plot_relative_errors_1D(axes[dim_nb,1], state_seq[:,dim_nb], mean_q[:,dim_nb], cov_q[:,dim_nb])
 
-fig, axes = plt.subplots(args.state_dim, 2, figsize=(15,15))
-axes = np.atleast_2d(axes)
-
-for dim_nb in range(args.state_dim):
-
-    utils.plot_relative_errors_1D(axes[dim_nb,0], state_seq[:,dim_nb], means_filt_ffbsi[:,dim_nb], covs_filt_ffbsi[:,dim_nb])
-
-for dim_nb in range(args.state_dim):
-
-    if isinstance(q, hmm.LinearBackwardSmoother):
-        utils.plot_relative_errors_1D(axes[dim_nb,1], state_seq[:,dim_nb], means_filt_q[:,dim_nb], covs_filt_q[:,dim_nb,dim_nb])
-    else:
-        utils.plot_relative_errors_1D(axes[dim_nb,1], state_seq[:,dim_nb], means_filt_q[:,dim_nb], covs_filt_q[:,dim_nb])
-
-plt.autoscale(True)
-plt.tight_layout()
-plt.savefig(os.path.join(eval_dir, 'filtering_eval'))
-plt.clf()
-#%%s
+    plt.autoscale(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(eval_dir, name))
+    plt.clf()

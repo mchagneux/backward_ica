@@ -29,7 +29,7 @@ def main(args, save_dir):
 
     check_linear_gaussian_elbo(p, args.num_seqs, args.seq_length)
     print('Computing evidence...')
-    avg_evidence = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta))(obs_seqs))
+    avg_evidence = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta))(obs_seqs)) / args.seq_length
     print('Avg evidence:', avg_evidence)
 
 
@@ -48,7 +48,7 @@ def main(args, save_dir):
                         num_epochs=args.num_epochs, 
                         batch_size=args.batch_size, 
                         schedule=args.schedule,
-                        froze_subset_params=True)
+                        freeze_subset_params=False)
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
@@ -106,7 +106,7 @@ if __name__ == '__main__':
         args.seed_theta = 0
         args.seed_phi = 1
 
-        args.state_dim, args.obs_dim = 1,1
+        args.state_dim, args.obs_dim = 2,2
         args.transition_matrix_conditionning = 'diagonal'
 
         args.seq_length = 10
@@ -114,19 +114,20 @@ if __name__ == '__main__':
 
         args.optimizer = 'adam'
         args.batch_size = args.num_seqs // 100
-        args.parametrization = 'cov_chol'
-        args.learning_rate = 1e-3 #{'std':1e-2, 'nn':1e-1}
+        args.learning_rate = 1e-2 #{'std':1e-2, 'nn':1e-1}
         args.num_epochs = 100
         args.schedule = {} #{300:0.1}
         args.store_every = args.num_epochs // 5
         args.num_fits = 5
+
+        args.parametrization = 'cov_chol'
         import math
-        args.range_transition_map_params = [0.99,1]
-        args.default_prior_base_scale = math.sqrt(0.1)
-        args.default_transition_base_scale = math.sqrt(0.1)
-        args.default_emission_base_scale = math.sqrt(0.1)
         args.default_prior_mean = 0.0
-        args.default_transition_bias = None
+        args.range_transition_map_params = [0.99,1]
+        args.default_prior_base_scale = math.sqrt(1e-2)
+        args.default_transition_base_scale = math.sqrt(1e-2)
+        args.default_emission_base_scale = math.sqrt(1e-3)
+        args.default_transition_bias = 0
         args.transition_bias = False
         args.emission_bias = False
 
