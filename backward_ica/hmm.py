@@ -680,7 +680,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
     def johnson_update_forward(obs, pred_state:GaussianParams, layers, state_dim):
 
         d = state_dim 
-        rec_net = hk.nets.MLP((*layers, 2*d),
+        rec_net = hk.nets.MLP((*layers, (d * (d+1)) // 2),
                     w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                     b_init=hk.initializers.RandomNormal(),
                     activation=nn.tanh,
@@ -688,9 +688,12 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
 
 
         out = rec_net(obs)
-        eta1, log_prec_diag = jnp.split(out,2)
-        eta2 = - 0.5 * jnp.diag(nn.softplus(log_prec_diag))
+        eta1 = out[:d]
+        prec_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
+        prec = prec_chol @ prec_chol.T
+        eta2 = - 0.5 * prec
         filt_state = GaussianParams(eta1 = eta1 + pred_state.eta1, eta2 = eta2 + pred_state.eta2)
+
         return FiltState(filt_state, filt_state)
 
     def __init__(self, 
@@ -768,9 +771,11 @@ class GeneralBackwardSmoother(Smoother):
 
         out_dim = d + d * (d+1) // 2 
 
-        net = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in [*layers, out_dim]])
+        gru = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in (*layers,)])
+        projection = hk.Linear(out_dim)
+        out, new_state = gru(obs, prev_state)
+        out = projection(out)
 
-        out, new_state = net(obs, prev_state)
         return GaussianParams.from_vec(out, d), new_state
 
 
@@ -781,15 +786,16 @@ class GeneralBackwardSmoother(Smoother):
         out_dim = d + (d * (d+1)) // 2
 
         net = hk.nets.MLP((*layers, out_dim),
-                w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-                activation=nn.tanh,
-                activate_final=False)
+                    w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                    b_init=hk.initializers.RandomNormal(),
+                    activation=nn.tanh,
+                    activate_final=False)
         
         out = net(jnp.concatenate((varying_params, next_state)))
-        mean = out[:d]
-        cov_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
 
-        return mean, Scale(cov_chol=cov_chol)
+        out = GaussianParams.from_vec(out, d)
+
+        return out.mean, out.scale
 
     def __init__(self, 
                 state_dim, 

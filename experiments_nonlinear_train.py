@@ -5,7 +5,7 @@ injective = True
 exp_detail = 'p_nonlinear_dim_2_2'
 base_dir = os.path.join('experiments', 'p_nonlinear', exp_detail, 'trainings')
 
-q_versions = ['nonlinear_johnson', 'nonlinear_general_explicit_backward']
+q_versions = ['nonlinear_johnson']
 
 os.makedirs(base_dir, exist_ok=True)
 
@@ -29,6 +29,7 @@ processes = [subprocess.Popen(f'python train_nonlinear.py \
                         shell=True, stdout=logfile, stderr=logfile) \
                 for (q_version, save_dir, logfile) in zip(q_versions, save_dirs, logfiles)]
 
+print(date)
 
 tensorboard_process = subprocess.Popen(f'tensorboard --logdir {base_dir}', shell=True)
 tensorboard_process.wait()

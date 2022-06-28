@@ -9,7 +9,7 @@ import seaborn as sns
 import os 
 import matplotlib.pyplot as plt
 
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_2_2/trainings/nonlinear_johnson/2022_06_24__16_04_01'
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_2_2/trainings/nonlinear_johnson/2022_06_28__16_23_46'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -129,7 +129,6 @@ covs_ffbsi = [covs_smooth_ffbsi, covs_filt_ffbsi]
 means_q = [means_smooth_q, means_filt_q]
 covs_q = [covs_smooth_q, covs_filt_q]
 names = ['smoothing_eval', 'filt_eval']
-
 for mean_ffbsi, cov_ffbsi, mean_q, cov_q, name in zip(means_ffbsi, covs_ffbsi, means_q, covs_q, names):
     fig, axes = plt.subplots(args.state_dim, 2, figsize=(15,15))
     axes = np.atleast_2d(axes)

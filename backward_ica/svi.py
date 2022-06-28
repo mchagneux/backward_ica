@@ -354,14 +354,14 @@ class SVITrainer:
                 avg_grads = jax.tree_util.tree_map(jnp.mean, grads)
                 updates, opt_state = optimizer.update(avg_grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
-                return params, opt_state, -jnp.mean(neg_elbo_values / seq_length)
+                return params, opt_state, -jnp.mean(neg_elbo_values / seq_length), avg_grads
 
             data, params, opt_state, subkeys_epoch = carry
             batch_start = x
             batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
             batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
-            params, opt_state, avg_elbo_batch = step(params, opt_state, batch_obs_seq, batch_keys)
-            return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
+            params, opt_state, avg_elbo_batch, avg_grads_batch = step(params, opt_state, batch_obs_seq, batch_keys)
+            return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads_batch)
 
 
         avg_elbos = []
@@ -374,11 +374,11 @@ class SVITrainer:
             
             data = jax.random.permutation(subkey_batcher, data)
         
-            (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
+            (_ , params, opt_state, _), (avg_elbo_batches, avg_grads_batch) = jax.lax.scan(batch_step,  
                                                                 init=(data, params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
-
+            
             if log_writer is not None:
                 with log_writer.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
