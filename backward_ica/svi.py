@@ -1,3 +1,4 @@
+from chex import PyTreeDef
 import jax
 import optax
 from jax import vmap, lax, numpy as jnp
@@ -306,6 +307,8 @@ class SVITrainer:
                         return HMMParams(GaussianParams(params[0], theta_star.prior.scale),
                                         KernelParams(params[1], theta_star.transition.scale),
                                         theta_star.emission)
+                    def build_grads(grads):
+                        return HMMParams(GaussianParams(grads[0],0), KernelParams(grads[1],0),0)
                 else:
                     params = phi.emission
 
@@ -313,6 +316,9 @@ class SVITrainer:
                         return HMMParams(theta_star.prior, 
                                         theta_star.transition,
                                         params)    
+                    
+                    def build_grads(grads):
+                        return HMMParams(0,0, grads)
             
             elif isinstance(self.q, JohnsonBackwardSmoother):
 
@@ -321,17 +327,20 @@ class SVITrainer:
                     return JohnsonBackwardSmootherParams(theta_star.prior, 
                                                         theta_star.transition, 
                                                         params)
-
+                def build_grads(grads):
+                    return JohnsonBackwardSmootherParams(0,0,grads)
             else: 
                 params = phi 
                 def build_params(params):
                     return GeneralBackwardSmootherParamsWithHelp(prior=params[0], 
                                                                 filt=params[1], 
                                                                 transition=theta_star.transition)
-    
+                def build_grads(grads):
+                    return GeneralBackwardSmootherParamsWithHelp(grads[0], grads[1], 0)
         else: 
             params = phi
             build_params = lambda x:x
+            build_grads = lambda x:x
 
 
         if isinstance(self.elbo, LinearGaussianTowerELBO):
@@ -346,12 +355,12 @@ class SVITrainer:
 
         seq_length = len(data[0])
 
-        @jax.jit
+        # @jax.jit
         def batch_step(carry, x):
 
             def step(params, opt_state, batch, keys):
                 neg_elbo_values, grads = jax.vmap(jax.value_and_grad(loss, argnums=2), in_axes=(0,0,None))(keys, batch, params)
-                avg_grads = jax.tree_util.tree_map(jnp.mean, grads)
+                avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                 updates, opt_state = optimizer.update(avg_grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
                 return params, opt_state, -jnp.mean(neg_elbo_values / seq_length), avg_grads
@@ -378,10 +387,12 @@ class SVITrainer:
                                                                 init=(data, params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
-            
+            avg_grads_batch = build_grads(avg_grads_batch)
+
             if log_writer is not None:
                 with log_writer.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
+                    # tf.summary.histogram('')
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', avg_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
 

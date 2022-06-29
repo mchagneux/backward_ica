@@ -259,6 +259,14 @@ class Scale:
 def empty_add(d):
     return jnp.zeros((d,d))
 
+def flatten_dict(pyobj, keystring=''):
+    if type(pyobj) == dict:
+        keystring = keystring + '_' if keystring else keystring
+        for k in pyobj:
+            yield from flatten_dict(pyobj[k], keystring + str(k))
+    else:
+        yield keystring, pyobj
+
 @register_pytree_node_class
 class GaussianParams: 
 

@@ -9,7 +9,7 @@ import seaborn as sns
 import os 
 import matplotlib.pyplot as plt
 
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_2_2/trainings/nonlinear_johnson/2022_06_28__16_23_46'
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_2_2/trainings/nonlinear_general_explicit_backward_with_help/2022_06_29__14_13_22'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -22,13 +22,13 @@ utils.set_global_cov_mode(args)
 
 key_theta = jax.random.PRNGKey(args.seed_theta)
 key_phi = jax.random.PRNGKey(args.seed_phi)
-
+num_particles = 1000
 p = hmm.NonLinearGaussianHMM(state_dim=args.state_dim, 
                         obs_dim=args.obs_dim, 
                         transition_matrix_conditionning=args.transition_matrix_conditionning,
                         layers=args.emission_map_layers,
                         slope=args.slope,
-                        num_particles=args.num_particles,
+                        num_particles=num_particles,
                         transition_bias=args.transition_bias,
                         range_transition_map_params=args.range_transition_map_params,
                         injective=args.injective) # specify the structure of the true model

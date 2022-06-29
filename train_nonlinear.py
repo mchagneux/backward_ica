@@ -160,8 +160,8 @@ if __name__ == '__main__':
         args.num_epochs = 300
         args.schedule = {} # {20:0.1} #{'nn':{200:0.1, 250:0.5}}
         args.store_every = args.num_epochs // 5
-        args.num_fits = 3
-        
+        args.num_fits = 1
+
         args.update_layers = (8,8)
         args.backwd_map_layers = (8,8)
 
