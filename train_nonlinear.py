@@ -154,7 +154,7 @@ if __name__ == '__main__':
 
 
         args.optimizer = 'adam'
-        args.batch_size = 256
+        args.batch_size = 512
         args.parametrization = 'cov_chol'
         args.learning_rate = 1e-2 # {'std':1e-2, 'nn':1e-1}
         args.num_epochs = 300
