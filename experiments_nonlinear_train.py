@@ -5,11 +5,7 @@ injective = True
 exp_detail = 'p_nonlinear_dim_2_2'
 base_dir = os.path.join('experiments', 'p_nonlinear', exp_detail, 'trainings')
 
-q_versions = ['nonlinear_johnson', 
-            'nonlinear_johnson_with_help', 
-            'nonlinear_general_explicit_backward',
-            'nonlinear_general',
-            'nonlinear_general_explicit_backward_with_help']
+q_versions = ['nonlinear_johnson_with_help']
 
 os.makedirs(base_dir, exist_ok=True)
 

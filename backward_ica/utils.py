@@ -167,8 +167,7 @@ class lazy_property(object):
 KernelParams = namedtuple('KernelParams', ['map','scale'])
 FiltState = namedtuple('FiltState', ['out','hidden'])
 BackwardState = namedtuple('BackwardState', ['inner', 'varying'])
-GeneralBackwardSmootherParams = namedtuple('GeneralBackwardSmootherParams',['prior', 'filt','backwd'])
-GeneralBackwardSmootherParamsWithHelp = namedtuple('GeneralBackwardSmootherParamsWithHelp', ['prior', 'filt','transition'])
+GeneralBackwardSmootherParams = namedtuple('GeneralBackwardSmootherParams',['prior', 'filt_update','backwd'])
 
 def set_global_cov_mode(args):
         

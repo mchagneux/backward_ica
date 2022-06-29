@@ -73,20 +73,16 @@ def main(args, save_dir):
                                 emission_bias=False)
 
     elif 'nonlinear_johnson' in args.q_version:
-        q = hmm.JohnsonBackwardSmoother(state_dim=args.state_dim, 
+        q = hmm.JohnsonBackwardSmoother(transition_kernel=p.transition_kernel,
                                         obs_dim=args.obs_dim, 
                                         update_layers=args.update_layers,
-                                        transition_bias=args.transition_bias)
+                                        explicit_proposal=args.explicit_proposal)
 
     else:
-        transition_kernel = p.transition_kernel if args.explicit_backward else None
-
         q = hmm.GeneralBackwardSmoother(state_dim=args.state_dim, 
                                         obs_dim=args.obs_dim, 
                                         update_layers=args.update_layers,
-                                        backwd_layers=args.backwd_map_layers,
-                                        transition_kernel=transition_kernel)
-
+                                        backwd_layers=args.backwd_map_layers)
 
     trainer = SVITrainer(p=p, 
                         q=q, 
@@ -121,7 +117,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--q_version',type=str, default='nonlinear_general_explicit_backward')
+    parser.add_argument('--q_version',type=str, default='nonlinear_johnson_with_help')
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
@@ -166,7 +162,7 @@ if __name__ == '__main__':
         args.backwd_map_layers = (8,8)
 
 
-        args.num_particles = 1000
+        args.num_particles = 2
         args.num_samples = 1
         args.parametrization = 'cov_chol'
         import math
@@ -178,8 +174,9 @@ if __name__ == '__main__':
         args.default_transition_bias = 0
         args.transition_bias = False
         args.full_mc = 'full_mc' in args.q_version
-        args.freeze_subset_params = True if 'with_help' in args.q_version else False
-        args.explicit_backward = True if 'explicit_backward' in args.q_version else False
+        args.freeze_subset_params ='with_help' in args.q_version 
+        args.explicit_proposal = 'explicit_proposal' in args.q_version 
+        
 
     utils.save_args(args, 'train_args', save_dir)
 

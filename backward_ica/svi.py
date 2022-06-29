@@ -246,7 +246,8 @@ class SVITrainer:
                     num_samples=1, 
                     force_full_mc=False, 
                     schedule={}, 
-                    freeze_subset_params=False):
+                    freeze_subset_params=False,
+                    learn_prior=False):
 
 
         self.num_epochs = num_epochs
@@ -254,6 +255,7 @@ class SVITrainer:
         self.q = q 
         self.q.print_num_params()
         self.p = p 
+        self.learn_prior = learn_prior
         self.freeze_subset_params = freeze_subset_params
 
         optimizer_method = getattr(optax, optimizer)
@@ -279,12 +281,8 @@ class SVITrainer:
         elif isinstance(self.q, LinearBackwardSmoother):
             self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
-
         else:
-            if self.q.transition_kernel is not None: self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
-            else:
-                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-            
+            self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, theta_star=None, log_writer=None):
@@ -321,22 +319,26 @@ class SVITrainer:
                         return HMMParams(0,0, grads)
             
             elif isinstance(self.q, JohnsonBackwardSmoother):
+                if self.learn_prior:
+                    params = (phi.prior, phi.filt_update)
+                    def build_params(params):
+                        return JohnsonBackwardSmootherParams(params[0],
+                                                            theta_star.transition, 
+                                                            params[1])
+                    def build_grads(grads):
+                        return JohnsonBackwardSmootherParams(grads[0],0,grads[1])
+                else:
+                    fixed_prior = self.q.get_random_prior(key_params)
+                    params = phi.filt_update
+                    def build_params(params):
+                        return JohnsonBackwardSmootherParams(fixed_prior,
+                                                            theta_star.transition, 
+                                                            params)
+                    def build_grads(grads):
+                        return JohnsonBackwardSmootherParams(0,0,grads)
 
-                params = phi.filt_update
-                def build_params(params):
-                    return JohnsonBackwardSmootherParams(theta_star.prior, 
-                                                        theta_star.transition, 
-                                                        params)
-                def build_grads(grads):
-                    return JohnsonBackwardSmootherParams(0,0,grads)
             else: 
-                params = phi 
-                def build_params(params):
-                    return GeneralBackwardSmootherParamsWithHelp(prior=params[0], 
-                                                                filt=params[1], 
-                                                                transition=theta_star.transition)
-                def build_grads(grads):
-                    return GeneralBackwardSmootherParamsWithHelp(grads[0], grads[1], 0)
+                raise NotImplementedError
         else: 
             params = phi
             build_params = lambda x:x
@@ -355,7 +357,7 @@ class SVITrainer:
 
         seq_length = len(data[0])
 
-        # @jax.jit
+        @jax.jit
         def batch_step(carry, x):
 
             def step(params, opt_state, batch, keys):

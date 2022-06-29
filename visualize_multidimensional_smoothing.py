@@ -9,7 +9,7 @@ import seaborn as sns
 import os 
 import matplotlib.pyplot as plt
 
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_2_2/trainings/nonlinear_general_explicit_backward_with_help/2022_06_29__14_13_22'
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_2_2/trainings/nonlinear_johnson_with_help/2022_06_29__16_03_52'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -44,18 +44,16 @@ if args.q_version == 'linear':
                             emission_bias=False)
 
 elif 'nonlinear_johnson' in args.q_version:
-    q = hmm.JohnsonBackwardSmoother(state_dim=args.state_dim, 
+    q = hmm.JohnsonBackwardSmoother(transition_kernel=p.transition_kernel,
                                     obs_dim=args.obs_dim, 
                                     update_layers=args.update_layers,
-                                    transition_bias=args.transition_bias)
+                                    explicit_proposal='explicit_proposal' in args.q_version)
 
 else:
     q = hmm.GeneralBackwardSmoother(state_dim=args.state_dim, 
                                     obs_dim=args.obs_dim, 
                                     update_layers=args.update_layers,
-                                    backwd_layers=args.backwd_map_layers,
-                                    transition_kernel=p.transition_kernel if args.freeze_subset_params else None)
-
+                                    backwd_layers=args.backwd_map_layers)
 
 phi = utils.load_params('phi', exp_dir)
 
