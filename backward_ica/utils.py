@@ -403,27 +403,6 @@ class JohnsonBackwardSmootherParams:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
-@register_pytree_node_class
-@dataclass(init=True)
-class NeuralBackwardSmootherParams:
-
-    prior: GaussianParams 
-    transition:KernelParams
-    filt_update:KernelParams
-    backwd_map:Any
-
-    def compute_covs(self):
-        self.prior.scale.cov
-        self.transition.scale.cov
-
-    def tree_flatten(self):
-        return ((self.prior, self.transition, self.filt_update, self.backwd_map), None)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-
-
 @dataclass(init=True)
 @register_pytree_node_class
 class QuadTerm:

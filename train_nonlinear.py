@@ -1,7 +1,8 @@
 from argparse import ArgumentParser
+from re import I
 import jax 
 import jax.numpy as jnp
-from jax import config 
+from jax import config, tree_map 
 
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
@@ -28,11 +29,11 @@ def main(args, save_dir):
                             
     key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
 
-    theta = p.get_random_params(key_params) # sample params randomly (but covariances are fixed to default values)
+    theta_star = p.get_random_params(key_params) # sample params randomly (but covariances are fixed to default values)
 
-    utils.save_params(theta, 'theta', save_dir)
+    utils.save_params(theta_star, 'theta', save_dir)
 
-    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta, args.num_seqs, args.seq_length)
+    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, args.num_seqs, args.seq_length)
 
 
     key_smoothing, key_evidence = jax.random.split(key_smc, 2)
@@ -58,7 +59,7 @@ def main(args, save_dir):
     print('Computing evidence...')
 
     avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, 
-                                                                        theta)))(evidence_keys, obs_seqs)) / args.seq_length
+                                                                        theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
 
 
     print('Oracle evidence:', avg_evidence)
@@ -84,6 +85,33 @@ def main(args, save_dir):
                                         update_layers=args.update_layers,
                                         backwd_layers=args.backwd_map_layers)
 
+
+
+
+    frozen_theta = p.get_random_params(key_theta)
+    frozen_theta = tree_map(lambda x: '', frozen_theta)
+
+    frozen_phi = q.get_random_params(key_phi)
+    frozen_phi = tree_map(lambda x: '', frozen_phi)
+
+    if 'theta' in args.frozen_params: 
+        frozen_theta = theta_star 
+
+    if 'prior_phi' in args.frozen_params:
+        if isinstance(q, hmm.LinearGaussianHMM) or (isinstance(q, hmm.JohnsonBackwardSmoother) and q.explicit_proposal):
+            frozen_phi.prior = theta_star.prior
+        else:
+            frozen_phi.prior = q.get_init_state()
+    
+    if 'transition_phi' in args.frozen_params:
+        if isinstance(q, hmm.GeneralBackwardSmoother):
+            raise NotImplementedError
+        else: 
+            frozen_phi.transition = theta_star.transition
+    
+    frozen_params = (frozen_theta, frozen_phi)
+
+
     trainer = SVITrainer(p=p, 
                         q=q, 
                         optimizer=args.optimizer, 
@@ -93,13 +121,13 @@ def main(args, save_dir):
                         schedule=args.schedule,
                         num_samples=args.num_samples,
                         force_full_mc=args.full_mc,
-                        freeze_subset_params=args.freeze_subset_params)
+                        frozen_params=frozen_params)
+
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
 
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
                                                             data=obs_seqs, 
-                                                            theta_star=theta, 
                                                             num_fits=args.num_fits,
                                                             log_dir=save_dir) # returns the best fit (based on the last value of the elbo)
     
@@ -117,7 +145,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--q_version',type=str, default='nonlinear_johnson_with_help')
+    parser.add_argument('--q_version',type=str, default='nonlinear_johnson')
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
@@ -162,7 +190,7 @@ if __name__ == '__main__':
         args.backwd_map_layers = (8,8)
 
 
-        args.num_particles = 2
+        args.num_particles = 1000
         args.num_samples = 1
         args.parametrization = 'cov_chol'
         import math
@@ -174,9 +202,8 @@ if __name__ == '__main__':
         args.default_transition_bias = 0
         args.transition_bias = False
         args.full_mc = 'full_mc' in args.q_version
-        args.freeze_subset_params ='with_help' in args.q_version 
         args.explicit_proposal = 'explicit_proposal' in args.q_version 
-        
+        args.frozen_params  = args.q_version.split('__')[1:]        
 
     utils.save_args(args, 'train_args', save_dir)
 

@@ -710,10 +710,10 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
     def __init__(self, 
                 transition_kernel, 
                 obs_dim, 
-                update_layers=(100,), 
+                update_layers, 
+                explicit_proposal,
                 prior_dist=Gaussian, 
-                filt_dist=Gaussian,
-                explicit_proposal=False):
+                filt_dist=Gaussian):
         
         super().__init__(transition_kernel.in_dim, filt_dist)
 
@@ -767,7 +767,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
                 hidden_state_sizes = (*self.update_layers, self.filt_state_shape)
                 return tuple([jnp.zeros(shape=[size]) for size in hidden_state_sizes])
                 
-            self._get_init_state = _get_init_state
+            self.get_init_state = _get_init_state
             self._init_filt_state =_init_filt_state
             self._new_filt_state = _new_filt_state
                                 
@@ -835,8 +835,8 @@ class GeneralBackwardSmoother(Smoother):
     def __init__(self, 
                 state_dim, 
                 obs_dim,
-                update_layers=(16,16),
-                backwd_layers=(16,16),
+                update_layers,
+                backwd_layers,
                 filt_dist=Gaussian):
 
         self.state_dim = state_dim 
@@ -870,7 +870,7 @@ class GeneralBackwardSmoother(Smoother):
 
         hidden_state_sizes = (*self.update_layers, self.filt_state_shape)
         key_priors = random.split(key_prior, len(hidden_state_sizes))
-        prior_state =  tuple([random.normal(key, shape=[size]) for key, size in zip(key_priors, hidden_state_sizes)])
+        prior_state = tuple([random.normal(key, shape=[size]) for key, size in zip(key_priors, hidden_state_sizes)])
         
         filt_update_params = self.filt_update_init_params(key_filt, dummy_obs, prior_state)
         backwd_params = self.kernel.get_random_params(key_back)
@@ -896,8 +896,7 @@ class GeneralBackwardSmoother(Smoother):
         return params
 
     def init_filt_state(self, obs, params):
-        init_state = tuple([jnp.zeros([size]) for size in (*self.update_layers, self.filt_state_shape)])
-        return FiltState(*self.filt_update_apply(params.filt_update, obs, init_state))
+        return FiltState(*self.filt_update_apply(params.filt_update, obs, params.prior))
 
     def new_filt_state(self, obs, filt_state:FiltState, params):
         return FiltState(*self.filt_update_apply(params.filt_update, obs, filt_state.hidden))
@@ -934,10 +933,9 @@ class GeneralBackwardSmoother(Smoother):
         print('-- backwd net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.backwd))))
 
     
-    def get_random_prior(self, key):
+    def get_init_state(self):
         hidden_state_sizes = (*self.update_layers, self.filt_state_shape)
-        key_priors = random.split(key, len(hidden_state_sizes))
-        return tuple([random.normal(key, shape=[size]) for key, size in zip(key_priors, hidden_state_sizes)])
+        return tuple([jnp.zeros(shape=[size]) for size in hidden_state_sizes])
         
 
 

@@ -1,7 +1,7 @@
 from chex import PyTreeDef
 import jax
 import optax
-from jax import vmap, lax, numpy as jnp
+from jax import tree_flatten, vmap, lax, numpy as jnp
 from .hmm import *
 from .utils import *
 import tensorboard
@@ -238,16 +238,15 @@ class LinearGaussianTowerELBO:
 class SVITrainer:
 
     def __init__(self, p:HMM, 
-                    q:Smoother, 
-                    optimizer, 
-                    learning_rate, 
-                    num_epochs, 
-                    batch_size, 
-                    num_samples=1, 
-                    force_full_mc=False, 
-                    schedule={}, 
-                    freeze_subset_params=False,
-                    learn_prior=False):
+                q:Smoother, 
+                optimizer, 
+                learning_rate, 
+                num_epochs, 
+                batch_size, 
+                num_samples=1, 
+                force_full_mc=False, 
+                schedule={},
+                frozen_params=None):
 
 
         self.num_epochs = num_epochs
@@ -255,124 +254,74 @@ class SVITrainer:
         self.q = q 
         self.q.print_num_params()
         self.p = p 
-        self.learn_prior = learn_prior
-        self.freeze_subset_params = freeze_subset_params
+        self.frozen_params = frozen_params
+        mask = tree_map(lambda x: x == '', self.frozen_params)
 
-        optimizer_method = getattr(optax, optimizer)
+        optimizer_method = lambda num_batches, learning_rate: getattr(optax, optimizer)(learning_rate)
+        gradient_transformations = [optimizer_method]
+        self.format_params = lambda params: (self.p.format_params(params[0]), self.q.format_params(params[1]))
         
-        def get_optimizer(schedule):
-            if len(schedule): 
-                schedule_fn = lambda num_batches: optax.piecewise_constant_schedule(1., {k*num_batches: v for k,v in schedule.items()})
-                optimizer = lambda num_batches, learning_rate: optax.chain(optimizer_method(learning_rate), optax.scale_by_schedule(schedule_fn(num_batches)))
-            else: 
-                optimizer = lambda num_batches, learning_rate: optimizer_method(learning_rate)
+        if len(schedule): 
+            schedule_fn = lambda num_batches, learning_rate: optax.piecewise_constant_schedule(1., 
+                                                                    {k*num_batches: v for k,v in schedule.items()})
+            gradient_transformations.append(schedule_fn)
 
-            return optimizer
-
-        self.optimizer = partial(get_optimizer(schedule), learning_rate=learning_rate)
-
+        self.optimizer = lambda num_batches: optax.masked(optax.chain(*[transform(num_batches, learning_rate) for transform in gradient_transformations]), mask)
+        
         if force_full_mc: 
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
-
+            self.loss = lambda key, data, params: -self.elbo(key, data, *self.format_params(params))
         elif isinstance(self.p, LinearGaussianHMM):
             self.elbo = LinearGaussianTowerELBO(self.p, self.q)
             self.get_montecarlo_keys = get_dummy_keys
+            self.loss = lambda key, data, params: -self.elbo(data, *self.format_params(params))
         elif isinstance(self.q, LinearBackwardSmoother):
             self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
+            self.loss = lambda key, data, params: -self.elbo(key, data, *self.format_params(params))
         else:
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
+            self.loss = lambda key, data, params: -self.elbo(key, data, *self.format_params(params))
 
-    def fit(self, key_params, key_batcher, key_montecarlo, data, theta_star=None, log_writer=None):
 
-        if theta_star is not None: 
-            theta = theta_star
-            
+    def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None):
+
+        key_theta, key_phi = random.split(key_params, 2)
+
         num_seqs = data.shape[0]
+        seq_length = len(data[0])
+
         optimizer = self.optimizer(num_seqs // self.batch_size)
-        phi = self.q.get_random_params(key_params)
+        theta = self.p.get_random_params(key_theta)
+        phi = self.q.get_random_params(key_phi)
+        params = (theta, phi)
 
-
-        if self.freeze_subset_params: 
-
-            if isinstance(self.q, LinearGaussianHMM):
-                if isinstance(self.p, LinearGaussianHMM):
-                    params = (phi.prior.mean, phi.transition.map)
-
-                    def build_params(params):
-                        return HMMParams(GaussianParams(params[0], theta_star.prior.scale),
-                                        KernelParams(params[1], theta_star.transition.scale),
-                                        theta_star.emission)
-                    def build_grads(grads):
-                        return HMMParams(GaussianParams(grads[0],0), KernelParams(grads[1],0),0)
-                else:
-                    params = phi.emission
-
-                    def build_params(params):
-                        return HMMParams(theta_star.prior, 
-                                        theta_star.transition,
-                                        params)    
-                    
-                    def build_grads(grads):
-                        return HMMParams(0,0, grads)
-            
-            elif isinstance(self.q, JohnsonBackwardSmoother):
-                if self.learn_prior:
-                    params = (phi.prior, phi.filt_update)
-                    def build_params(params):
-                        return JohnsonBackwardSmootherParams(params[0],
-                                                            theta_star.transition, 
-                                                            params[1])
-                    def build_grads(grads):
-                        return JohnsonBackwardSmootherParams(grads[0],0,grads[1])
-                else:
-                    fixed_prior = self.q.get_random_prior(key_params)
-                    params = phi.filt_update
-                    def build_params(params):
-                        return JohnsonBackwardSmootherParams(fixed_prior,
-                                                            theta_star.transition, 
-                                                            params)
-                    def build_grads(grads):
-                        return JohnsonBackwardSmootherParams(0,0,grads)
-
-            else: 
-                raise NotImplementedError
-        else: 
-            params = phi
-            build_params = lambda x:x
-            build_grads = lambda x:x
-
-
-        if isinstance(self.elbo, LinearGaussianTowerELBO):
-            loss = lambda key, seq, phi: -self.elbo(seq, self.p.format_params(theta), self.q.format_params(build_params(phi)))
-        else:
-            loss = lambda key, seq, phi: -self.elbo(key, seq, self.p.format_params(theta), self.q.format_params(build_params(phi)))
-            
-
+        params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
+                        params, 
+                        self.frozen_params)
 
         opt_state = optimizer.init(params)
         subkeys = self.get_montecarlo_keys(key_montecarlo, num_seqs, self.num_epochs)
 
-        seq_length = len(data[0])
 
         @jax.jit
         def batch_step(carry, x):
 
             def step(params, opt_state, batch, keys):
-                neg_elbo_values, grads = jax.vmap(jax.value_and_grad(loss, argnums=2), in_axes=(0,0,None))(keys, batch, params)
+                neg_elbo_values, grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2), in_axes=(0,0,None))(keys, batch, params)
                 avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                 updates, opt_state = optimizer.update(avg_grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
-                return params, opt_state, -jnp.mean(neg_elbo_values / seq_length), avg_grads
+                return params, opt_state, -jnp.mean(neg_elbo_values / seq_length)
 
             data, params, opt_state, subkeys_epoch = carry
             batch_start = x
             batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
             batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
-            params, opt_state, avg_elbo_batch, avg_grads_batch = step(params, opt_state, batch_obs_seq, batch_keys)
-            return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads_batch)
+            params, opt_state, avg_elbo_batch = step(params, opt_state, batch_obs_seq, batch_keys)
+            return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
 
 
         avg_elbos = []
@@ -385,25 +334,23 @@ class SVITrainer:
             
             data = jax.random.permutation(subkey_batcher, data)
         
-            (_ , params, opt_state, _), (avg_elbo_batches, avg_grads_batch) = jax.lax.scan(batch_step,  
+            (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
                                                                 init=(data, params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
-            avg_grads_batch = build_grads(avg_grads_batch)
 
             if log_writer is not None:
                 with log_writer.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
-                    # tf.summary.histogram('')
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', avg_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
 
             avg_elbos.append(avg_elbo_epoch)
-            all_params.append(build_params(params))
+            all_params.append(params)
                     
         return all_params, avg_elbos
 
-    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, theta_star=None, store_every=None, log_dir=''):
+    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, store_every=None, log_dir=''):
 
 
         all_avg_elbos = []
@@ -422,7 +369,7 @@ class SVITrainer:
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
-            params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, theta_star, log_writer)
+            params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer)
 
             best_epoch = jnp.argmax(jnp.array(avg_elbos))
             best_epochs.append(best_epoch)
