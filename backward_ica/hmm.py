@@ -447,7 +447,18 @@ class LinearBackwardSmoother(Smoother):
         
         filt_state_seq = self.compute_filt_state_seq(obs_seq, self.format_params(params)).out
         return vmap(lambda x:x.mean)(filt_state_seq), vmap(lambda x:x.scale.cov)(filt_state_seq)
-       
+    
+    def smooth_seq(self, obs_seq, params):
+        
+        formatted_params = self.format_params(params)
+
+        filt_state_seq = self.compute_filt_state_seq(obs_seq, formatted_params)
+        backwd_state_seq = self.compute_kernel_state_seq(filt_state_seq, formatted_params)
+
+        marginals = self.compute_marginals(tree_get_idx(-1, filt_state_seq), backwd_state_seq)
+
+        return marginals.mean, marginals.scale.cov     
+        
 class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
     def __init__(self, 
@@ -819,16 +830,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
         print('-- in prior + predict + backward:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
         print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt_update)))
     
-    def smooth_seq(self, obs_seq, params):
-        
-        formatted_params = self.format_params(params)
 
-        filt_state_seq = self.compute_filt_state_seq(obs_seq, formatted_params)
-        backwd_state_seq = self.compute_kernel_state_seq(filt_state_seq, formatted_params)
-
-        marginals = self.compute_marginals(tree_get_idx(-1, filt_state_seq), backwd_state_seq)
-
-        return marginals.mean, marginals.scale.cov
 
 class GeneralBackwardSmoother(Smoother):
 

@@ -9,7 +9,7 @@ import seaborn as sns
 import os 
 import matplotlib.pyplot as plt
 
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_5_5/trainings/nonlinear_johnson_freeze__theta__transition_phi/2022_06_30__13_16_41'
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_5_5/trainings/johnson_online_freeze__theta__transition_phi/2022_06_30__17_16_39'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -43,7 +43,7 @@ if args.q_version == 'linear':
                             transition_bias=args.transition_bias, 
                             emission_bias=False)
 
-elif 'nonlinear_johnson' in args.q_version:
+elif 'johnson' in args.q_version:
     q = hmm.JohnsonBackwardSmoother(transition_kernel=p.transition_kernel,
                                     obs_dim=args.obs_dim, 
                                     update_layers=args.update_layers,

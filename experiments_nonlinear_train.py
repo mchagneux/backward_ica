@@ -5,7 +5,8 @@ injective = True
 exp_detail = 'p_nonlinear_dim_5_5'
 base_dir = os.path.join('experiments', 'p_nonlinear', exp_detail, 'trainings')
 
-q_versions = ['nonlinear_johnson_freeze__theta__transition_phi_full_mc']
+q_versions = ['johnson_online_freeze__theta__transition_phi', 
+            'johnson_freeze__theta__transition_phi']
 
 
 os.makedirs(base_dir, exist_ok=True)

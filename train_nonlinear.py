@@ -73,7 +73,7 @@ def main(args, save_dir):
                                 transition_bias=args.transition_bias, 
                                 emission_bias=False)
 
-    elif 'nonlinear_johnson' in args.q_version:
+    elif 'johnson' in args.q_version:
         q = hmm.JohnsonBackwardSmoother(transition_kernel=p.transition_kernel,
                                         obs_dim=args.obs_dim, 
                                         update_layers=args.update_layers,
@@ -124,7 +124,8 @@ def main(args, save_dir):
                         schedule=args.schedule,
                         num_samples=args.num_samples,
                         force_full_mc=args.full_mc,
-                        frozen_params=frozen_params)
+                        frozen_params=frozen_params,
+                        online=args.online)
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
@@ -148,7 +149,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--q_version',type=str, default='nonlinear_johnson_freeze__theta__prior_phi__transition_phi')
+    parser.add_argument('--q_version',type=str, default='nonlinear_johnson_freeze__theta__transition_phi')
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
@@ -207,6 +208,7 @@ if __name__ == '__main__':
         args.full_mc = 'full_mc' in args.q_version
         args.explicit_proposal = 'explicit_proposal' in args.q_version 
         args.frozen_params  = args.q_version.split('__')[1:]        
+        args.online = 'online' in args.q_version
 
     utils.save_args(args, 'train_args', save_dir)
 

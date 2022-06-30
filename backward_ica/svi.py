@@ -128,11 +128,12 @@ class GeneralBackwardELBO:
 
 class OnlineBackwardLinearTowerELBO:
 
-    def __init__(self, p:HMM, q:LinearBackwardSmoother, num_samples=200):
+    def __init__(self, p:HMM, q:LinearBackwardSmoother, normalizer, num_samples=200):
         
         self.p = p
         self.q = q
         self.num_samples = num_samples
+        self.normalizer = normalizer
             
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
@@ -170,19 +171,48 @@ class OnlineBackwardLinearTowerELBO:
 
         def sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq):
 
-            keys = random.split(key, self.num_samples)
-            init_samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(keys, tree_get_idx(0, q_filt_state_seq))
-            init_tau = jnp.zeros(self.num_samples)
-            def term_at_t(key, obs, marginal_params):
-                sample = Gaussian.sample(key, marginal_params)
-                return self.p.emission_kernel.logpdf(obs, sample, theta.emission)
+            def samples_and_log_probs(key, q_filt_state):
+                samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_state.out)
+                log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
+                return samples, log_probs
 
+            key, subkey = random.split(key, 2)
 
+            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
+            tau = vmap(self.p.emission_kernel.logpdf, in_axes=(None, 0, None))(obs_seq[0], samples, theta.emission)
 
-        
-        
+            def update_tau(carry, x):
 
-        return kl_term
+                tau, samples, log_probs = carry 
+                key, obs, q_filt_state, q_backwd_state = x 
+                new_samples, new_log_probs = samples_and_log_probs(key, q_filt_state)
+
+                def update_component_tau(new_sample):
+                    def sum_component(sample, log_prob, tau_component):
+                        log_weight = self.q.kernel.logpdf(sample, new_sample, q_backwd_state) - log_prob
+                        component = tau_component + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission)
+                        return log_weight, component
+                    log_weights, components = vmap(sum_component)(samples, log_probs, tau)
+
+                    return jnp.sum(self.normalizer(log_weights) * components)
+                
+                new_tau = vmap(update_component_tau)(new_samples) 
+
+                return (new_tau, new_samples, new_log_probs), None
+
+            init=(tau, samples, log_probs)
+            xs=(random.split(key, len(obs_seq)-1), 
+                                obs_seq[1:],
+                                tree_dropfirst(q_filt_state_seq),
+                                q_backwd_state_seq)
+            
+            return lax.scan(update_tau, 
+                            init, 
+                            xs)[0][0]
+
+        tau = sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq)
+
+        return kl_term + jnp.mean(tau)
 
 
 class BackwardLinearTowerELBO:
@@ -303,7 +333,8 @@ class SVITrainer:
                 num_samples=1, 
                 force_full_mc=False, 
                 schedule={},
-                frozen_params=None):
+                frozen_params=None,
+                online=True):
 
 
         self.num_epochs = num_epochs
@@ -330,7 +361,10 @@ class SVITrainer:
             self.get_montecarlo_keys = get_dummy_keys
             self.loss = lambda key, data, params: -self.elbo(data, *self.format_params(params))
         elif isinstance(self.q, LinearBackwardSmoother):
-            self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
+            if online:
+                self.elbo = OnlineBackwardLinearTowerELBO(self.p, self.q, exp_and_normalize, num_samples)
+            else: 
+                self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
             self.loss = lambda key, data, params: -self.elbo(key, data, *self.format_params(params))
         else:
