@@ -126,6 +126,65 @@ class GeneralBackwardELBO:
         mc_samples = parallel_sampler(keys, obs_seq, last_filt_state, backwd_state_seq)
         return jnp.mean(mc_samples)
 
+class OnlineBackwardLinearTowerELBO:
+
+    def __init__(self, p:HMM, q:LinearBackwardSmoother, num_samples=200):
+        
+        self.p = p
+        self.q = q
+        self.num_samples = num_samples
+            
+    def __call__(self, key, obs_seq, theta:HMMParams, phi):
+
+        
+        kl_term = quadratic_term_from_log_gaussian(theta.prior) #+ get_tractable_emission_term(obs_seq[0], theta.emission)
+
+        q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
+
+        def V_step(carry, x):
+
+            q_filt_state, kl_term = carry
+            obs = x
+
+            q_backwd_state = self.q.new_kernel_state(q_filt_state, phi)
+
+            kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
+                    + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
+
+            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
+            q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
+
+
+            return (q_filt_state, kl_term), (q_filt_state, q_backwd_state)
+    
+        (q_last_filt_state, kl_term), (q_filt_state_seq, q_backwd_state_seq) = lax.scan(V_step, 
+                                                init=(q_filt_state, kl_term), 
+                                                xs=obs_seq[1:])
+
+        q_filt_state_seq = tree_prepend(q_filt_state, q_filt_state_seq)
+
+
+        kl_term =  expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state.out) \
+                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
+                    + 0.5*self.p.state_dim
+
+        def sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq):
+
+            keys = random.split(key, self.num_samples)
+            init_samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(keys, tree_get_idx(0, q_filt_state_seq))
+            init_tau = jnp.zeros(self.num_samples)
+            def term_at_t(key, obs, marginal_params):
+                sample = Gaussian.sample(key, marginal_params)
+                return self.p.emission_kernel.logpdf(obs, sample, theta.emission)
+
+
+
+        
+        
+
+        return kl_term
+
+
 class BackwardLinearTowerELBO:
 
     def __init__(self, p:HMM, q:LinearBackwardSmoother, num_samples=200):
@@ -165,16 +224,6 @@ class BackwardLinearTowerELBO:
         kl_term =  expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state.out) \
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
                     + 0.5*self.p.state_dim
-
-
-
-
-        # def sample_one_path_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq):
-
-        #     keys = jax.random.split(key, len(obs_seq))
-
-        #     init_sample = 
-
 
 
         marginals = self.q.compute_marginals(q_last_filt_state, q_backwd_state_seq)
