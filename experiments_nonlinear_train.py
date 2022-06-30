@@ -2,14 +2,11 @@ import subprocess
 import os
 from datetime import datetime 
 injective = True
-exp_detail = 'p_nonlinear_dim_2_2'
+exp_detail = 'p_nonlinear_dim_5_5'
 base_dir = os.path.join('experiments', 'p_nonlinear', exp_detail, 'trainings')
 
-q_versions = ['nonlinear_johnson_freeze__theta__prior_phi__transition_phi', 
-            'nonlinear_johnson_freeze__theta__transition_phi',
-            'nonlinear_johnson_freeze__theta',
-            'nonlinear_general_freeze__theta',
-            'nonlinear_general_freeze__theta__prior_phi']
+q_versions = ['nonlinear_johnson_freeze__theta__transition_phi']
+
 
 os.makedirs(base_dir, exist_ok=True)
 

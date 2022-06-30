@@ -101,7 +101,10 @@ def main(args, save_dir):
         if isinstance(q, hmm.LinearGaussianHMM) or (isinstance(q, hmm.JohnsonBackwardSmoother) and q.explicit_proposal):
             frozen_phi.prior = theta_star.prior
         else:
-            frozen_phi.prior = q.get_init_state()
+            if isinstance(frozen_phi, utils.GeneralBackwardSmootherParams):
+                frozen_phi.prior = utils.GeneralBackwardSmootherParams(q.get_init_state(), frozen_phi.filt_update, frozen_phi.backwd)
+            else: 
+                frozen_phi.prior = q.get_init_state()
     
     if 'transition_phi' in args.frozen_params:
         if isinstance(q, hmm.GeneralBackwardSmoother):
@@ -145,7 +148,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--q_version',type=str, default='nonlinear_johnson')
+    parser.add_argument('--q_version',type=str, default='nonlinear_johnson_freeze__theta__prior_phi__transition_phi')
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
@@ -166,7 +169,7 @@ if __name__ == '__main__':
         args.seed_theta = 1329
         args.seed_phi = 4569
 
-        args.state_dim, args.obs_dim = 2,2
+        args.state_dim, args.obs_dim = 5,5
         args.transition_matrix_conditionning = 'diagonal'
 
         args.emission_map_layers = ()
@@ -174,14 +177,14 @@ if __name__ == '__main__':
 
 
         args.seq_length = 50
-        args.num_seqs = 4096
+        args.num_seqs = 100
 
 
         args.optimizer = 'adam'
-        args.batch_size = 512
+        args.batch_size = 10
         args.parametrization = 'cov_chol'
         args.learning_rate = 1e-2 # {'std':1e-2, 'nn':1e-1}
-        args.num_epochs = 300
+        args.num_epochs = 1000
         args.schedule = {} # {20:0.1} #{'nn':{200:0.1, 250:0.5}}
         args.store_every = args.num_epochs // 5
         args.num_fits = 1

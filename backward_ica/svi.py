@@ -235,6 +235,14 @@ class LinearGaussianTowerELBO:
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
                     + 0.5*self.p.state_dim
 
+
+def zero_grads():
+    def init_fn(_): 
+        return ()
+    def update_fn(updates, state, params=None):
+        return jax.tree_map(jnp.zeros_like, updates), ()
+    return optax.GradientTransformation(init_fn, update_fn)
+
 class SVITrainer:
 
     def __init__(self, p:HMM, 
@@ -255,18 +263,14 @@ class SVITrainer:
         self.q.print_num_params()
         self.p = p 
         self.frozen_params = frozen_params
-        mask = tree_map(lambda x: x == '', self.frozen_params)
+        trainable_params = tree_map(lambda x: x == '', self.frozen_params)
+        fixed_params = tree_map(lambda x: x != '', self.frozen_params)
 
-        optimizer_method = lambda num_batches, learning_rate: getattr(optax, optimizer)(learning_rate)
-        gradient_transformations = [optimizer_method]
         self.format_params = lambda params: (self.p.format_params(params[0]), self.q.format_params(params[1]))
-        
-        if len(schedule): 
-            schedule_fn = lambda num_batches, learning_rate: optax.piecewise_constant_schedule(1., 
-                                                                    {k*num_batches: v for k,v in schedule.items()})
-            gradient_transformations.append(schedule_fn)
+    
 
-        self.optimizer = lambda num_batches: optax.masked(optax.chain(*[transform(num_batches, learning_rate) for transform in gradient_transformations]), mask)
+        self.optimizer = optax.chain(optax.masked(getattr(optax, optimizer)(learning_rate), trainable_params),
+                                    optax.masked(zero_grads(), fixed_params))
         
         if force_full_mc: 
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
@@ -293,7 +297,6 @@ class SVITrainer:
         num_seqs = data.shape[0]
         seq_length = len(data[0])
 
-        optimizer = self.optimizer(num_seqs // self.batch_size)
         theta = self.p.get_random_params(key_theta)
         phi = self.q.get_random_params(key_phi)
         params = (theta, phi)
@@ -302,7 +305,7 @@ class SVITrainer:
                         params, 
                         self.frozen_params)
 
-        opt_state = optimizer.init(params)
+        opt_state = self.optimizer.init(params)
         subkeys = self.get_montecarlo_keys(key_montecarlo, num_seqs, self.num_epochs)
 
 
@@ -312,7 +315,7 @@ class SVITrainer:
             def step(params, opt_state, batch, keys):
                 neg_elbo_values, grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2), in_axes=(0,0,None))(keys, batch, params)
                 avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
-                updates, opt_state = optimizer.update(avg_grads, opt_state, params)
+                updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
                 return params, opt_state, -jnp.mean(neg_elbo_values / seq_length)
 

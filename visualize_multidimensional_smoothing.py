@@ -9,7 +9,7 @@ import seaborn as sns
 import os 
 import matplotlib.pyplot as plt
 
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_2_2/trainings/nonlinear_johnson_with_help/2022_06_29__16_03_52'
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_5_5/trainings/nonlinear_johnson_freeze__theta__transition_phi/2022_06_30__13_16_41'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -55,10 +55,10 @@ else:
                                     update_layers=args.update_layers,
                                     backwd_layers=args.backwd_map_layers)
 
-phi = utils.load_params('phi', exp_dir)
+phi = utils.load_params('phi', exp_dir)[1]
 
 key_theta, key_gen, key_ffbsi = jax.random.split(key_theta,3)
-state_seq, obs_seq = p.sample_seq(key_gen, theta_star, 200)
+state_seq, obs_seq = p.sample_seq(key_gen, theta_star, 50)
 
 filt_weights, filt_particles = p.filt_seq(key_ffbsi, obs_seq, theta_star)
 smoothing_paths = p.smooth_seq(key_ffbsi, obs_seq, theta_star)
