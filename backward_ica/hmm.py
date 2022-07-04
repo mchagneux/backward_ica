@@ -321,7 +321,7 @@ class Smoother(metaclass=ABCMeta):
     def johnson_update_forward(obs, pred_state:GaussianParams, layers, state_dim):
 
         d = state_dim 
-        rec_net = hk.nets.MLP((*layers, (d * (d+1)) // 2),
+        rec_net = hk.nets.MLP((*layers, 2*d),
                     w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                     b_init=hk.initializers.RandomNormal(),
                     activation=nn.tanh,
@@ -329,10 +329,8 @@ class Smoother(metaclass=ABCMeta):
 
 
         out = rec_net(obs)
-        eta1 = out[:d]
-        prec_chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(out[d:])
-        prec = prec_chol @ prec_chol.T
-        eta2 = - 0.5 * prec
+        eta1, log_prec_diag = jnp.split(out,2)
+        eta2 = - 0.5 * jnp.diag(nn.softplus(log_prec_diag))
         filt_state = GaussianParams(eta1 = eta1 + pred_state.eta1, eta2 = eta2 + pred_state.eta2)
 
         return FiltState(filt_state, filt_state)
@@ -341,7 +339,7 @@ class Smoother(metaclass=ABCMeta):
     def __init__(self, filt_dist, kernel):
 
         self.filt_dist:Gaussian = filt_dist
-        self.kernel:Kernel = kernel
+        self.backwd_kernel:Kernel = kernel
 
     @abstractmethod
     def get_random_params(self, key):
@@ -360,7 +358,7 @@ class Smoother(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def new_kernel_state(self, filt_state, params):
+    def new_backwd_state(self, filt_state, params):
         raise NotImplementedError
 
     @abstractmethod
@@ -369,7 +367,6 @@ class Smoother(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-
     def smooth_seq(self, *args):
         raise NotImplementedError
 
@@ -391,7 +388,7 @@ class Smoother(metaclass=ABCMeta):
 
     def compute_kernel_state_seq(self, filt_seq, formatted_params):
         
-        return vmap(self.new_kernel_state, in_axes=(0,None))(tree_droplast(filt_seq), formatted_params)
+        return vmap(self.new_backwd_state, in_axes=(0,None))(tree_droplast(filt_seq), formatted_params)
 
 class LinearBackwardSmoother(Smoother):
 
@@ -405,7 +402,7 @@ class LinearBackwardSmoother(Smoother):
 
         super().__init__(filt_dist, Kernel(state_dim, state_dim, backwd_kernel_def))
 
-    def new_kernel_state(self, filt_state, params):
+    def new_backwd_state(self, filt_state, params):
 
         A, a, Q = params.transition.map.w, params.transition.map.b, params.transition.scale.cov
         mu, Sigma = filt_state.out.mean, filt_state.out.scale.cov
@@ -440,8 +437,6 @@ class LinearBackwardSmoother(Smoother):
 
         return marginals
 
-    def compute_filt_state_seq(self, obs_seq, formatted_params):
-        return super().compute_filt_state_seq(obs_seq, formatted_params)
 
     def filt_seq(self, obs_seq, params):
         
@@ -574,6 +569,10 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         best_params = all_params[best_optim]
         
         return build_params(best_params), avg_logls, best_optim
+    
+    def compute_filt_state_seq(self, obs_seq, formatted_params):
+        formatted_params.compute_covs()
+        return super().compute_filt_state_seq(obs_seq, formatted_params)
 
 class NonLinearGaussianHMM(HMM):
 
@@ -830,8 +829,6 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
         print('-- in prior + predict + backward:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
         print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt_update)))
     
-
-
 class GeneralBackwardSmoother(Smoother):
 
     def __init__(self, 
@@ -845,7 +842,6 @@ class GeneralBackwardSmoother(Smoother):
         self.obs_dim = obs_dim 
 
         self.update_layers = update_layers
-
 
         d = state_dim 
 
@@ -875,7 +871,7 @@ class GeneralBackwardSmoother(Smoother):
         prior_state = tuple([random.normal(key, shape=[size]) for key, size in zip(key_priors, hidden_state_sizes)])
         
         filt_update_params = self.filt_update_init_params(key_filt, dummy_obs, prior_state)
-        backwd_params = self.kernel.get_random_params(key_back)
+        backwd_params = self.backwd_kernel.get_random_params(key_back)
 
         return GeneralBackwardSmootherParams(prior=prior_state,
                                             filt_update=filt_update_params, 
@@ -903,7 +899,7 @@ class GeneralBackwardSmoother(Smoother):
     def new_filt_state(self, obs, filt_state:FiltState, params):
         return FiltState(*self.filt_update_apply(params.filt_update, obs, filt_state.hidden))
 
-    def new_kernel_state(self, filt_state:FiltState, params):
+    def new_backwd_state(self, filt_state:FiltState, params):
 
         return BackwardState(params.backwd, filt_state.out.vec)
 
@@ -916,7 +912,7 @@ class GeneralBackwardSmoother(Smoother):
             def _sample_step(next_sample, x):
                 
                 key, backwd_state = x
-                sample = self.kernel.sample(key, next_sample, backwd_state)
+                sample = self.backwd_kernel.sample(key, next_sample, backwd_state)
                 return sample, sample
             
             samples = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], backwd_state_seq), reverse=True)[1]
@@ -981,7 +977,7 @@ class GeneralBackwardSmoother(Smoother):
 
 #         return gaussian_params_from_vec(filt_state, self.state_dim)
 
-#     def new_kernel_state(self, filt_state, params):
+#     def new_backwd_state(self, filt_state, params):
 #         raise NotImplementedError
 
 #     def format_params(self, params):

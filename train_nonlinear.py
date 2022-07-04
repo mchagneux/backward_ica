@@ -65,7 +65,7 @@ def main(args, save_dir):
     print('Oracle evidence:', avg_evidence)
 
 
-    if args.q_version == 'linear':
+    if 'linear' in args.q_version:
 
         q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
                                 obs_dim=args.obs_dim,
@@ -149,7 +149,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--q_version',type=str, default='nonlinear_johnson_freeze__theta__transition_phi')
+    parser.add_argument('--q_version',type=str, default='johnson_freeze__theta')
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
@@ -184,7 +184,7 @@ if __name__ == '__main__':
         args.optimizer = 'adam'
         args.batch_size = 10
         args.parametrization = 'cov_chol'
-        args.learning_rate = 1e-2 # {'std':1e-2, 'nn':1e-1}
+        args.learning_rate = 5e-3 # {'std':1e-2, 'nn':1e-1}
         args.num_epochs = 1000
         args.schedule = {} # {20:0.1} #{'nn':{200:0.1, 250:0.5}}
         args.store_every = args.num_epochs // 5
@@ -194,7 +194,7 @@ if __name__ == '__main__':
         args.backwd_map_layers = (8,8)
 
 
-        args.num_particles = 1000
+        args.num_particles = 2
         args.num_samples = 1
         args.parametrization = 'cov_chol'
         import math

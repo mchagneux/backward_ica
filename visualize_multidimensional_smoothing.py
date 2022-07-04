@@ -1,15 +1,22 @@
 #%%
+from collections import namedtuple
+from typing import Dict, NamedTuple
+from dataclasses import dataclass, is_dataclass
+from typing import NamedTuple
 import haiku as hk 
 import jax 
 import jax.numpy as jnp
+from zmq import has
 import backward_ica.hmm as hmm 
 import backward_ica.utils as utils 
 import backward_ica.smc as smc
 import seaborn as sns
 import os 
 import matplotlib.pyplot as plt
+import dataclasses
+import numpy as np
 
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_5_5/trainings/johnson_online_freeze__theta__transition_phi/2022_06_30__17_16_39'
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_5_5/trainings/linear_freeze__theta__transition_phi/2022_07_01__11_10_32'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -35,7 +42,7 @@ p = hmm.NonLinearGaussianHMM(state_dim=args.state_dim,
                         
 theta_star = utils.load_params('theta', exp_dir)
 
-if args.q_version == 'linear':
+if 'linear' in args.q_version:
 
     q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
                             obs_dim=args.obs_dim,
@@ -56,6 +63,14 @@ else:
                                     backwd_layers=args.backwd_map_layers)
 
 phi = utils.load_params('phi', exp_dir)[1]
+#%%
+q = hmm.JohnsonBackwardSmoother(transition_kernel=p.transition_kernel,
+                                obs_dim=args.obs_dim, 
+                                update_layers=args.update_layers,
+                                explicit_proposal='explicit_proposal' in args.q_version)#%%
+phi_test = q.get_random_params(key_theta)
+phi_test = utils.params_to_flattened_dict(phi_test)
+
 
 key_theta, key_gen, key_ffbsi = jax.random.split(key_theta,3)
 state_seq, obs_seq = p.sample_seq(key_gen, theta_star, 50)

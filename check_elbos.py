@@ -73,16 +73,16 @@ check_general_elbo(mc_key, p, num_seqs, seq_length, num_samples)
 # filt_state = q.init_filt_state(obs_seq[0], phi)
 
 # print('First filt state:', filt_state)
-# backwd_state = q.new_kernel_state(filt_state, phi)
+# backwd_state = q.new_backwd_state(filt_state, phi)
 # # print('First backwd state:', backwd_state)
 
 # filt_state = q.new_filt_state(obs_seq[1], filt_state, phi)
 # print('Second filt state:', filt_state)
 
 
-# print('Output of first backwd kernel map:', q.kernel.map(state_seq[1], backwd_state))
+# print('Output of first backwd kernel map:', q.backwd_kernel.map(state_seq[1], backwd_state))
 # print('State to be mapped:', state_seq[1])
-# print(q.kernel.sample(key, state_seq[1], backwd_state))
+# print(q.backwd_kernel.sample(key, state_seq[1], backwd_state))
 
 
 

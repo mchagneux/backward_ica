@@ -16,6 +16,9 @@ from typing import Any
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 from backward_ica import hmm 
+import numpy as np
+import pandas as pd
+from jaxlib.xla_extension import DeviceArray
 # Containers for parameters of various objects 
 config.update('jax_enable_x64',True)
 
@@ -169,6 +172,26 @@ FiltState = namedtuple('FiltState', ['out','hidden'])
 BackwardState = namedtuple('BackwardState', ['inner', 'varying'])
 GeneralBackwardSmootherParams = namedtuple('GeneralBackwardSmootherParams',['prior', 'filt_update','backwd'])
 
+
+def params_to_dict(params):
+    if isinstance(params, np.ndarray) or isinstance(params, DeviceArray):
+        return params
+    elif isinstance(params, dict):
+        for key, value in params.items():
+            params[key] = params_to_dict(value)
+        return params
+    elif hasattr(params, '__dict__'):
+        return params_to_dict(vars(params))
+    elif hasattr(params, '_asdict'): 
+        return params_to_dict(params._asdict())
+    else:
+        return params_to_dict({k:v for k,v in enumerate(params)})
+
+
+def params_to_flattened_dict(params):
+    params_dict = params_to_dict(params)
+    return pd.json_normalize(params_dict, sep='/').to_dict(orient='records')[0]
+    
 def set_global_cov_mode(args):
         
     hmm.HMM.parametrization = args.parametrization 
@@ -257,14 +280,6 @@ class Scale:
 
 def empty_add(d):
     return jnp.zeros((d,d))
-
-def flatten_dict(pyobj, keystring=''):
-    if type(pyobj) == dict:
-        keystring = keystring + '_' if keystring else keystring
-        for k in pyobj:
-            yield from flatten_dict(pyobj[k], keystring + str(k))
-    else:
-        yield keystring, pyobj
 
 @register_pytree_node_class
 class GaussianParams: 
@@ -449,8 +464,11 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs, limit=Fals
     true_sequence, pred_means, pred_covs = true_sequence.squeeze(), pred_means.squeeze(), pred_covs.squeeze()
     if limit: true_sequence, pred_means, pred_covs = true_sequence[:limit], pred_means[:limit], pred_covs[:limit]
     time_axis = range(len(true_sequence))
-    ax.errorbar(x=time_axis, fmt = 'o', y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), c='black', label='Smoothed z, $1.96\\sigma$')
+    ax.errorbar(x=time_axis, y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), c='black', label='Smoothed z, $1.96\\sigma$', linestyle='dashed')
+
     ax.scatter(x=time_axis, marker = '*', y=true_sequence, c='r', label='True z')
+    ax.plot(true_sequence, linestyle='dashed', c='r')
+
     ax.set_xlabel('t')
     # ax.legend()
 

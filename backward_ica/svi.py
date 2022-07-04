@@ -105,13 +105,13 @@ class GeneralBackwardELBO:
             def _sample_step(next_sample, x):
                 
                 key, obs, backwd_state = x
-                sample = self.q.kernel.sample(key, next_sample, backwd_state)
+                sample = self.q.backwd_kernel.sample(key, next_sample, backwd_state)
 
                 emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
 
                 transition_term_p = self.p.transition_kernel.logpdf(next_sample, sample, theta.transition)
 
-                backwd_term_q = -self.q.kernel.logpdf(sample, next_sample, backwd_state)
+                backwd_term_q = -self.q.backwd_kernel.logpdf(sample, next_sample, backwd_state)
 
                 return sample, backwd_term_q + emission_term_p + transition_term_p
             
@@ -126,7 +126,72 @@ class GeneralBackwardELBO:
         mc_samples = parallel_sampler(keys, obs_seq, last_filt_state, backwd_state_seq)
         return jnp.mean(mc_samples)
 
-class OnlineBackwardLinearTowerELBO:
+
+class OnlineGeneralBackwardELBO:
+
+    def __init__(self, p:HMM, q:Smoother, normalizer, num_samples=200):
+
+        self.p = p
+        self.q = q
+        self.num_samples = num_samples
+        self.normalizer = normalizer
+
+    def __call__(self, key, obs_seq, theta:HMMParams, phi):
+
+        filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
+        backwd_state_seq = self.q.compute_kernel_state_seq(filt_state_seq, phi)
+
+        def sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq):
+
+            def samples_and_log_probs(key, q_filt_state):
+                samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_state.out)
+                log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
+                return samples, log_probs
+
+            key, subkey = random.split(key, 2)
+
+            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
+            tau = vmap(self.p.emission_kernel.logpdf, in_axes=(None, 0, None))(obs_seq[0], samples, theta.emission)
+
+            def additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_state):
+                return self.p.emission_kernel.logpdf(obs, new_sample, theta.emission) \
+                        - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) \
+                        + log_prob \
+                        - new_log_prob
+                            
+                        
+
+            def update_tau(carry, x):
+
+                tau, samples, log_probs = carry 
+                key, obs, q_filt_state, q_backwd_state = x 
+                new_samples, new_log_probs = samples_and_log_probs(key, q_filt_state)
+
+                def update_component_tau(new_sample, new_log_prob):
+                    def sum_component(sample, log_prob, tau_component):
+                        log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) - log_prob
+                        component = tau_component + additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_state)
+                        return log_weight, component
+                    log_weights, components = vmap(sum_component)(samples, log_probs, tau)
+
+                    return jnp.sum(self.normalizer(log_weights) * components)
+                
+                new_tau = vmap(update_component_tau)(new_samples, new_log_probs) 
+
+                return (new_tau, new_samples, new_log_probs), None
+            
+            return lax.scan(update_tau, 
+                            init=(tau, samples, log_probs), 
+                            xs=(random.split(key, len(obs_seq)-1), 
+                                obs_seq[1:],
+                                tree_dropfirst(q_filt_state_seq),
+                                q_backwd_state_seq))[0][0]
+
+        tau = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
+
+        return jnp.mean(tau)
+
+class OnlineBackwardLinearELBO:
 
     def __init__(self, p:HMM, q:LinearBackwardSmoother, normalizer, num_samples=200):
         
@@ -147,7 +212,7 @@ class OnlineBackwardLinearTowerELBO:
             q_filt_state, kl_term = carry
             obs = x
 
-            q_backwd_state = self.q.new_kernel_state(q_filt_state, phi)
+            q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
 
             kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
                     + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
@@ -165,9 +230,9 @@ class OnlineBackwardLinearTowerELBO:
         q_filt_state_seq = tree_prepend(q_filt_state, q_filt_state_seq)
 
 
-        kl_term =  expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state.out) \
-                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
-                    + 0.5*self.p.state_dim
+        kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state.out) \
+                - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
+                + 0.5*self.p.state_dim
 
         def sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq):
 
@@ -189,33 +254,29 @@ class OnlineBackwardLinearTowerELBO:
 
                 def update_component_tau(new_sample):
                     def sum_component(sample, log_prob, tau_component):
-                        log_weight = self.q.kernel.logpdf(sample, new_sample, q_backwd_state) - log_prob
+                        log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) - log_prob
                         component = tau_component + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission)
                         return log_weight, component
                     log_weights, components = vmap(sum_component)(samples, log_probs, tau)
 
-                    return jnp.sum(self.normalizer(log_weights) * components)
+                    return jnp.sum(self.normalizer(log_weights) * components), log_weights
                 
-                new_tau = vmap(update_component_tau)(new_samples) 
+                new_tau, new_log_weights = vmap(update_component_tau)(new_samples) 
 
-                return (new_tau, new_samples, new_log_probs), None
-
-            init=(tau, samples, log_probs)
-            xs=(random.split(key, len(obs_seq)-1), 
-                                obs_seq[1:],
-                                tree_dropfirst(q_filt_state_seq),
-                                q_backwd_state_seq)
+                return (new_tau, new_samples, new_log_probs), new_log_weights
             
             return lax.scan(update_tau, 
-                            init, 
-                            xs)[0][0]
+                            init=(tau, samples, log_probs), 
+                            xs=(random.split(key, len(obs_seq)-1), 
+                                obs_seq[1:],
+                                tree_dropfirst(q_filt_state_seq),
+                                q_backwd_state_seq))
 
-        tau = sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq)
+        (tau, _, _), log_weights = sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq)
 
-        return kl_term + jnp.mean(tau)
+        return kl_term + jnp.mean(tau), log_weights
 
-
-class BackwardLinearTowerELBO:
+class BackwardLinearELBO:
 
     def __init__(self, p:HMM, q:LinearBackwardSmoother, num_samples=200):
         
@@ -235,7 +296,7 @@ class BackwardLinearTowerELBO:
             q_filt_state, kl_term = carry
             obs = x
 
-            q_backwd_state = self.q.new_kernel_state(q_filt_state, phi)
+            q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
 
             kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
                     + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
@@ -277,7 +338,7 @@ class BackwardLinearTowerELBO:
 
         return kl_term + jnp.mean(mc_samples)
 
-class LinearGaussianTowerELBO:
+class LinearGaussianELBO:
 
     def __init__(self, p:HMM, q:LinearGaussianHMM):
         self.p = p
@@ -293,7 +354,7 @@ class LinearGaussianTowerELBO:
         def V_step(state, obs):
 
             q_filt_state, kl_term = state
-            q_backwd_state = self.q.new_kernel_state(q_filt_state, phi)
+            q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
 
             kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
                     + transition_term_integrated_under_backward(q_backwd_state, theta.transition) \
@@ -343,34 +404,36 @@ class SVITrainer:
         self.q.print_num_params()
         self.p = p 
         self.frozen_params = frozen_params
-        trainable_params = tree_map(lambda x: x == '', self.frozen_params)
-        fixed_params = tree_map(lambda x: x != '', self.frozen_params)
 
-        self.format_params = lambda params: (self.p.format_params(params[0]), self.q.format_params(params[1]))
-    
-
-        self.optimizer = optax.chain(optax.masked(getattr(optax, optimizer)(learning_rate), trainable_params),
-                                    optax.masked(zero_grads(), fixed_params))
+        self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
+        self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
+        self.optimizer = optax.chain(optax.apply_if_finite(optax.masked(getattr(optax, optimizer)(learning_rate), 
+                                                                        self.trainable_params), 
+                                                        max_consecutive_errors=10),
+                                    optax.masked(zero_grads(), self.fixed_params))
         
+
+        format_params = lambda params: (self.p.format_params(params[0]), self.q.format_params(params[1]))
+
         if force_full_mc: 
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, params: -self.elbo(key, data, *self.format_params(params))
+            self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
         elif isinstance(self.p, LinearGaussianHMM):
-            self.elbo = LinearGaussianTowerELBO(self.p, self.q)
+            self.elbo = LinearGaussianELBO(self.p, self.q)
             self.get_montecarlo_keys = get_dummy_keys
-            self.loss = lambda key, data, params: -self.elbo(data, *self.format_params(params))
+            self.loss = lambda key, data, params: -self.elbo(data, *format_params(params))
         elif isinstance(self.q, LinearBackwardSmoother):
             if online:
-                self.elbo = OnlineBackwardLinearTowerELBO(self.p, self.q, exp_and_normalize, num_samples)
+                self.elbo = OnlineBackwardLinearELBO(self.p, self.q, exp_and_normalize, num_samples)
             else: 
-                self.elbo = BackwardLinearTowerELBO(self.p, self.q, num_samples)
+                self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, params: -self.elbo(key, data, *self.format_params(params))
+            self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
         else:
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, params: -self.elbo(key, data, *self.format_params(params))
+            self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
 
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None):
@@ -398,16 +461,17 @@ class SVITrainer:
             def step(params, opt_state, batch, keys):
                 neg_elbo_values, grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2), in_axes=(0,0,None))(keys, batch, params)
                 avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
+                
                 updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
-                return params, opt_state, -jnp.mean(neg_elbo_values / seq_length)
+                return params, opt_state, -jnp.mean(neg_elbo_values / seq_length), tree_map(lambda x,y: x if y else jnp.zeros_like(x), avg_grads, self.trainable_params)
 
             data, params, opt_state, subkeys_epoch = carry
             batch_start = x
             batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
             batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
-            params, opt_state, avg_elbo_batch = step(params, opt_state, batch_obs_seq, batch_keys)
-            return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
+            params, opt_state, avg_elbo_batch, avg_grads_batch = step(params, opt_state, batch_obs_seq, batch_keys)
+            return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads_batch)
 
 
         avg_elbos = []
@@ -420,16 +484,22 @@ class SVITrainer:
             
             data = jax.random.permutation(subkey_batcher, data)
         
-            (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
+            (_ , params, opt_state, _), (avg_elbo_batches, avg_grads_batches) = jax.lax.scan(batch_step,  
                                                                 init=(data, params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
+
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
+            avg_grads_epoch = jax.tree_util.tree_map(partial(jnp.mean, axis=0), avg_grads_batches)
+            avg_grads_batches = params_to_flattened_dict(avg_grads_batches)
+            avg_grads_epoch = params_to_flattened_dict(avg_grads_epoch)
 
             if log_writer is not None:
                 with log_writer.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', avg_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
+                        for k,v in avg_grads_batches.items():
+                            tf.summary.histogram(f'{k} gradient (minibatch)', v, epoch_nb*len(batch_start_indices) + batch_nb)
 
             avg_elbos.append(avg_elbo_epoch)
             all_params.append(params)
@@ -516,7 +586,7 @@ class SVITrainer:
 
             avg_evidences = vmap(jit(lambda seq: self.p.likelihood_seq(seq, theta)))(data)
             theta = self.p.format_params(theta)
-            if isinstance(self.elbo, LinearGaussianTowerELBO):
+            if isinstance(self.elbo, LinearGaussianELBO):
                 elbo = jit(lambda key, seq:self.elbo(seq, theta, theta))
             else: 
                 elbo = jit(lambda key, seq: self.elbo(key, seq, theta, theta))
@@ -531,7 +601,7 @@ def check_linear_gaussian_elbo(p:LinearGaussianHMM, num_seqs, seq_length):
 
     seqs = p.sample_multiple_sequences(key_gen, theta, num_seqs, seq_length)[1]
 
-    elbo = LinearGaussianTowerELBO(p,p)
+    elbo = LinearGaussianELBO(p,p)
 
     evidence_reference = vmap(lambda seq: p.likelihood_seq(seq, theta))(seqs)
     theta = p.format_params(theta)
@@ -561,7 +631,7 @@ def check_backward_linear_elbo(mc_key, p:LinearGaussianHMM, num_seqs, seq_length
 
     seqs = p.sample_multiple_sequences(key_gen, theta, num_seqs, seq_length)[1]
     mc_keys = jax.random.split(mc_key, num_seqs)
-    elbo = BackwardLinearTowerELBO(p,p,num_samples)
+    elbo = BackwardLinearELBO(p,p,num_samples)
 
     evidence_reference = vmap(lambda seq: p.likelihood_seq(seq, theta))(seqs)
     
