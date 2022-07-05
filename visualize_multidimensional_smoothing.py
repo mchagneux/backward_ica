@@ -15,8 +15,9 @@ import os
 import matplotlib.pyplot as plt
 import dataclasses
 import numpy as np
+from functools import partial
 
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_5_5/trainings/linear_freeze__theta__transition_phi/2022_07_01__11_10_32'
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_5_5/trainings/linear_freeze__theta/2022_07_01__13_22_17'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -30,6 +31,8 @@ utils.set_global_cov_mode(args)
 key_theta = jax.random.PRNGKey(args.seed_theta)
 key_phi = jax.random.PRNGKey(args.seed_phi)
 num_particles = 1000
+num_seqs = 5 
+seq_length = 50
 p = hmm.NonLinearGaussianHMM(state_dim=args.state_dim, 
                         obs_dim=args.obs_dim, 
                         transition_matrix_conditionning=args.transition_matrix_conditionning,
@@ -63,44 +66,37 @@ else:
                                     backwd_layers=args.backwd_map_layers)
 
 phi = utils.load_params('phi', exp_dir)[1]
-#%%
-q = hmm.JohnsonBackwardSmoother(transition_kernel=p.transition_kernel,
-                                obs_dim=args.obs_dim, 
-                                update_layers=args.update_layers,
-                                explicit_proposal='explicit_proposal' in args.q_version)#%%
-phi_test = q.get_random_params(key_theta)
-phi_test = utils.params_to_flattened_dict(phi_test)
+
 
 
 key_theta, key_gen, key_ffbsi = jax.random.split(key_theta,3)
-state_seq, obs_seq = p.sample_seq(key_gen, theta_star, 50)
+state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, num_seqs, seq_length)
+keys_ffbsi = jax.random.split(key_theta, num_seqs)
+# means_filt_smc, covs_filt_smc = jax.vmap(p.filt_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
+# means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
 
-filt_weights, filt_particles = p.filt_seq(key_ffbsi, obs_seq, theta_star)
-smoothing_paths = p.smooth_seq(key_ffbsi, obs_seq, theta_star)
+test = p.smooth_at_multiple_timesteps(key_theta, obs_seqs[0], theta_star, 5)
 
-filt_dir = os.path.join(eval_dir, 'filt')
-smooth_dir = os.path.join(eval_dir, 'smooth')
-os.makedirs(filt_dir, exist_ok=True)
-os.makedirs(smooth_dir, exist_ok=True)
-
+# filt_dir = os.path.join(eval_dir, 'filt')
+# smooth_dir = os.path.join(eval_dir, 'smooth')
+# os.makedirs(filt_dir, exist_ok=True)
+# os.makedirs(smooth_dir, exist_ok=True)
 
 
-means_filt_ffbsi = jax.vmap(lambda particles, weights: jnp.average(a=particles, axis=0, weights=weights))(filt_particles, filt_weights)
-covs_filt_ffbsi = jax.vmap(lambda mean, particles, weights: jnp.average(a=(particles-mean)**2, axis=0, weights=weights))(means_filt_ffbsi, filt_particles, filt_weights)
-means_smooth_ffbsi, covs_smooth_ffbsi = jnp.mean(smoothing_paths, axis=1), jnp.var(smoothing_paths, axis=1)
+
 
 key_phi, key_filt_q, key_smooth_q = jax.random.split(key_phi, 3)
+keys_smooth_q = jax.random.split(key_smooth_q, num_seqs)
 
-
-if isinstance(q, hmm.GeneralBackwardSmoother):
-    means_smooth_q, covs_smooth_q = q.smooth_seq(key_smooth_q, obs_seq, phi, 1000)
-else:     
-    means_smooth_q, covs_smooth_q = q.smooth_seq(obs_seq, phi)
 
 if isinstance(q, hmm.GeneralBackwardSmoother) and (not q.backward_help):
-    means_filt_q, covs_filt_q = q.filt_seq(key_filt_q, obs_seq, phi, 1000)
+    means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None, None))(obs_seqs, phi, num_particles)
+    means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,0, None, None))(keys_smooth_q, obs_seqs, phi, num_particles)
 else:     
-    means_filt_q, covs_filt_q = q.filt_seq(obs_seq, phi)
+    means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
+    means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,None))(obs_seqs, phi)
+
+test = 0
 #%%
 # bins=100
 # for timestep in range(len(filt_weights)):
@@ -137,27 +133,30 @@ else:
 #%%
 import numpy as np
 
-means_ffbsi = [means_smooth_ffbsi, means_filt_ffbsi]
-covs_ffbsi = [covs_smooth_ffbsi, covs_filt_ffbsi]
+means_ffbsi = [means_smooth_smc, means_filt_smc]
+covs_ffbsi = [covs_smooth_smc, covs_filt_smc]
 means_q = [means_smooth_q, means_filt_q]
 covs_q = [covs_smooth_q, covs_filt_q]
 names = ['smoothing_eval', 'filt_eval']
-for mean_ffbsi, cov_ffbsi, mean_q, cov_q, name in zip(means_ffbsi, covs_ffbsi, means_q, covs_q, names):
-    fig, axes = plt.subplots(args.state_dim, 2, figsize=(15,15))
-    axes = np.atleast_2d(axes)
+for mean_ffbsi, cov_ffbsi, mean_q, cov_q, task_name in zip(means_ffbsi, covs_ffbsi, means_q, covs_q, names):
 
-    for dim_nb in range(args.state_dim):
+    for seq_nb in range(num_seqs):
+        fig, axes = plt.subplots(args.state_dim, 2, figsize=(15,15))
+        axes = np.atleast_2d(axes)
+        name = f'{task_name}_{seq_nb}'
 
-        utils.plot_relative_errors_1D(axes[dim_nb,0], state_seq[:,dim_nb], mean_ffbsi[:,dim_nb], cov_ffbsi[:,dim_nb])
+        for dim_nb in range(args.state_dim):
 
-    for dim_nb in range(args.state_dim):
+            utils.plot_relative_errors_1D(axes[dim_nb,0], state_seqs[seq_nb,:,dim_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb])
 
-        if isinstance(q, hmm.LinearBackwardSmoother) or q.backward_help:
-            utils.plot_relative_errors_1D(axes[dim_nb,1], state_seq[:,dim_nb], mean_q[:,dim_nb], cov_q[:,dim_nb,dim_nb])
-        else:
-            utils.plot_relative_errors_1D(axes[dim_nb,1], state_seq[:,dim_nb], mean_q[:,dim_nb], cov_q[:,dim_nb])
+        for dim_nb in range(args.state_dim):
 
-    plt.autoscale(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(eval_dir, name))
-    plt.clf()
+            if isinstance(q, hmm.LinearBackwardSmoother) or q.backward_help:
+                utils.plot_relative_errors_1D(axes[dim_nb,1], state_seqs[seq_nb,:,dim_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb])
+            else:
+                utils.plot_relative_errors_1D(axes[dim_nb,1], state_seqs[seq_nb,:,dim_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb])
+
+        plt.autoscale(True)
+        plt.tight_layout()
+        plt.savefig(os.path.join(eval_dir, name))
+        plt.clf()

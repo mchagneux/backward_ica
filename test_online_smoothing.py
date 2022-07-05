@@ -1,3 +1,4 @@
+#%%
 import argparse
 import haiku as hk 
 import jax 
@@ -10,9 +11,12 @@ import seaborn as sns
 import os 
 import matplotlib.pyplot as plt
 
-state_dim = 100
-obs_dim = 100
+state_dim = 2
+obs_dim = 2
+num_seqs = 50
+num_samples = 
 
+seq_length = 50
 save_dir = 'experiments/tests/online'
 
 args = argparse.Namespace()
@@ -29,45 +33,52 @@ args.transition_bias = False
 utils.set_global_cov_mode(args)
 
 p = hmm.LinearGaussianHMM(state_dim, obs_dim, 'diagonal', (0.99,1), False, False)
+q = hmm.LinearGaussianHMM(state_dim, state_dim ,'diagonal', (0.5, 1), False, False)
 
 key = jax.random.PRNGKey(0)
 
+key, subkey_theta, subkey_phi = jax.random.split(key, 3)
+
+theta = p.get_random_params(subkey_theta)
+phi = q.get_random_params(subkey_phi)
+
+
+# phi = theta
 key, subkey = jax.random.split(key, 2)
 
-theta_star = p.get_random_params(subkey)
+state_seqs, obs_seqs = p.sample_multiple_sequences(subkey, theta, num_seqs, seq_length)
 
-key, subkey = jax.random.split(key, 2)
-
-state_seq, obs_seq = p.sample_seq(subkey, theta_star, 50)
-
-num_samples = 1000
-evidence = p.likelihood_seq(obs_seq, theta_star)
 # normalizer = lambda x: jnp.mean(jnp.exp(x))
 normalizer = smc.exp_and_normalize
-closed_form_elbo = lambda obs_seq, theta, phi: LinearGaussianELBO(p,p)(obs_seq, p.format_params(theta), p.format_params(phi))
-offline_mc_elbo = lambda key, obs_seq, theta, phi: BackwardLinearELBO(p, p, num_samples)(key, obs_seq, p.format_params(theta), p.format_params(phi))
-# offline_mc_elbo = lambda key, obs_seq, theta, phi: GeneralBackwardELBO(p, p, num_samples)(key, obs_seq, p.format_params(theta), p.format_params(phi))
 
-online_mc_elbo = lambda key, obs_seq, theta, phi: OnlineBackwardLinearELBO(p, p, normalizer, num_samples)(key, obs_seq, p.format_params(theta), p.format_params(phi))
-# online_mc_elbo = lambda key, obs_seq, theta, phi: OnlineGeneralBackwardELBO(p, p, normalizer, num_samples)(key, obs_seq, p.format_params(theta), p.format_params(phi))
+closed_form_elbo = jax.vmap(jax.jit(lambda obs_seq: LinearGaussianELBO(p,q)(obs_seq, p.format_params(theta), q.format_params(phi))))
+# offline_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: BackwardLinearELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
+offline_mc_elbo_paths = jax.vmap(jax.jit(lambda key, obs_seq: GeneralBackwardELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
+
+online_mc_elbo_paths = jax.vmap(jax.jit(lambda key, obs_seq: OnlineGeneralBackwardELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
+# online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineBackwardLinearELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))[0]))
+
+keys = jax.random.split(key, num_seqs)
+true_elbo_value = jnp.mean(closed_form_elbo(obs_seqs))
+offline_mc_elbo_values = offline_mc_elbo(keys, obs_seqs)
+
+offline_errors = true_elbo_values - offline_mc_elbo_values
+
+online_mc_elbo_values = online_mc_elbo(keys, obs_seqs)
+online_errors =  true_elbo_values - online_mc_elbo_values
+
+# fig, ax = plt.subplots(1,1)
+sns.kdeplot(offline_errors, color='red')
+sns.kdeplot(online_errors, color='blue')
+
+#%%
 
 
-true_elbo_value = closed_form_elbo(obs_seq, theta_star, theta_star)
-offline_mc_elbo_value = offline_mc_elbo(key, obs_seq, theta_star, theta_star)
 
-print('Closed-form ELBO error:', jnp.abs(true_elbo_value - evidence))
-print('Offline Monte Carlo error:', jnp.abs(evidence - offline_mc_elbo_value))
 
-online_mc_elbo_value, log_weights = online_mc_elbo(key, obs_seq, theta_star, theta_star)
 # weights = jnp.exp(log_weights) / num_samples
 
 # for t, weights_t in enumerate(weights):
 #     g = sns.displot(weights_t.flatten(), bins=100, kind='hist')
 #     g.savefig(os.path.join(save_dir, f'{t}'))
-
-print('Online Monte Carlo error:', jnp.abs(evidence - online_mc_elbo_value))
-
-
-
-
 

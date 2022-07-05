@@ -124,7 +124,7 @@ class GeneralBackwardELBO:
         keys = jax.random.split(key, self.num_samples)
         last_filt_state =  tree_get_idx(-1, filt_state_seq)
         mc_samples = parallel_sampler(keys, obs_seq, last_filt_state, backwd_state_seq)
-        return jnp.mean(mc_samples)
+        return mc_samples #np.mean(mc_samples)
 
 
 class OnlineGeneralBackwardELBO:
@@ -151,15 +151,17 @@ class OnlineGeneralBackwardELBO:
             key, subkey = random.split(key, 2)
 
             samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
-            tau = vmap(self.p.emission_kernel.logpdf, in_axes=(None, 0, None))(obs_seq[0], samples, theta.emission)
+            init_functional = lambda sample: self.p.emission_kernel.logpdf(obs_seq[0], sample, theta.emission) \
+                                            + self.p.prior_dist.logpdf(sample, theta.prior)
+            tau = vmap(init_functional)(samples)
 
             def additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_state):
-                return self.p.emission_kernel.logpdf(obs, new_sample, theta.emission) \
+                return self.p.transition_kernel.logpdf(new_sample, sample, theta.transition) \
+                        + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission) \
                         - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) \
                         + log_prob \
                         - new_log_prob
                             
-                        
 
             def update_tau(carry, x):
 
@@ -189,7 +191,7 @@ class OnlineGeneralBackwardELBO:
 
         tau = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
 
-        return jnp.mean(tau)
+        return tau #jnp.mean(tau)
 
 class OnlineBackwardLinearELBO:
 
@@ -245,7 +247,7 @@ class OnlineBackwardLinearELBO:
 
             samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
             tau = vmap(self.p.emission_kernel.logpdf, in_axes=(None, 0, None))(obs_seq[0], samples, theta.emission)
-
+            # tau = jnp.zeros(self.num_samples)
             def update_tau(carry, x):
 
                 tau, samples, log_probs = carry 

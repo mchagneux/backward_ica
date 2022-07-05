@@ -643,7 +643,46 @@ class NonLinearGaussianHMM(HMM):
                                 formatted_params)[0]
 
         return self.smc.smooth_from_filt_seq(subkey, filt_seq, formatted_params)
-    
+
+    def filt_seq_to_mean_cov(self, key, obs_seq, params):
+
+        weights, particles = self.filt_seq(key, obs_seq, params)
+        means = vmap(lambda particles, weights: jnp.average(a=particles, axis=0, weights=weights))(particles, weights)
+        covs = vmap(lambda mean, particles, weights: jnp.average(a=(particles-mean)**2, axis=0, weights=weights))(means, particles, weights)
+        return means, covs 
+
+    def smooth_seq_to_mean_cov(self, key, obs_seq, params):
+
+        smoothing_paths = self.smooth_seq(key, obs_seq, params)
+        return jnp.mean(smoothing_paths, axis=1), jnp.var(smoothing_paths, axis=1)
+
+    def smooth_at_multiple_timesteps(self, key, obs_seq, params, num_slices=5):
+        key, subkey = random.split(key, 2)
+        slice_length = len(obs_seq) // num_slices
+        slices = jnp.array(list(range(2, len(obs_seq)+1, slice_length)))
+
+        formatted_params = self.format_params(params)
+
+        filt_seq = self.smc.compute_filt_state_seq(key, 
+                                obs_seq, 
+                                formatted_params)[0]
+
+        def smooth_up_to_timestep(timestep):
+            smoothing_paths = self.smc.smooth_from_filt_seq(subkey, tree_get_slice(0, timestep, filt_seq), formatted_params)
+            return jnp.mean(smoothing_paths, axis=1), jnp.var(smoothing_paths, axis=1)
+        means, covs = [], []
+
+        for timestep in slices:
+            mean, cov = smooth_up_to_timestep(timestep)
+            means.append(mean)
+            covs.append(cov)
+            
+        return means, covs
+
+        
+
+        
+
     def fit_ffbsi_em(self, key, data, optimizer, learning_rate, batch_size, num_epochs):
 
         key_init_params, key_batcher = random.split(key, 2)
