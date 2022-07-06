@@ -390,6 +390,9 @@ class Smoother(metaclass=ABCMeta):
         
         return vmap(self.new_backwd_state, in_axes=(0,None))(tree_droplast(filt_seq), formatted_params)
 
+
+
+
 class LinearBackwardSmoother(Smoother):
 
 
@@ -453,7 +456,26 @@ class LinearBackwardSmoother(Smoother):
         marginals = self.compute_marginals(tree_get_idx(-1, filt_state_seq), backwd_state_seq)
 
         return marginals.mean, marginals.scale.cov     
-        
+
+    def smooth_seq_at_multiple_timesteps(self, obs_seq, params, slices):
+        formatted_params = self.format_params(params)
+
+        filt_state_seq = self.compute_filt_state_seq(obs_seq, formatted_params)
+        backwd_state_seq = self.compute_kernel_state_seq(filt_state_seq, formatted_params)
+
+
+        def smooth_up_to_timestep(timestep):
+            marginals = self.compute_marginals(tree_get_idx(timestep, filt_state_seq), tree_get_slice(0, timestep-1, backwd_state_seq))
+            return marginals.mean, marginals.scale.cov
+        means, covs = [], []
+
+        for timestep in slices:
+            mean, cov = smooth_up_to_timestep(timestep)
+            means.append(mean)
+            covs.append(cov)
+            
+        return means, covs  
+
 class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
     def __init__(self, 
@@ -656,10 +678,8 @@ class NonLinearGaussianHMM(HMM):
         smoothing_paths = self.smooth_seq(key, obs_seq, params)
         return jnp.mean(smoothing_paths, axis=1), jnp.var(smoothing_paths, axis=1)
 
-    def smooth_at_multiple_timesteps(self, key, obs_seq, params, num_slices=5):
+    def smooth_seq_at_multiple_timesteps(self, key, obs_seq, params, slices):
         key, subkey = random.split(key, 2)
-        slice_length = len(obs_seq) // num_slices
-        slices = jnp.array(list(range(2, len(obs_seq)+1, slice_length)))
 
         formatted_params = self.format_params(params)
 
