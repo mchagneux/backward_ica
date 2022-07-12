@@ -2,10 +2,10 @@ import subprocess
 import os
 from datetime import datetime 
 injective = True
-exp_detail = 'p_nonlinear_dim_5_5'
+exp_detail = 'p_nonlinear_dim_10_20_stability_tests'
 base_dir = os.path.join('experiments', 'p_nonlinear', exp_detail, 'trainings')
 
-q_versions = ['johnson_explicit_backward_freeze__theta']
+q_versions = ['linear_freeze__theta']
 
 
 os.makedirs(base_dir, exist_ok=True)

@@ -124,7 +124,7 @@ class GeneralBackwardELBO:
         keys = jax.random.split(key, self.num_samples)
         last_filt_state =  tree_get_idx(-1, filt_state_seq)
         mc_samples = parallel_sampler(keys, obs_seq, last_filt_state, backwd_state_seq)
-        return mc_samples #np.mean(mc_samples)
+        return jnp.mean(mc_samples)
 
 
 class OnlineGeneralBackwardELBO:
@@ -191,7 +191,7 @@ class OnlineGeneralBackwardELBO:
 
         tau = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
 
-        return tau #jnp.mean(tau)
+        return jnp.mean(tau)
 
 class OnlineBackwardLinearELBO:
 
@@ -377,14 +377,6 @@ class LinearGaussianELBO:
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
                     + 0.5*self.p.state_dim
 
-
-def zero_grads():
-    def init_fn(_): 
-        return ()
-    def update_fn(updates, state, params=None):
-        return jax.tree_map(jnp.zeros_like, updates), ()
-    return optax.GradientTransformation(init_fn, update_fn)
-
 class SVITrainer:
 
     def __init__(self, p:HMM, 
@@ -394,11 +386,9 @@ class SVITrainer:
                 num_epochs, 
                 batch_size, 
                 num_samples=1, 
-                force_full_mc=False, 
-                schedule={},
+                force_full_mc=False,
                 frozen_params=None,
                 online=True):
-
 
         self.num_epochs = num_epochs
         self.batch_size = batch_size
@@ -409,10 +399,13 @@ class SVITrainer:
 
         self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
         self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
-        self.optimizer = optax.chain(optax.apply_if_finite(optax.masked(getattr(optax, optimizer)(learning_rate), 
-                                                                        self.trainable_params), 
-                                                        max_consecutive_errors=10),
-                                    optax.masked(zero_grads(), self.fixed_params))
+
+        base_optimizer = optax.apply_if_finite(optax.masked(getattr(optax, optimizer)(learning_rate), 
+                                        self.trainable_params), max_consecutive_errors=10)
+
+        zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
+
+        self.optimizer = optax.chain(base_optimizer, zero_grads_optimizer)
         
 
         format_params = lambda params: (self.p.format_params(params[0]), self.q.format_params(params[1]))

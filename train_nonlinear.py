@@ -88,31 +88,7 @@ def main(args, save_dir):
 
 
 
-    frozen_theta = p.get_random_params(key_theta)
-    frozen_theta = tree_map(lambda x: '', frozen_theta)
-
-    frozen_phi = q.get_random_params(key_phi)
-    frozen_phi = tree_map(lambda x: '', frozen_phi)
-
-    if 'theta' in args.frozen_params: 
-        frozen_theta = theta_star 
-
-    if 'prior_phi' in args.frozen_params:
-        if isinstance(q, hmm.LinearGaussianHMM) or (isinstance(q, hmm.JohnsonBackwardSmoother) and q.explicit_proposal):
-            frozen_phi.prior = theta_star.prior
-        else:
-            if isinstance(frozen_phi, utils.GeneralBackwardSmootherParams):
-                frozen_phi.prior = utils.GeneralBackwardSmootherParams(q.get_init_state(), frozen_phi.filt_update, frozen_phi.backwd)
-            else: 
-                frozen_phi.prior = q.get_init_state()
-    
-    if 'transition_phi' in args.frozen_params:
-        if isinstance(q, hmm.GeneralBackwardSmoother):
-            raise NotImplementedError
-        else: 
-            frozen_phi.transition = theta_star.transition
-    
-    frozen_params = (frozen_theta, frozen_phi)
+    frozen_params = utils.define_frozen_tree(key_phi, args.frozen_params, p, q, theta_star)
 
 
     trainer = SVITrainer(p=p, 
@@ -121,7 +97,6 @@ def main(args, save_dir):
                         learning_rate=args.learning_rate,
                         num_epochs=args.num_epochs, 
                         batch_size=args.batch_size, 
-                        schedule=args.schedule,
                         num_samples=args.num_samples,
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
@@ -170,7 +145,7 @@ if __name__ == '__main__':
         args.seed_theta = 1329
         args.seed_phi = 4569
 
-        args.state_dim, args.obs_dim = 5,5
+        args.state_dim, args.obs_dim = 10,20
         args.transition_matrix_conditionning = 'diagonal'
 
         args.emission_map_layers = ()
@@ -182,19 +157,18 @@ if __name__ == '__main__':
 
 
         args.optimizer = 'adam'
-        args.batch_size = 10
+        args.batch_size = 20
         args.parametrization = 'cov_chol'
-        args.learning_rate = 5e-3 # {'std':1e-2, 'nn':1e-1}
+        args.learning_rate = 1e-2 # {'std':1e-2, 'nn':1e-1}
         args.num_epochs = 1000
-        args.schedule = {} # {20:0.1} #{'nn':{200:0.1, 250:0.5}}
         args.store_every = args.num_epochs // 5
         args.num_fits = 1
 
-        args.update_layers = (8,8)
+        args.update_layers = (32,32)
         args.backwd_map_layers = (8,8)
 
 
-        args.num_particles = 2
+        args.num_particles = 10000
         args.num_samples = 1
         args.parametrization = 'cov_chol'
         import math

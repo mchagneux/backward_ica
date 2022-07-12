@@ -172,6 +172,38 @@ FiltState = namedtuple('FiltState', ['out','hidden'])
 BackwardState = namedtuple('BackwardState', ['inner', 'varying'])
 GeneralBackwardSmootherParams = namedtuple('GeneralBackwardSmootherParams',['prior', 'filt_update','backwd'])
 
+def define_frozen_tree(key, frozen_params, p, q, theta_star):
+
+    key_theta, key_phi = random.split(key, 2)
+    frozen_theta = p.get_random_params(key_theta)
+    frozen_theta = tree_map(lambda x: '', frozen_theta)
+
+    frozen_phi = q.get_random_params(key_phi)
+    frozen_phi = tree_map(lambda x: '', frozen_phi)
+
+
+    if 'theta' in frozen_params: 
+        frozen_theta = theta_star 
+
+    if 'prior_phi' in frozen_params:
+        if isinstance(q, hmm.LinearGaussianHMM) or (isinstance(q, hmm.JohnsonBackwardSmoother) and q.explicit_proposal):
+            frozen_phi.prior = theta_star.prior
+        else:
+            if isinstance(frozen_phi, GeneralBackwardSmootherParams):
+                frozen_phi.prior = GeneralBackwardSmootherParams(q.get_init_state(), frozen_phi.filt_update, frozen_phi.backwd)
+            else: 
+                frozen_phi.prior = q.get_init_state()
+    
+    if 'transition_phi' in frozen_params:
+        if isinstance(q, hmm.GeneralBackwardSmoother):
+            raise NotImplementedError
+        else: 
+            frozen_phi.transition = theta_star.transition
+    
+    frozen_params = (frozen_theta, frozen_phi)
+
+    return frozen_params
+
 
 def params_to_dict(params):
     if isinstance(params, np.ndarray) or isinstance(params, DeviceArray):
@@ -464,13 +496,18 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs, limit=Fals
     true_sequence, pred_means, pred_covs = true_sequence.squeeze(), pred_means.squeeze(), pred_covs.squeeze()
     if limit: true_sequence, pred_means, pred_covs = true_sequence[:limit], pred_means[:limit], pred_covs[:limit]
     time_axis = range(len(true_sequence))
-    ax.errorbar(x=time_axis, y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), c='black', label='Smoothed z, $1.96\\sigma$', linestyle='dashed')
+    yerr = 1.96 * jnp.sqrt(pred_covs)
+    upper = pred_means + yerr 
+    lower = pred_means - yerr 
 
-    ax.scatter(x=time_axis, marker = '*', y=true_sequence, c='r', label='True z')
-    ax.plot(true_sequence, linestyle='dashed', c='r')
+    ax.plot(time_axis, pred_means, c='black', label='Predicted mean')
+    ax.fill_between(time_axis, lower, upper, alpha=0.3, color='black', label='95\% CI')
+    # ax.errorbar(x=time_axis, y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), c='blue', label='Smoothed z, $1.96\\sigma$', linestyle='dashed')
+
+    ax.scatter(x=time_axis, marker = '.', y=true_sequence, c='r', label='True state')
 
     ax.set_xlabel('t')
-    # ax.legend()
+    ax.legend()
 
 
 def plot_relative_errors_2D(ax, true_sequence, pred_means, pred_covs, limit=False):

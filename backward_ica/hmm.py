@@ -296,7 +296,7 @@ class Smoother(metaclass=ABCMeta):
         out, new_state = gru(obs, prev_state)
         out = projection(out)
 
-        return GaussianParams.from_vec(out, d), new_state
+        return GaussianParams.from_vec(out, d, chol_add=jnp.eye), new_state
 
 
     @staticmethod
@@ -389,9 +389,6 @@ class Smoother(metaclass=ABCMeta):
     def compute_kernel_state_seq(self, filt_seq, formatted_params):
         
         return vmap(self.new_backwd_state, in_axes=(0,None))(tree_droplast(filt_seq), formatted_params)
-
-
-
 
 class LinearBackwardSmoother(Smoother):
 

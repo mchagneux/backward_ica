@@ -18,7 +18,7 @@ import numpy as np
 from functools import partial
 import pandas as pd
 
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_5_5/trainings/johnson_freeze__theta__transition_phi/2022_07_01__13_22_17'
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_10_20_stability_tests/trainings/linear_freeze__theta/2022_07_12__11_51_49'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -32,7 +32,7 @@ utils.set_global_cov_mode(args)
 key_theta = jax.random.PRNGKey(args.seed_theta)
 key_phi = jax.random.PRNGKey(args.seed_phi)
 num_particles = 1000
-num_seqs = 5
+num_seqs = 10
 seq_length = args.seq_length
 p = hmm.NonLinearGaussianHMM(state_dim=args.state_dim, 
                         obs_dim=args.obs_dim, 
@@ -80,31 +80,40 @@ def eval_smoothing_single_seq(state_seq, obs_seq, slices):
     means_smc = p.smooth_seq_at_multiple_timesteps(key_theta, obs_seq, theta_star, slices)[0]
     means_q = q.smooth_seq_at_multiple_timesteps(obs_seq, phi, slices)[0]
 
-    mse_q_vs_states = jnp.mean((means_q[-1] - state_seq)**2,axis=0)
-    mse_ref_vs_states = jnp.mean((means_smc[-1] - state_seq)**2, axis=0)
+    q_vs_states = jnp.mean(jnp.linalg.norm(means_q[-1] - state_seq, ord=1, axis=1), axis=0)
+    ref_vs_states = jnp.mean(jnp.linalg.norm(means_smc[-1] - state_seq, ord=1, axis=1), axis=0)
     q_vs_ref_marginals = jnp.linalg.norm((means_q[-1] - means_smc[-1]), ord=1, axis=1)[slices]
     
     q_vs_ref_additive = []
     for means_smc_n, means_q_n in zip(means_smc, means_q):
         q_vs_ref_additive.append(jnp.linalg.norm(jnp.sum(means_smc_n - means_q_n, axis=0),ord=1))
+    q_vs_ref_additive = jnp.array(q_vs_ref_additive)
 
-    return jnp.array([mse_ref_vs_states, mse_q_vs_states]), q_vs_ref_marginals, jnp.array(q_vs_ref_additive)
-
+    return jnp.array([ref_vs_states, q_vs_states, q_vs_ref_additive[-1]]), \
+        q_vs_ref_marginals, \
+        q_vs_ref_additive
+       
 
 eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0,None))
 
-num_slices = 5
+num_slices = 10
 slice_length = len(obs_seqs[0]) // num_slices
 slices = jnp.array(list(range(0, len(obs_seqs[0])+1, slice_length)))[1:]
-ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(state_seqs, obs_seqs, slices)
 
+ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(state_seqs, obs_seqs, slices)
+ref_and_q_vs_states = pd.DataFrame(ref_and_q_vs_states, columns = ['FFBSi', 'Variational', 'Additive |FFBSi-Variational|'])
+print(ref_and_q_vs_states)
+ref_and_q_vs_states.to_csv(os.path.join(eval_dir, 'tabled_results'))
+#%%
 fig, (ax0, ax1) = plt.subplots(2,1, figsize=(20,10))
 plt.tight_layout()
 plt.autoscale(True)
+q_vs_ref_marginals = pd.DataFrame(index=slices, data=q_vs_ref_marginals.T).unstack().reset_index(name='value')
+q_vs_ref_additive = pd.DataFrame(index=slices, data=q_vs_ref_additive.T).unstack().reset_index(name='value')
 
-for seq_nb in range(num_seqs):
-    ax0.plot(slices, q_vs_ref_marginals[seq_nb], linestyle='dotted', marker='o', label=f'{seq_nb}')
-    ax1.plot(slices, q_vs_ref_additive[seq_nb],  linestyle='dotted', marker='o', label=f'{seq_nb}')
+sns.lineplot(ax=ax0, data=q_vs_ref_marginals, x='level_1', y='value')
+sns.lineplot(ax=ax1, data=q_vs_ref_additive, x='level_1', y='value')
+
 ax0.set_title('Marginal 1-norm error against SMC')
 ax0.set_xlabel('t')
 ax1.set_title('Additive 1-norm error against SMC')
@@ -114,10 +123,10 @@ plt.savefig(os.path.join(eval_dir, 'test'))
 
 plt.clf()
 
-# filt_dir = os.path.join(eval_dir, 'filt')
-# smooth_dir = os.path.join(eval_dir, 'smooth')
-# os.makedirs(filt_dir, exist_ok=True)
-# os.makedirs(smooth_dir, exist_ok=True)
+filt_dir = os.path.join(eval_dir, 'filt')
+smooth_dir = os.path.join(eval_dir, 'smooth')
+os.makedirs(filt_dir, exist_ok=True)
+os.makedirs(smooth_dir, exist_ok=True)
 
 
 
@@ -180,7 +189,7 @@ names = ['smoothing_eval', 'filt_eval']
 for mean_ffbsi, cov_ffbsi, mean_q, cov_q, task_name in zip(means_ffbsi, covs_ffbsi, means_q, covs_q, names):
 
     for seq_nb in range(num_seqs):
-        fig, axes = plt.subplots(args.state_dim, 2, figsize=(15,15))
+        fig, axes = plt.subplots(args.state_dim, 2, figsize=(30,30))
         axes = np.atleast_2d(axes)
         name = f'{task_name}_{seq_nb}'
 
@@ -197,5 +206,5 @@ for mean_ffbsi, cov_ffbsi, mean_q, cov_q, task_name in zip(means_ffbsi, covs_ffb
 
         plt.autoscale(True)
         plt.tight_layout()
-        plt.savefig(os.path.join(eval_dir, name))
+        plt.savefig(os.path.join(eval_dir, name+'.pdf'), format='pdf')
         plt.clf()

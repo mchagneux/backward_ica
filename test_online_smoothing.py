@@ -13,8 +13,8 @@ import matplotlib.pyplot as plt
 
 state_dim = 2
 obs_dim = 2
-num_seqs = 50
-num_samples = 
+num_seqs = 10
+num_samples = 1000
 
 seq_length = 50
 save_dir = 'experiments/tests/online'
@@ -52,24 +52,37 @@ state_seqs, obs_seqs = p.sample_multiple_sequences(subkey, theta, num_seqs, seq_
 normalizer = smc.exp_and_normalize
 
 closed_form_elbo = jax.vmap(jax.jit(lambda obs_seq: LinearGaussianELBO(p,q)(obs_seq, p.format_params(theta), q.format_params(phi))))
-# offline_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: BackwardLinearELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
-offline_mc_elbo_paths = jax.vmap(jax.jit(lambda key, obs_seq: GeneralBackwardELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
+offline_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: BackwardLinearELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
+# offline_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: GeneralBackwardELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
 
-online_mc_elbo_paths = jax.vmap(jax.jit(lambda key, obs_seq: OnlineGeneralBackwardELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
-# online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineBackwardLinearELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))[0]))
+# online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineGeneralBackwardELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
+online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineBackwardLinearELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))[0]))
 
 keys = jax.random.split(key, num_seqs)
-true_elbo_value = jnp.mean(closed_form_elbo(obs_seqs))
-offline_mc_elbo_values = offline_mc_elbo(keys, obs_seqs)
+true_elbo_values = closed_form_elbo(obs_seqs)
+offline_mc_elbo_paths = offline_mc_elbo(keys, obs_seqs)
+online_mc_elbo_paths = online_mc_elbo(keys, obs_seqs)
+import random
+get_colors = lambda n: list(map(lambda i: "#" + "%06x" % random.randint(0, 0xFFFFFF),range(n)))
 
-offline_errors = true_elbo_values - offline_mc_elbo_values
 
-online_mc_elbo_values = online_mc_elbo(keys, obs_seqs)
-online_errors =  true_elbo_values - online_mc_elbo_values
+errors = jnp.array([[offline_mc_elbo_paths[seq_nb] - true_elbo_values[seq_nb], 
+                    online_mc_elbo_paths[seq_nb] - true_elbo_values[seq_nb]] for seq_nb in range(num_seqs)])
+fig, axes = plt.subplots(num_seqs, figsize=(20,50))
+colors = get_colors(num_seqs)
 
-# fig, ax = plt.subplots(1,1)
-sns.kdeplot(offline_errors, color='red')
-sns.kdeplot(online_errors, color='blue')
+for seq_nb in range(num_seqs): 
+    sns.histplot(errors[seq_nb][0], ax=axes[seq_nb], color=colors[0])
+    sns.histplot(errors[seq_nb][1], ax=axes[seq_nb], color=colors[1])
+
+plt.legend()
+plt.autoscale(True)
+plt.tight_layout()
+plt.savefig(os.path.join(save_dir, 'histograms_offline_vs_online.pdf'),format='pdf')
+# g = sns.FacetGrid(errors, row="smoker", col="time", margin_titles=True)
+
+# sns.kdeplot(offline_errors, olor='red')
+# sns.kdeplot(online_errors, color='blue')
 
 #%%
 
