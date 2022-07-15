@@ -8,6 +8,7 @@ import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 from backward_ica.svi import SVITrainer
 utils.enable_x64(True)
+
 import tensorflow as tf
 
 def main(args, save_dir):
@@ -145,26 +146,26 @@ if __name__ == '__main__':
         args.seed_theta = 1329
         args.seed_phi = 4569
 
-        args.state_dim, args.obs_dim = 10,20
+        args.state_dim, args.obs_dim = 10,10
         args.transition_matrix_conditionning = 'diagonal'
 
-        args.emission_map_layers = ()
+        args.emission_map_layers = (8,8)
         args.slope = 0
 
 
         args.seq_length = 50
-        args.num_seqs = 100
+        args.num_seqs = 400
 
 
-        args.optimizer = 'adam'
-        args.batch_size = 20
+        args.optimizer = 'adamw'
+        args.batch_size = 100
         args.parametrization = 'cov_chol'
-        args.learning_rate = 1e-2 # {'std':1e-2, 'nn':1e-1}
+        args.learning_rate = 1e-3 # {'std':1e-2, 'nn':1e-1}
         args.num_epochs = 1000
         args.store_every = args.num_epochs // 5
         args.num_fits = 1
 
-        args.update_layers = (32,32)
+        args.update_layers = (16,16)
         args.backwd_map_layers = (8,8)
 
 
@@ -176,7 +177,7 @@ if __name__ == '__main__':
         args.range_transition_map_params = [0.99,1]
         args.default_prior_base_scale = math.sqrt(1e-2)
         args.default_transition_base_scale = math.sqrt(1e-2)
-        args.default_emission_base_scale = math.sqrt(1e-3)
+        args.default_emission_base_scale = math.sqrt(1e-2)
         args.default_transition_bias = 0
         args.transition_bias = False
         args.full_mc = 'full_mc' in args.q_version

@@ -1,4 +1,3 @@
-from chex import PyTreeDef
 import jax
 import optax
 from jax import tree_flatten, vmap, lax, numpy as jnp
@@ -6,8 +5,9 @@ from .hmm import *
 from .utils import *
 import tensorboard
 import tensorflow as tf
-
+import seaborn as sns
 config.update('jax_enable_x64',True)
+import io
 
 def get_keys(key, num_seqs, num_epochs):
     keys = jax.random.split(key, num_seqs * num_epochs)
@@ -16,6 +16,22 @@ def get_keys(key, num_seqs, num_epochs):
 
 def get_dummy_keys(key, num_seqs, num_epochs): 
     return jnp.empty((num_epochs, num_seqs, 1))
+
+def plot_to_image(figure):
+    """Converts the matplotlib plot specified by 'figure' to a PNG image and
+    returns it. The supplied figure is closed and inaccessible after this call."""
+    # Save the plot to a PNG in memory.
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    # Closing the figure prevents it from being displayed directly inside
+    # the notebook.
+    plt.close(figure)
+    buf.seek(0)
+    # Convert PNG buffer to TF image
+    image = tf.image.decode_png(buf.getvalue(), channels=4)
+    # Add the batch dimension
+    image = tf.expand_dims(image, 0)
+    return image
 
 
 def constant_terms_from_log_gaussian(dim:int, log_det:float)->float:
@@ -377,6 +393,8 @@ class LinearGaussianELBO:
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
                     + 0.5*self.p.state_dim
 
+
+
 class SVITrainer:
 
     def __init__(self, p:HMM, 
@@ -401,11 +419,12 @@ class SVITrainer:
         self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
 
         base_optimizer = optax.apply_if_finite(optax.masked(getattr(optax, optimizer)(learning_rate), 
-                                        self.trainable_params), max_consecutive_errors=10)
+                                                            self.trainable_params), 
+                                        max_consecutive_errors=10)
 
         zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
 
-        self.optimizer = optax.chain(base_optimizer, zero_grads_optimizer)
+        self.optimizer = optax.chain(zero_grads_optimizer, base_optimizer)
         
 
         format_params = lambda params: (self.p.format_params(params[0]), self.q.format_params(params[1]))
@@ -459,7 +478,10 @@ class SVITrainer:
                 
                 updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
-                return params, opt_state, -jnp.mean(neg_elbo_values / seq_length), tree_map(lambda x,y: x if y else jnp.zeros_like(x), avg_grads, self.trainable_params)
+                return params, \
+                    opt_state, \
+                    -jnp.mean(neg_elbo_values / seq_length), \
+                    tree_map(lambda x,y: x if y else jnp.zeros_like(x), avg_grads, self.trainable_params)
 
             data, params, opt_state, subkeys_epoch = carry
             batch_start = x
@@ -484,18 +506,23 @@ class SVITrainer:
                                                                 xs = batch_start_indices)
 
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
-            avg_grads_epoch = jax.tree_util.tree_map(partial(jnp.mean, axis=0), avg_grads_batches)
-            avg_grads_batches = params_to_flattened_dict(avg_grads_batches)
-            avg_grads_epoch = params_to_flattened_dict(avg_grads_epoch)
+            avg_grads_batches = [grad for mask, grad in zip(tree_flatten(self.trainable_params)[0], 
+                                                            tree_flatten(avg_grads_batches)[0]) 
+                                                        if mask]
 
+
+
+            
             if log_writer is not None:
                 with log_writer.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', avg_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
-                        for k,v in avg_grads_batches.items():
-                            tf.summary.histogram(f'{k} gradient (minibatch)', v, epoch_nb*len(batch_start_indices) + batch_nb)
-
+                        avg_grads_batch = jnp.concatenate([grad[batch_nb].flatten() for grad in avg_grads_batches])
+                        # sns.histplot(avg_grads_batch)
+                        # tf.summary.image('Minibatch grads histogram', plot_to_image(plt.gcf()), epoch_nb*len(batch_start_indices) + batch_nb)
+                        # plt.clf()
+                        tf.summary.histogram('Minibatch grads', avg_grads_batch, epoch_nb*len(batch_start_indices) + batch_nb)
             avg_elbos.append(avg_elbo_epoch)
             all_params.append(params)
                     

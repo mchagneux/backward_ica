@@ -500,15 +500,14 @@ def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs, limit=Fals
     upper = pred_means + yerr 
     lower = pred_means - yerr 
 
-    ax.plot(time_axis, pred_means, c='black', label='Predicted mean')
-    ax.fill_between(time_axis, lower, upper, alpha=0.3, color='black', label='95\% CI')
+    ax.plot(time_axis, pred_means, marker='.', linestyle='dotted', c='black', label='Predicted mean')
+    ax.fill_between(time_axis, lower, upper, alpha=0.3, color='black', label='95% CI')
     # ax.errorbar(x=time_axis, y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), c='blue', label='Smoothed z, $1.96\\sigma$', linestyle='dashed')
 
-    ax.scatter(x=time_axis, marker = '.', y=true_sequence, c='r', label='True state')
+    ax.plot(time_axis, true_sequence, c='r', linestyle='dotted', marker='.', label='True state')
 
     ax.set_xlabel('t')
     ax.legend()
-
 
 def plot_relative_errors_2D(ax, true_sequence, pred_means, pred_covs, limit=False):
     # up_to = 64
@@ -835,7 +834,6 @@ def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, 
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, 'smoothing_results.pdf'), format='pdf')
     plt.clf()
-
 
 def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_names, save_dir):
     

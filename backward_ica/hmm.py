@@ -2,15 +2,15 @@ from abc import ABCMeta, abstractmethod
 from jax import numpy as jnp, random, value_and_grad, tree_util, grad, config
 from jax.tree_util import tree_leaves
 from backward_ica.kalman import Kalman
-from backward_ica.smc import SMC, exp_and_normalize
+from backward_ica.smc import SMC
 import haiku as hk
 from jax import lax, vmap
 from .utils import *
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf, pdf as gaussian_pdf
 from functools import partial
 from jax import nn
-config.update('jax_enable_x64',True)
 import optax
+config.update('jax_enable_x64',True)
 
 _conditionnings = {'diagonal':lambda param: jnp.diag(param),
                 'symetric_def_pos': lambda param: param @ param.T,
@@ -23,8 +23,9 @@ def xtanh(slope):
 def neural_map(input, layers, slope, out_dim):
 
     net = hk.nets.MLP((*layers, out_dim), 
-                    with_bias=False, 
                     activate_final=True, 
+                    w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                    b_init=hk.initializers.RandomNormal(),
                     activation=nn.tanh)
 
     return net(input)
@@ -643,9 +644,7 @@ class NonLinearGaussianHMM(HMM):
 
     def filt_seq(self, key, obs_seq, params):
 
-        log_probs, particles = self.compute_filt_state_seq(key, obs_seq, self.format_params(params))
-
-        return vmap(exp_and_normalize)(log_probs), particles
+        return self.compute_filt_state_seq(key, obs_seq, self.format_params(params))
         
     def compute_marginals(self, key, filt_seq, formatted_params):
 
@@ -788,6 +787,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
         self.explicit_proposal = explicit_proposal
         self.prior_dist:Gaussian = prior_dist
         self.transition_kernel:Kernel =  transition_kernel
+
         self.update_layers = update_layers
         d = self.state_dim 
         self.filt_state_shape = d + (d *(d+1)) // 2

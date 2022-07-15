@@ -6,19 +6,18 @@ from typing import NamedTuple
 import haiku as hk 
 import jax 
 import jax.numpy as jnp
-from zmq import has
 import backward_ica.hmm as hmm 
 import backward_ica.utils as utils 
 import backward_ica.smc as smc
 import seaborn as sns
 import os 
 import matplotlib.pyplot as plt
-import dataclasses
 import numpy as np
 from functools import partial
 import pandas as pd
-
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_10_20_stability_tests/trainings/linear_freeze__theta/2022_07_12__11_51_49'
+from pandas.plotting import table
+import math
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_10_10_stability_tests/trainings/johnson_freeze__theta__transition_phi/2022_07_15__15_21_33'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -75,58 +74,60 @@ state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, num_seqs
 keys_ffbsi = jax.random.split(key_theta, num_seqs)
 
 
-def eval_smoothing_single_seq(state_seq, obs_seq, slices):
+# def eval_smoothing_single_seq(state_seq, obs_seq, slices):
 
-    means_smc = p.smooth_seq_at_multiple_timesteps(key_theta, obs_seq, theta_star, slices)[0]
-    means_q = q.smooth_seq_at_multiple_timesteps(obs_seq, phi, slices)[0]
+#     means_smc = p.smooth_seq_at_multiple_timesteps(key_theta, obs_seq, theta_star, slices)[0]
+#     means_q = q.smooth_seq_at_multiple_timesteps(obs_seq, phi, slices)[0]
 
-    q_vs_states = jnp.mean(jnp.linalg.norm(means_q[-1] - state_seq, ord=1, axis=1), axis=0)
-    ref_vs_states = jnp.mean(jnp.linalg.norm(means_smc[-1] - state_seq, ord=1, axis=1), axis=0)
-    q_vs_ref_marginals = jnp.linalg.norm((means_q[-1] - means_smc[-1]), ord=1, axis=1)[slices]
+#     q_vs_states = jnp.mean(jnp.linalg.norm(means_q[-1] - state_seq, ord=1, axis=1), axis=0)
+#     ref_vs_states = jnp.mean(jnp.linalg.norm(means_smc[-1] - state_seq, ord=1, axis=1), axis=0)
+#     q_vs_ref_marginals = jnp.linalg.norm((means_q[-1] - means_smc[-1]), ord=1, axis=1)[slices]
     
-    q_vs_ref_additive = []
-    for means_smc_n, means_q_n in zip(means_smc, means_q):
-        q_vs_ref_additive.append(jnp.linalg.norm(jnp.sum(means_smc_n - means_q_n, axis=0),ord=1))
-    q_vs_ref_additive = jnp.array(q_vs_ref_additive)
+#     q_vs_ref_additive = []
+#     for means_smc_n, means_q_n in zip(means_smc, means_q):
+#         q_vs_ref_additive.append(jnp.linalg.norm(jnp.sum(means_smc_n - means_q_n, axis=0),ord=1))
+#     q_vs_ref_additive = jnp.array(q_vs_ref_additive)
 
-    return jnp.array([ref_vs_states, q_vs_states, q_vs_ref_additive[-1]]), \
-        q_vs_ref_marginals, \
-        q_vs_ref_additive
+#     return jnp.array([ref_vs_states, q_vs_states, q_vs_ref_additive[-1]]), \
+#         q_vs_ref_marginals, \
+#         q_vs_ref_additive
        
 
-eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0,None))
+# eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0,None))
 
-num_slices = 10
-slice_length = len(obs_seqs[0]) // num_slices
-slices = jnp.array(list(range(0, len(obs_seqs[0])+1, slice_length)))[1:]
+# num_slices = 10
+# slice_length = len(obs_seqs[0]) // num_slices
+# slices = jnp.array(list(range(0, len(obs_seqs[0])+1, slice_length)))[1:]
 
-ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(state_seqs, obs_seqs, slices)
-ref_and_q_vs_states = pd.DataFrame(ref_and_q_vs_states, columns = ['FFBSi', 'Variational', 'Additive |FFBSi-Variational|'])
-print(ref_and_q_vs_states)
-ref_and_q_vs_states.to_csv(os.path.join(eval_dir, 'tabled_results'))
-#%%
-fig, (ax0, ax1) = plt.subplots(2,1, figsize=(20,10))
-plt.tight_layout()
-plt.autoscale(True)
-q_vs_ref_marginals = pd.DataFrame(index=slices, data=q_vs_ref_marginals.T).unstack().reset_index(name='value')
-q_vs_ref_additive = pd.DataFrame(index=slices, data=q_vs_ref_additive.T).unstack().reset_index(name='value')
+# ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(state_seqs, obs_seqs, slices)
+# ref_and_q_vs_states = pd.DataFrame(ref_and_q_vs_states, columns = ['FFBSi', 'Variational', 'Additive |FFBSi-Variational|'])
+# ref_and_q_vs_states.to_csv(os.path.join(eval_dir, 'tabled_results'))
 
-sns.lineplot(ax=ax0, data=q_vs_ref_marginals, x='level_1', y='value')
-sns.lineplot(ax=ax1, data=q_vs_ref_additive, x='level_1', y='value')
 
-ax0.set_title('Marginal 1-norm error against SMC')
-ax0.set_xlabel('t')
-ax1.set_title('Additive 1-norm error against SMC')
-ax1.set_xlabel('t')
+# #%%
+# fig, (ax0, ax1) = plt.subplots(2,1, figsize=(30,30))
+# plt.tight_layout()
+# plt.autoscale(True)
 
-plt.savefig(os.path.join(eval_dir, 'test'))
+# q_vs_ref_marginals = pd.DataFrame(index=slices, data=q_vs_ref_marginals.T)#.unstack().reset_index(name='value')
+# q_vs_ref_additive = pd.DataFrame(index=slices, data=q_vs_ref_additive.T)#.unstack().reset_index(name='value')
 
-plt.clf()
+# sns.lineplot(ax=ax0, data=q_vs_ref_marginals)#, x='level_1', y='value')
+# sns.lineplot(ax=ax1, data=q_vs_ref_additive)#, x='level_1', y='value')
 
-filt_dir = os.path.join(eval_dir, 'filt')
-smooth_dir = os.path.join(eval_dir, 'smooth')
-os.makedirs(filt_dir, exist_ok=True)
-os.makedirs(smooth_dir, exist_ok=True)
+# ax0.set_title('Marginal 1-norm error against SMC')
+# ax0.set_xlabel('t')
+
+# ax1.set_title('Additive 1-norm error against SMC')
+# ax1.set_xlabel('t')
+
+# plt.savefig(os.path.join(eval_dir, 'marginal_and_additive_errors.pdf'),format='pdf')
+# plt.clf()
+
+# filt_dir = os.path.join(eval_dir, 'filt')
+# smooth_dir = os.path.join(eval_dir, 'smooth')
+# os.makedirs(filt_dir, exist_ok=True)
+# os.makedirs(smooth_dir, exist_ok=True)
 
 
 
@@ -134,9 +135,12 @@ os.makedirs(smooth_dir, exist_ok=True)
 key_phi, key_filt_q, key_smooth_q = jax.random.split(key_phi, 3)
 keys_smooth_q = jax.random.split(key_smooth_q, num_seqs)
 
+print('Bootstrap filtering...')
 means_filt_smc, covs_filt_smc = jax.vmap(p.filt_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
+print('Done.')
+print('FFBSi smoothing...')
 means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
-
+print('Done.')
 if isinstance(q, hmm.GeneralBackwardSmoother) and (not q.backward_help):
     means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None, None))(obs_seqs, phi, num_particles)
     means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,0, None, None))(keys_smooth_q, obs_seqs, phi, num_particles)
@@ -144,7 +148,6 @@ else:
     means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
     means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,None))(obs_seqs, phi)
 
-test = 0
 #%%
 # bins=100
 # for timestep in range(len(filt_weights)):
@@ -174,8 +177,6 @@ test = 0
 
 #     else: 
 #         pass
-
-
 
 
 #%%
