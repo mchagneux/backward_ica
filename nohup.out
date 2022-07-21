@@ -12,3 +12,104 @@ Serving TensorBoard on localhost; to expose to the network, use a proxy or pass 
 TensorBoard 2.8.0 at http://localhost:6007/ (Press CTRL+C to quit)
 TensorBoard caught SIGTERM; exiting...
 2022_07_15__11_26_02
+2022-07-19 17:29:24.114982: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/cuda-11.2/lib64:/usr/local/cuda-11.2/lib64:/usr/local/cuda-11.2/lib64
+2022-07-19 17:29:24.115029: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+Traceback (most recent call last):
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorboard/compat/__init__.py", line 42, in tf
+    from tensorboard.compat import notf  # noqa: F401
+ImportError: cannot import name 'notf' from 'tensorboard.compat' (/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorboard/compat/__init__.py)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/infres/chagneux/envs/backward_ica/bin/tensorboard", line 8, in <module>
+    sys.exit(run_main())
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorboard/main.py", line 39, in run_main
+    main_lib.global_init()
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorboard/main_lib.py", line 40, in global_init
+    if getattr(tf, "__version__", "stub") == "stub":
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorboard/lazy.py", line 65, in __getattr__
+    return getattr(load_once(self), attr_name)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorboard/lazy.py", line 97, in wrapper
+    cache[arg] = f(arg)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorboard/lazy.py", line 50, in load_once
+    module = load_fn()
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorboard/compat/__init__.py", line 45, in tf
+    import tensorflow
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorflow/__init__.py", line 473, in <module>
+    keras._load()
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorflow/python/util/lazy_loader.py", line 41, in _load
+    module = importlib.import_module(self.__name__)
+  File "/usr/lib/python3.8/importlib/__init__.py", line 127, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/keras/api/__init__.py", line 8, in <module>
+    from keras.api import keras
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/keras/api/keras/__init__.py", line 9, in <module>
+    from keras.api.keras import __internal__
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/keras/api/keras/__internal__/__init__.py", line 8, in <module>
+    from keras.api.keras.__internal__ import legacy
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/keras/api/keras/__internal__/legacy/__init__.py", line 8, in <module>
+    from keras.api.keras.__internal__.legacy import layers
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/keras/api/keras/__internal__/legacy/layers/__init__.py", line 8, in <module>
+    from keras.api.keras.__internal__.legacy.layers import experimental
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/keras/api/keras/__internal__/legacy/layers/experimental/__init__.py", line 10, in <module>
+    from tensorflow.python.util import module_wrapper as _module_wrapper
+  File "/home/infres/chagneux/envs/backward_ica/lib/python3.8/site-packages/tensorflow/python/util/module_wrapper.py", line 24, in <module>
+    from tensorflow.tools.compatibility import all_renames_v2
+  File "<frozen importlib._bootstrap>", line 991, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 975, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 671, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 844, in exec_module
+  File "<frozen importlib._bootstrap_external>", line 974, in get_code
+  File "<frozen importlib._bootstrap>", line 222, in _verbose_message
+KeyboardInterrupt
+2022_07_19__17_29_22
+Traceback (most recent call last):
+  File "/usr/lib/python3.8/subprocess.py", line 1083, in wait
+    return self._wait(timeout=timeout)
+  File "/usr/lib/python3.8/subprocess.py", line 1806, in _wait
+    (pid, sts) = self._try_wait(0)
+  File "/usr/lib/python3.8/subprocess.py", line 1764, in _try_wait
+    (pid, sts) = os.waitpid(self.pid, wait_flags)
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "experiments_nonlinear_train.py", line 38, in <module>
+    tensorboard_process.wait()
+  File "/usr/lib/python3.8/subprocess.py", line 1096, in wait
+    self._wait(timeout=sigint_timeout)
+  File "/usr/lib/python3.8/subprocess.py", line 1800, in _wait
+    time.sleep(delay)
+KeyboardInterrupt
+2022-07-19 17:29:29.275407: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/cuda-11.2/lib64:/usr/local/cuda-11.2/lib64:/usr/local/cuda-11.2/lib64
+2022-07-19 17:29:29.275457: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+2022-07-19 17:29:31.358523: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcuda.so.1'; dlerror: libcuda.so.1: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/cuda-11.2/lib64:/usr/local/cuda-11.2/lib64:/usr/local/cuda-11.2/lib64
+2022-07-19 17:29:31.358568: W tensorflow/stream_executor/cuda/cuda_driver.cc:269] failed call to cuInit: UNKNOWN ERROR (303)
+2022-07-19 17:29:31.358588: I tensorflow/stream_executor/cuda/cuda_diagnostics.cc:156] kernel driver does not appear to be running on this host (lame23.enst.fr): /proc/driver/nvidia/version does not exist
+
+NOTE: Using experimental fast data loading logic. To disable, pass
+    "--load_fast=false" and report issues on GitHub. More details:
+    https://github.com/tensorflow/tensorboard/issues/4784
+
+Serving TensorBoard on localhost; to expose to the network, use a proxy or pass --bind_all
+TensorBoard 2.8.0 at http://localhost:6006/ (Press CTRL+C to quit)
+TensorBoard caught SIGTERM; exiting...
+2022_07_19__17_29_28
+  File "experiments_nonlinear_train.py", line 31
+    --save_dir {save_dir} {arg}',
+                               ^
+SyntaxError: invalid syntax
+2022-07-20 16:42:29.732004: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcudart.so.11.0'; dlerror: libcudart.so.11.0: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/cuda-11.2/lib64:/usr/local/cuda-11.2/lib64:/usr/local/cuda-11.2/lib64
+2022-07-20 16:42:29.732056: I tensorflow/stream_executor/cuda/cudart_stub.cc:29] Ignore above cudart dlerror if you do not have a GPU set up on your machine.
+2022-07-20 16:42:32.485799: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcuda.so.1'; dlerror: libcuda.so.1: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /usr/local/cuda-11.2/lib64:/usr/local/cuda-11.2/lib64:/usr/local/cuda-11.2/lib64
+2022-07-20 16:42:32.485856: W tensorflow/stream_executor/cuda/cuda_driver.cc:269] failed call to cuInit: UNKNOWN ERROR (303)
+2022-07-20 16:42:32.485876: I tensorflow/stream_executor/cuda/cuda_diagnostics.cc:156] kernel driver does not appear to be running on this host (lame23.enst.fr): /proc/driver/nvidia/version does not exist
+
+NOTE: Using experimental fast data loading logic. To disable, pass
+    "--load_fast=false" and report issues on GitHub. More details:
+    https://github.com/tensorflow/tensorboard/issues/4784
+
+Serving TensorBoard on localhost; to expose to the network, use a proxy or pass --bind_all
+TensorBoard 2.8.0 at http://localhost:6006/ (Press CTRL+C to quit)

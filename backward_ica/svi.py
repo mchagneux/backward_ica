@@ -140,7 +140,7 @@ class GeneralBackwardELBO:
         keys = jax.random.split(key, self.num_samples)
         last_filt_state =  tree_get_idx(-1, filt_state_seq)
         mc_samples = parallel_sampler(keys, obs_seq, last_filt_state, backwd_state_seq)
-        return jnp.mean(mc_samples)
+        return jnp.mean(mc_samples), mc_samples
 
 
 class OnlineGeneralBackwardELBO:
@@ -207,7 +207,7 @@ class OnlineGeneralBackwardELBO:
 
         tau = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
 
-        return jnp.mean(tau)
+        return jnp.mean(tau), tau
 
 class OnlineBackwardLinearELBO:
 
@@ -473,7 +473,7 @@ class SVITrainer:
         def batch_step(carry, x):
 
             def step(params, opt_state, batch, keys):
-                neg_elbo_values, grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2), in_axes=(0,0,None))(keys, batch, params)
+                (neg_elbo_values, _), grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2, has_aux=True), in_axes=(0,0,None))(keys, batch, params)
                 avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                 
                 updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)

@@ -20,6 +20,65 @@ _conditionnings = {'diagonal':lambda param: jnp.diag(param),
 def xtanh(slope):
     return lambda x: jnp.tanh(x) + slope*x
 
+# def l2normalize(W, axis=0):
+#     """Normalizes MLP weight matrices.
+#     Args:
+#         W (matrix): weight matrix.
+#         axis (int): axis over which to normalize.
+#     Returns:
+#         Matrix l2 normalized over desired axis.
+#     """
+#     l2norm = jnp.sqrt(jnp.sum(W*W, axis, keepdims=True))
+#     W = W / l2norm
+#     return W
+
+# def unif_nica_layer(N, M, key, iter_4_cond=1e4):
+
+#     def _gen_matrix(N, M, key):
+#         A = random.uniform(key, (N, M), minval=0., maxval=2.) - 1.
+#         A = l2normalize(A)
+#         _cond = jnp.linalg.cond(A)
+#         return A, _cond
+
+#     # generate multiple matrices
+#     keys = random.split(key, iter_4_cond)
+#     A, conds = vmap(_gen_matrix, (None, None, 0))(N, M, keys)
+#     target_cond = jnp.percentile(conds, 25)
+#     target_idx = jnp.argmin(jnp.abs(conds-target_cond))
+#     return A[target_idx]
+
+# def init_nica_params(key, N, obs_dim, nonlin_layers):
+#     '''BEWARE: Assumes factorized distribution
+#         and equal width in all hidden layers'''
+
+#     layer_sizes = [N] + [obs_dim]*nonlin_layers + [obs_dim]
+#     keys = random.split(key, len(layer_sizes)-1)
+#     return [unif_nica_layer(n, m, k) for (n, m, k)
+#             in zip(layer_sizes[:-1], layer_sizes[1:], keys))
+
+# def nica_mlp(params, s, slope=0.1):
+#     """Forward pass for encoder MLP for estimating nonlinear mixing function.
+#     Args: (OLD; IGNORE)
+#         params (list): nested list where each element is a list of weight
+#             matrix and bias for a given layer. e.g. [[W_0, b_0], [W_1, b_1]].
+#         inputs (matrix): input data.
+#         slope (float): slope to control the nonlinearity of the activation
+#             function.
+#     Returns:
+#         Outputs f(s)
+#     """
+#     act = xtanh(slope)
+#     params = list(params.values())
+
+#     z = s
+#     if len(params) > 1:
+#         hidden_params = params[:-1]
+#         for i in range(len(hidden_params)):
+#             z = act(z@hidden_params[i])
+#     A_final = params[-1]
+#     z = z@A_final
+#     return z
+
 def neural_map(input, layers, slope, out_dim):
 
     net = hk.nets.MLP((*layers, out_dim), 
@@ -332,7 +391,8 @@ class Smoother(metaclass=ABCMeta):
         out = rec_net(obs)
         eta1, log_prec_diag = jnp.split(out,2)
         eta2 = - 0.5 * jnp.diag(nn.softplus(log_prec_diag))
-        filt_state = GaussianParams(eta1 = eta1 + pred_state.eta1, eta2 = eta2 + pred_state.eta2)
+        filt_state = GaussianParams(eta1 = eta1 + pred_state.eta1, 
+                                    eta2 = eta2 + pred_state.eta2)
 
         return FiltState(filt_state, filt_state)
 
@@ -603,6 +663,7 @@ class NonLinearGaussianHMM(HMM):
                 layers,
                 slope,
                 num_particles=100, 
+                num_smooth_particles=None,
                 range_transition_map_params=(0,1),
                 transition_bias=True,
                 injective=True):
@@ -628,7 +689,11 @@ class NonLinearGaussianHMM(HMM):
                     transition_kernel_type = lambda state_dim: Kernel(state_dim, state_dim, transition_kernel_def), 
                     emission_kernel_type  = lambda state_dim, obs_dim:Kernel(state_dim, obs_dim, emission_kernel_def))
 
-        self.smc = SMC(self.transition_kernel, self.emission_kernel, self.prior_dist, num_particles)
+        self.smc = SMC(self.transition_kernel, 
+                    self.emission_kernel, 
+                    self.prior_dist, 
+                    num_particles,
+                    num_smooth_particles)
 
     def likelihood_seq(self, key, obs_seq, params):
 
@@ -810,10 +875,6 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
 
                 return self.filt_update_apply(params.filt_update, obs, pred_state)
         
-            self._init_filt_state = _init_filt_state
-            self._new_filt_state = _new_filt_state
-
-
         else:
             self._format_params = lambda params: JohnsonBackwardSmootherParams(prior=params.prior, 
                                                 filt_update=params.filt_update, 
@@ -834,8 +895,9 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
                 return tuple([jnp.zeros(shape=[size]) for size in hidden_state_sizes])
                 
             self.get_init_state = _get_init_state
-            self._init_filt_state =_init_filt_state
-            self._new_filt_state = _new_filt_state
+
+        self._init_filt_state =_init_filt_state
+        self._new_filt_state = _new_filt_state
                                 
     def get_random_params(self, key):
 
@@ -850,6 +912,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
                                                             self.state_dim, 
                                                             default_mean=0.0, 
                                                             default_base_scale=HMM.default_prior_base_scale)
+                                                            
             dummy_pred_state = GaussianParams(mean=jnp.ones((self.state_dim,)), 
                                             scale=Scale(cov_chol=jnp.eye(self.state_dim)))
             
@@ -991,6 +1054,8 @@ class GeneralBackwardSmoother(Smoother):
         hidden_state_sizes = (*self.update_layers, self.filt_state_shape)
         return tuple([jnp.zeros(shape=[size]) for size in hidden_state_sizes])
         
+
+
 
 
 # class NeuralLinearForwardSmoother(Smoother):

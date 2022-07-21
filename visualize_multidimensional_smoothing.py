@@ -17,7 +17,7 @@ from functools import partial
 import pandas as pd
 from pandas.plotting import table
 import math
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_10_10_stability_tests/trainings/johnson_freeze__theta__transition_phi/2022_07_15__15_21_33'
+exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_10_10_stability_tests/trainings/johnson_freeze__theta/2022_07_20__16_42_28'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -30,15 +30,18 @@ utils.set_global_cov_mode(args)
 
 key_theta = jax.random.PRNGKey(args.seed_theta)
 key_phi = jax.random.PRNGKey(args.seed_phi)
-num_particles = 1000
-num_seqs = 10
+num_particles = 10000
+num_smooth_particles = 1000
+num_seqs = 2
 seq_length = args.seq_length
+
 p = hmm.NonLinearGaussianHMM(state_dim=args.state_dim, 
                         obs_dim=args.obs_dim, 
                         transition_matrix_conditionning=args.transition_matrix_conditionning,
                         layers=args.emission_map_layers,
                         slope=args.slope,
                         num_particles=num_particles,
+                        num_smooth_particles=num_smooth_particles,
                         transition_bias=args.transition_bias,
                         range_transition_map_params=args.range_transition_map_params,
                         injective=args.injective) # specify the structure of the true model
@@ -98,14 +101,16 @@ keys_ffbsi = jax.random.split(key_theta, num_seqs)
 # num_slices = 10
 # slice_length = len(obs_seqs[0]) // num_slices
 # slices = jnp.array(list(range(0, len(obs_seqs[0])+1, slice_length)))[1:]
-
+# print('Evaluating...')
 # ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(state_seqs, obs_seqs, slices)
+# print('Done.')
+
 # ref_and_q_vs_states = pd.DataFrame(ref_and_q_vs_states, columns = ['FFBSi', 'Variational', 'Additive |FFBSi-Variational|'])
 # ref_and_q_vs_states.to_csv(os.path.join(eval_dir, 'tabled_results'))
 
 
 # #%%
-# fig, (ax0, ax1) = plt.subplots(2,1, figsize=(30,30))
+# fig, (ax0, ax1) = plt.subplots(2,1)
 # plt.tight_layout()
 # plt.autoscale(True)
 
@@ -124,12 +129,6 @@ keys_ffbsi = jax.random.split(key_theta, num_seqs)
 # plt.savefig(os.path.join(eval_dir, 'marginal_and_additive_errors.pdf'),format='pdf')
 # plt.clf()
 
-# filt_dir = os.path.join(eval_dir, 'filt')
-# smooth_dir = os.path.join(eval_dir, 'smooth')
-# os.makedirs(filt_dir, exist_ok=True)
-# os.makedirs(smooth_dir, exist_ok=True)
-
-
 
 
 key_phi, key_filt_q, key_smooth_q = jax.random.split(key_phi, 3)
@@ -141,6 +140,7 @@ print('Done.')
 print('FFBSi smoothing...')
 means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
 print('Done.')
+
 if isinstance(q, hmm.GeneralBackwardSmoother) and (not q.backward_help):
     means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None, None))(obs_seqs, phi, num_particles)
     means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,0, None, None))(keys_smooth_q, obs_seqs, phi, num_particles)

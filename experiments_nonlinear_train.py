@@ -2,11 +2,10 @@ import subprocess
 import os
 from datetime import datetime 
 injective = True
-exp_detail = 'p_nonlinear_dim_10_10_stability_tests'
-base_dir = os.path.join('experiments', 'p_nonlinear', exp_detail, 'trainings')
+base_dir = os.path.join('experiments', 'p_nonlinear')
 
-q_versions = ['linear_freeze__theta', 
-            'johnson_freeze__theta__transition_phi']
+q_versions = ['johnson_explicit_proposal_freeze__theta',
+            'johnson_freeze__theta']
 
 
 os.makedirs(base_dir, exist_ok=True)
@@ -15,7 +14,7 @@ logfiles = []
 save_dirs = []
 for q_version in q_versions:
     date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
-    save_dir = os.path.join(base_dir, q_version, date)
+    save_dir = os.path.join(base_dir, date, 'trainings', q_version)
     os.makedirs(save_dir, exist_ok=True)
     f = open(os.path.join(save_dir, 'logfile.txt'),'w')
 
