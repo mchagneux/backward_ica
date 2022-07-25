@@ -11,9 +11,9 @@ import seaborn as sns
 import os 
 import matplotlib.pyplot as plt
 
-state_dim = 10
-obs_dim = 10
-num_seqs = 3
+state_dim = 2
+obs_dim = 2
+num_seqs = 1
 num_samples = 1000
 
 seq_length = 50
@@ -33,7 +33,7 @@ args.transition_bias = False
 utils.set_global_cov_mode(args)
 
 p = hmm.LinearGaussianHMM(state_dim, obs_dim, 'diagonal', (0.99,1), False, False)
-q = hmm.LinearGaussianHMM(state_dim, state_dim ,'diagonal', (0.5, 1), False, False)
+q = hmm.LinearGaussianHMM(state_dim, obs_dim ,'diagonal', (0.8, 1), False, False)
 
 key = jax.random.PRNGKey(0)
 
@@ -53,31 +53,50 @@ normalizer = smc.exp_and_normalize
 
 closed_form_elbo = jax.vmap(jax.jit(lambda obs_seq: LinearGaussianELBO(p,q)(obs_seq, p.format_params(theta), q.format_params(phi))))
 # offline_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: BackwardLinearELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
-offline_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: GeneralBackwardELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))[1]))
+offline_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: GeneralBackwardELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
 
-online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineGeneralBackwardELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))[1]))
+online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineGeneralBackwardELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
 # online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineBackwardLinearELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))[0]))
 
 keys = jax.random.split(key, num_seqs)
 true_elbo_values = closed_form_elbo(obs_seqs)
-offline_mc_elbo_paths = offline_mc_elbo(keys, obs_seqs)
-online_mc_elbo_paths = online_mc_elbo(keys, obs_seqs)
-import random
-get_colors = lambda n: list(map(lambda i: "#" + "%06x" % random.randint(0, 0xFFFFFF),range(n)))
+offline_mc_elbo_values = offline_mc_elbo(keys, obs_seqs)
+online_mc_elbo_values, (samples_seqs, log_probs_seqs, backwd_state_seqs) = online_mc_elbo(keys, obs_seqs)
+
+print('Offline ELBO error:', jnp.mean(jnp.abs(true_elbo_values - offline_mc_elbo_values)))
+print('Online ELBO error:', jnp.mean(jnp.abs(true_elbo_values - online_mc_elbo_values)))
+n_pts = 1000
+for seq_nb in range(num_seqs):
+    samples_seq = samples_seqs[seq_nb]
+    log_probs_seq = log_probs_seqs[seq_nb]
+    backwd_state_seq = utils.tree_get_idx(seq_nb, backwd_state_seqs)
+    for time_idx in range(0, seq_length, seq_length // 10):
+        key, subkey = jax.random.split(key, 2)
+        next_sample = jax.random.choice(subkey, samples_seq[time_idx+1])
+        backwd_dist_pdf = jax.vmap(lambda x: q.backwd_kernel.pdf(x, next_sample, utils.tree_get_idx(time_idx, backwd_state_seq)))
+        samples = samples_seq[time_idx]
+        weights = smc.exp_and_normalize(log_probs_seq[time_idx])
+        g = sns.JointGrid(x=samples[:,0], y=samples[:,1])
+        g.plot_joint(sns.kdeplot, weights=weights, fill=True)
+        g.plot_marginals(sns.kdeplot, weights=weights)
+        x_min, x_max = samples[:,0].min(), samples[:,0].max()
+        y_min, y_max = samples[:,1].min(), samples[:,1].max()
+        x, y = jnp.meshgrid(jnp.linspace(x_min, x_max, n_pts), jnp.linspace(y_min, y_max, n_pts))
+        pos = jnp.dstack((x,y))
+        z = backwd_dist_pdf(pos)
+        plt.contour(x, y, z)
 
 
-errors = jnp.array([[offline_mc_elbo_paths[seq_nb] - true_elbo_values[seq_nb], 
-                    online_mc_elbo_paths[seq_nb] - true_elbo_values[seq_nb]] for seq_nb in range(num_seqs)])
-colors = get_colors(num_seqs)
 
-for seq_nb in range(num_seqs): 
-    sns.histplot(errors[seq_nb][0], color=colors[0])
-    sns.histplot(errors[seq_nb][1], color=colors[1])
-    plt.legend()
-    plt.autoscale(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, f'seq_{seq_nb}.pdf'),format='pdf')
-    plt.clf()
+
+
+
+        
+
+# import random
+# get_colors = lambda n: list(map(lambda i: "#" + "%06x" % random.randint(0, 0xFFFFFF),range(n)))
+
+# get_colors = lambda n: list(map(lambda i: "#" + "%06x" % random.randint(0, 0xFFFFFF),range(n)))
 # g = sns.FacetGrid(errors, row="smoker", col="time", margin_titles=True)
 
 # sns.kdeplot(offline_errors, olor='red')

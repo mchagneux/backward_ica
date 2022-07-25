@@ -9,6 +9,9 @@ import backward_ica.utils as utils
 from backward_ica.svi import SVITrainer
 utils.enable_x64(True)
 
+
+
+
 import tensorflow as tf
 
 def main(args, save_dir):
@@ -34,7 +37,7 @@ def main(args, save_dir):
 
     utils.save_params(theta_star, 'theta', save_dir)
 
-    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, args.num_seqs, args.seq_length)
+    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, args.num_seqs, args.seq_length, single_split_seq=True)
 
 
     key_smoothing, key_evidence = jax.random.split(key_smc, 2)
@@ -149,7 +152,7 @@ if __name__ == '__main__':
         args.state_dim, args.obs_dim = 10,10
         args.transition_matrix_conditionning = 'diagonal'
 
-        args.emission_map_layers = ()
+        args.emission_map_layers = (8,8)
         args.slope = 0
 
 
@@ -160,10 +163,10 @@ if __name__ == '__main__':
         args.optimizer = 'adamw'
         args.batch_size = 100
         args.parametrization = 'cov_chol'
-        args.learning_rate = 2e-3 # {'std':1e-2, 'nn':1e-1}
+        args.learning_rate = 5e-3 # {'std':1e-2, 'nn':1e-1}
         args.num_epochs = 2000
         args.store_every = args.num_epochs // 5
-        args.num_fits = 2
+        args.num_fits = 1
 
         args.update_layers = (16,16)
         args.backwd_map_layers = (8,8)

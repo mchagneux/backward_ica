@@ -140,8 +140,7 @@ class GeneralBackwardELBO:
         keys = jax.random.split(key, self.num_samples)
         last_filt_state =  tree_get_idx(-1, filt_state_seq)
         mc_samples = parallel_sampler(keys, obs_seq, last_filt_state, backwd_state_seq)
-        return jnp.mean(mc_samples), mc_samples
-
+        return jnp.mean(mc_samples)
 
 class OnlineGeneralBackwardELBO:
 
@@ -164,20 +163,16 @@ class OnlineGeneralBackwardELBO:
                 log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
                 return samples, log_probs
 
-            key, subkey = random.split(key, 2)
-
-            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
-            init_functional = lambda sample: self.p.emission_kernel.logpdf(obs_seq[0], sample, theta.emission) \
-                                            + self.p.prior_dist.logpdf(sample, theta.prior)
-            tau = vmap(init_functional)(samples)
-
             def additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_state):
                 return self.p.transition_kernel.logpdf(new_sample, sample, theta.transition) \
                         + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission) \
                         - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) \
                         + log_prob \
                         - new_log_prob
-                            
+
+            def init_functional(sample):
+                return self.p.emission_kernel.logpdf(obs_seq[0], sample, theta.emission) \
+                        + self.p.prior_dist.logpdf(sample, theta.prior)
 
             def update_tau(carry, x):
 
@@ -188,7 +183,12 @@ class OnlineGeneralBackwardELBO:
                 def update_component_tau(new_sample, new_log_prob):
                     def sum_component(sample, log_prob, tau_component):
                         log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) - log_prob
-                        component = tau_component + additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_state)
+                        component = tau_component + additive_functional(obs, 
+                                                                    log_prob, 
+                                                                    sample, 
+                                                                    new_log_prob, 
+                                                                    new_sample, 
+                                                                    q_backwd_state)
                         return log_weight, component
                     log_weights, components = vmap(sum_component)(samples, log_probs, tau)
 
@@ -196,18 +196,26 @@ class OnlineGeneralBackwardELBO:
                 
                 new_tau = vmap(update_component_tau)(new_samples, new_log_probs) 
 
-                return (new_tau, new_samples, new_log_probs), None
-            
-            return lax.scan(update_tau, 
-                            init=(tau, samples, log_probs), 
-                            xs=(random.split(key, len(obs_seq)-1), 
-                                obs_seq[1:],
-                                tree_dropfirst(q_filt_state_seq),
-                                q_backwd_state_seq))[0][0]
+                return (new_tau, new_samples, new_log_probs), (new_samples, new_log_probs)
 
-        tau = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
+            key, subkey = random.split(key, 2)
 
-        return jnp.mean(tau), tau
+            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
+
+            tau = vmap(init_functional)(samples)                            
+
+            (tau, _ , _), (samples_seq, log_probs_seq) =  lax.scan(update_tau, 
+                                                                init=(tau, samples, log_probs), 
+                                                                xs=(random.split(key, len(obs_seq)-1), 
+                                                                    obs_seq[1:],
+                                                                    tree_dropfirst(q_filt_state_seq),
+                                                                    q_backwd_state_seq))
+
+            return tau, tree_prepend(samples, samples_seq), tree_prepend(log_probs, log_probs_seq)
+
+        tau, samples_seq, log_probs_seq = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
+
+        return jnp.mean(tau), (samples_seq, log_probs_seq, backwd_state_seq)
 
 class OnlineBackwardLinearELBO:
 
@@ -393,8 +401,6 @@ class LinearGaussianELBO:
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
                     + 0.5*self.p.state_dim
 
-
-
 class SVITrainer:
 
     def __init__(self, p:HMM, 
@@ -473,7 +479,7 @@ class SVITrainer:
         def batch_step(carry, x):
 
             def step(params, opt_state, batch, keys):
-                (neg_elbo_values, _), grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2, has_aux=True), in_axes=(0,0,None))(keys, batch, params)
+                neg_elbo_values, grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2), in_axes=(0,0,None))(keys, batch, params)
                 avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                 
                 updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
@@ -506,9 +512,9 @@ class SVITrainer:
                                                                 xs = batch_start_indices)
 
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
-            avg_grads_batches = [grad for mask, grad in zip(tree_flatten(self.trainable_params)[0], 
-                                                            tree_flatten(avg_grads_batches)[0]) 
-                                                        if mask]
+            # avg_grads_batches = [grad for mask, grad in zip(tree_flatten(self.trainable_params)[0], 
+            #                                                 tree_flatten(avg_grads_batches)[0]) 
+            #                                             if mask]
 
 
 
@@ -518,11 +524,13 @@ class SVITrainer:
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', avg_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
-                        avg_grads_batch = jnp.concatenate([grad[batch_nb].flatten() for grad in avg_grads_batches])
-                        # sns.histplot(avg_grads_batch)
+                        # avg_grads_batch = jnp.concatenate([grad[batch_nb].flatten() for grad in avg_grads_batches])
+                        # sns.violinplot(avg_grads_batch)
+                        # sns.swarmplot(avg_grads_batch)
+                        # plt.savefig(os.path.join('grads',f'{epoch_nb*len(batch_start_indices) + batch_nb}'))
                         # tf.summary.image('Minibatch grads histogram', plot_to_image(plt.gcf()), epoch_nb*len(batch_start_indices) + batch_nb)
                         # plt.clf()
-                        tf.summary.histogram('Minibatch grads', avg_grads_batch, epoch_nb*len(batch_start_indices) + batch_nb)
+                        # tf.summary.histogram('Minibatch grads', avg_grads_batch, epoch_nb*len(batch_start_indices) + batch_nb)
             avg_elbos.append(avg_elbo_epoch)
             all_params.append(params)
                     

@@ -976,7 +976,6 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
 def confidence_ellipse(mean, cov, ax, c, n_std=1.96):
 
 
-
     pearson = cov[0, 1]/jnp.sqrt(cov[0, 0] * cov[1, 1])
     # Using a special case to obtain the eigenvalues of this
     # two-dimensionl dataset.
@@ -1002,4 +1001,4 @@ def confidence_ellipse(mean, cov, ax, c, n_std=1.96):
 
     ellipse.set_transform(transf + ax.transData)
     ax.add_patch(ellipse)
-    ax.scatter(mean_x, mean_y, c=c)
+    # ax.scatter(mean_x, mean_y, c=c)

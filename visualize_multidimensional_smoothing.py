@@ -17,7 +17,7 @@ from functools import partial
 import pandas as pd
 from pandas.plotting import table
 import math
-exp_dir = 'experiments/p_nonlinear/p_nonlinear_dim_10_10_stability_tests/trainings/johnson_freeze__theta/2022_07_20__16_42_28'
+exp_dir = 'experiments/p_nonlinear/2022_07_25__17_05_30/trainings/johnson_freeze__theta'
 eval_dir = os.path.join(exp_dir, 'visual_eval')
 
 # shutil.rmtree(eval_dir)
@@ -33,7 +33,7 @@ key_phi = jax.random.PRNGKey(args.seed_phi)
 num_particles = 10000
 num_smooth_particles = 1000
 num_seqs = 2
-seq_length = args.seq_length
+seq_length = 5*args.seq_length
 
 p = hmm.NonLinearGaussianHMM(state_dim=args.state_dim, 
                         obs_dim=args.obs_dim, 

@@ -289,10 +289,14 @@ class HMM:
         self.transition_kernel:Kernel = transition_kernel_type(state_dim)
         self.emission_kernel:Kernel = emission_kernel_type(state_dim, obs_dim)
         
-    def sample_multiple_sequences(self, key, params, num_seqs, seq_length):
-        key, *subkeys = random.split(key, num_seqs+1)
-        sampler = vmap(self.sample_seq, in_axes=(0, None, None))
-        return sampler(jnp.array(subkeys), params, seq_length)
+    def sample_multiple_sequences(self, key, params, num_seqs, seq_length, single_split_seq=False):
+        if single_split_seq: 
+            state_seq, obs_seq = self.sample_seq(key, params, num_seqs*seq_length)
+            return jnp.array(jnp.split(state_seq, num_seqs)), jnp.array(jnp.split(obs_seq, num_seqs))
+        else: 
+            key, *subkeys = random.split(key, num_seqs+1)
+            sampler = vmap(self.sample_seq, in_axes=(0, None, None))
+            return sampler(jnp.array(subkeys), params, seq_length)
 
     def get_random_params(self, key):
         key_prior, key_transition, key_emission = random.split(key, 3)
