@@ -976,22 +976,19 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
 def confidence_ellipse(mean, cov, ax, c, n_std=1.96):
 
 
-    pearson = cov[0, 1]/jnp.sqrt(cov[0, 0] * cov[1, 1])
+    pearson = cov[0, 1]/np.sqrt(cov[0, 0] * cov[1, 1])
     # Using a special case to obtain the eigenvalues of this
     # two-dimensionl dataset.
-    ell_radius_x = jnp.sqrt(1 + pearson)
-    ell_radius_y = jnp.sqrt(1 - pearson)
-    ellipse = Ellipse((0, 0), width=ell_radius_x * 2, height=ell_radius_y * 2,
-                      edgecolor=c, alpha=0)
-
+    ell_radius_x = np.sqrt(1 + pearson)
+    ell_radius_y = np.sqrt(1 - pearson)
+    ellipse = Ellipse((0, 0), width=ell_radius_x * 2, height=ell_radius_y * 2, facecolor=c)
     # Calculating the stdandard deviation of x from
     # the squareroot of the variance and multiplying
     # with the given number of standard deviations.
-    scale_x = jnp.sqrt(cov[0, 0]) * n_std
+    scale_x = np.sqrt(cov[0, 0]) * n_std
     mean_x = mean[0]
-
     # calculating the stdandard deviation of y ...
-    scale_y = jnp.sqrt(cov[1, 1]) * n_std
+    scale_y = np.sqrt(cov[1, 1]) * n_std
     mean_y = mean[1]
 
     transf = transforms.Affine2D() \
@@ -1000,5 +997,5 @@ def confidence_ellipse(mean, cov, ax, c, n_std=1.96):
         .translate(mean_x, mean_y)
 
     ellipse.set_transform(transf + ax.transData)
-    ax.add_patch(ellipse)
-    # ax.scatter(mean_x, mean_y, c=c)
+    ax.scatter(mean_x, mean_y, color=c)
+    return ax.add_patch(ellipse)

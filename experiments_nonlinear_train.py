@@ -15,7 +15,7 @@ logfiles = []
 save_dirs = []
 for q_version in q_versions:
     date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
-    save_dir = os.path.join(base_dir, date, 'trainings', q_version)
+    save_dir = os.path.join(base_dir, date, q_version)
     os.makedirs(save_dir, exist_ok=True)
     f = open(os.path.join(save_dir, 'logfile.txt'),'w')
 

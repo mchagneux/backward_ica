@@ -85,7 +85,7 @@ def neural_map(input, layers, slope, out_dim):
                     activate_final=True, 
                     w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                     b_init=hk.initializers.RandomNormal(),
-                    activation=nn.tanh)
+                    activation=nn.relu)
 
     return net(input)
 
