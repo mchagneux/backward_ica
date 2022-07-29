@@ -4,9 +4,8 @@ from datetime import datetime
 injective = True
 base_dir = os.path.join('experiments', 'p_nonlinear')
 
-q_versions = ['linear_freeze__theta',
-            'johnson_freeze__theta',
-            'johnson_explicit_proposal_freeze__theta']
+q_versions = ['johnson_freeze__theta__prior_phi__transition_phi',
+            'johnson_explicit_proposal_freeze__theta__prior_phi__transition_phi']
 
 
 os.makedirs(base_dir, exist_ok=True)
@@ -31,7 +30,7 @@ processes = [subprocess.Popen(f'python train_nonlinear.py \
                         shell=True, stdout=logfile, stderr=logfile) \
                 for (q_version, save_dir, logfile) in zip(q_versions, save_dirs, logfiles)]
 
-print(date)
+# print(date)
 
 tensorboard_process = subprocess.Popen(f'tensorboard --logdir {base_dir}/{date}', shell=True)
 tensorboard_process.wait()

@@ -401,6 +401,16 @@ class LinearGaussianELBO:
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
                     + 0.5*self.p.state_dim
 
+
+def winsorize_grads():
+    def init_fn(_): 
+        return ()
+    def update_fn(updates, state, params=None):
+        flattened_updates = jnp.concatenate([arr.flatten() for arr in tree_flatten(updates)[0]])
+        high_value = jnp.sort(jnp.abs(flattened_updates))[int(0.90*flattened_updates.shape[0])]
+        return jax.tree_map(lambda x: jnp.clip(x, -high_value, high_value), updates), ()
+    return optax.GradientTransformation(init_fn, update_fn)
+
 class SVITrainer:
 
     def __init__(self, p:HMM, 
@@ -417,7 +427,7 @@ class SVITrainer:
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.q = q 
-        self.q.print_num_params()
+        # self.q.print_num_params()
         self.p = p 
         self.frozen_params = frozen_params
 
@@ -432,7 +442,6 @@ class SVITrainer:
 
         self.optimizer = optax.chain(zero_grads_optimizer, base_optimizer)
         
-
         format_params = lambda params: (self.p.format_params(params[0]), self.q.format_params(params[1]))
 
         if force_full_mc: 
@@ -444,10 +453,10 @@ class SVITrainer:
             self.get_montecarlo_keys = get_dummy_keys
             self.loss = lambda key, data, params: -self.elbo(data, *format_params(params))
         elif isinstance(self.q, LinearBackwardSmoother):
-            if online:
-                self.elbo = OnlineBackwardLinearELBO(self.p, self.q, exp_and_normalize, num_samples)
-            else: 
-                self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
+            # if online:
+            #     self.elbo = OnlineBackwardLinearELBO(self.p, self.q, exp_and_normalize, num_samples)
+            # else: 
+            self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
             self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
         else:
@@ -557,7 +566,7 @@ class SVITrainer:
 
             params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer)
 
-            best_epoch = jnp.argmax(jnp.array(avg_elbos))
+            best_epoch = jnp.nanargmax(jnp.array(avg_elbos))
             best_epochs.append(best_epoch)
             best_elbo = avg_elbos[best_epoch]
             best_elbos.append(best_elbo)

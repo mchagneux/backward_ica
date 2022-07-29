@@ -37,7 +37,7 @@ def main(args, save_dir):
 
     utils.save_params(theta_star, 'theta', save_dir)
 
-    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, args.num_seqs, args.seq_length, single_split_seq=False)
+    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, args.num_seqs, args.seq_length, single_split_seq=args.single_split_seq)
 
 
     key_smoothing, key_evidence = jax.random.split(key_smc, 2)
@@ -149,10 +149,10 @@ if __name__ == '__main__':
         args.seed_theta = 1329
         args.seed_phi = 4569
 
-        args.state_dim, args.obs_dim = 5,5
+        args.state_dim, args.obs_dim = 10,10
         args.transition_matrix_conditionning = 'diagonal'
 
-        args.emission_map_layers = (8,8)
+        args.emission_map_layers = ()
         args.slope = 0
 
 
@@ -161,10 +161,10 @@ if __name__ == '__main__':
 
 
         args.optimizer = 'adamw'
-        args.batch_size = 200
+        args.batch_size = 100
         args.parametrization = 'cov_chol'
-        args.learning_rate = 5e-3 # {'std':1e-2, 'nn':1e-1}
-        args.num_epochs = 1000
+        args.learning_rate = 1e-3 # {'std':1e-2, 'nn':1e-1}
+        args.num_epochs = 2000
         args.store_every = args.num_epochs // 5
         args.num_fits = 1
 
@@ -172,14 +172,14 @@ if __name__ == '__main__':
         args.backwd_map_layers = (8,8)
 
 
-        args.num_particles = 10000
+        args.num_particles = 2
         args.num_samples = 1
         args.parametrization = 'cov_chol'
         import math
         args.default_prior_mean = 0.0
         args.range_transition_map_params = [0.99,1]
-        args.default_prior_base_scale = math.sqrt(1e-2)
-        args.default_transition_base_scale = math.sqrt(1e-2)
+        args.default_prior_base_scale = math.sqrt(1e-1)
+        args.default_transition_base_scale = math.sqrt(1e-1)
         args.default_emission_base_scale = math.sqrt(1e-2)
         args.default_transition_bias = 0
         args.transition_bias = False
@@ -187,6 +187,7 @@ if __name__ == '__main__':
         args.explicit_proposal = 'explicit_proposal' in args.q_version 
         args.frozen_params  = args.q_version.split('__')[1:]        
         args.online = 'online' in args.q_version
+        args.single_split_seq = False
 
     utils.save_args(args, 'train_args', save_dir)
 

@@ -491,23 +491,17 @@ class QuadTerm:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
-def plot_relative_errors_1D(ax, true_sequence, pred_means, pred_covs, limit=False):
+def plot_relative_errors_1D(ax, pred_means, pred_covs, color='black', alpha=0.2, hatch=None, label=''):
     # up_to = 64
-    true_sequence, pred_means, pred_covs = true_sequence.squeeze(), pred_means.squeeze(), pred_covs.squeeze()
-    if limit: true_sequence, pred_means, pred_covs = true_sequence[:limit], pred_means[:limit], pred_covs[:limit]
-    time_axis = range(len(true_sequence))
+    pred_means, pred_covs = pred_means.squeeze(), pred_covs.squeeze()
+    time_axis = range(len(pred_means))
     yerr = 1.96 * jnp.sqrt(pred_covs)
     upper = pred_means + yerr 
     lower = pred_means - yerr 
 
-    ax.plot(time_axis, pred_means, marker='.', linestyle='dotted', c='black', label='Predicted mean')
-    ax.fill_between(time_axis, lower, upper, alpha=0.3, color='black', label='95% CI')
+    ax.plot(time_axis, pred_means, marker='.', linestyle='dotted', c=color, label=label)
+    ax.fill_between(time_axis, lower, upper, alpha=alpha, color=color, hatch=hatch)
     # ax.errorbar(x=time_axis, y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), c='blue', label='Smoothed z, $1.96\\sigma$', linestyle='dashed')
-
-    ax.plot(time_axis, true_sequence, c='r', linestyle='dotted', marker='.', label='True state')
-
-    ax.set_xlabel('t')
-    ax.legend()
 
 def plot_relative_errors_2D(ax, true_sequence, pred_means, pred_covs, limit=False):
     # up_to = 64

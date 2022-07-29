@@ -75,19 +75,19 @@ for seq_nb in range(num_seqs):
     log_probs_seq = log_probs_seqs[seq_nb]
     backwd_state_seq = utils.tree_get_idx(seq_nb, backwd_state_seqs)
     for time_idx in range(0, seq_length, seq_length // 10):
-        fig, ax = plt.subplots(1,1)
+        fig, axes = plt.subplots(state_dim, 1)
         samples = samples_seq[time_idx]
         weights = smc.exp_and_normalize(log_probs_seq[time_idx])
-        x_min, x_max = samples[:,0].min()-1, samples[:,0].max()+1
-        y_min, y_max = samples[:,1].min()-1, samples[:,1].max()+1
-        x, y = jnp.meshgrid(jnp.linspace(x_min, x_max, n_pts), 
-                            jnp.linspace(y_min, y_max, n_pts))
-        pos = jnp.dstack((x,y))
         key, subkey = jax.random.split(key, 2)
         next_sample = jax.random.choice(subkey, samples_seq[time_idx+1])
         backwd_params = q.backwd_kernel.map(next_sample, utils.tree_get_idx(time_idx, backwd_state_seq))
-        ax = utils.confidence_ellipse(backwd_params.mean, backwd_params.scale.cov, ax=ax, c='black',n_std=1.96)
-        sns.kdeplot(weights=weights, fill=True, x=samples[:,0], y=samples[:,1], ax=ax)
+        backwd_pdf = lambda x: q.backwd_kernel.pdf(x, next_sample, utils.tree_get_idx(time_idx, backwd_state_seq))
+        
+        for dim in range(state_dim):
+            mu, sigma = backwd_params.mean[dim], backwd_params.scale.cov[dim][dim]
+            x = jnp.linspace(mu - 3*sigma, mu + 3*sigma, n_pts)
+            sns.histplot(x=x, y=samples[:,dim], weights=weights, ax=axes[dim], bins=10)
+
         plt.savefig(os.path.join('experiments','tests', 'online', f'seq_{seq_nb}_time_{time_idx}'))
         plt.clf()
 

@@ -436,7 +436,6 @@ class Smoother(metaclass=ABCMeta):
         raise NotImplementedError
 
     def compute_filt_state_seq(self, obs_seq, formatted_params):
-
         init_filt_state = self.init_filt_state(obs_seq[0], formatted_params)
 
         @jit
@@ -945,6 +944,11 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
     
     def format_params(self, params):
         return self._format_params(params)
+
+    def compute_filt_state_seq(self, obs_seq, formatted_params):
+        if self.explicit_proposal:
+            formatted_params.compute_covs()
+        return super().compute_filt_state_seq(obs_seq, formatted_params)
 
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))
