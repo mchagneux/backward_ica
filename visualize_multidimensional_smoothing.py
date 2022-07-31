@@ -19,9 +19,9 @@ from pandas.plotting import table
 import math
 import pickle 
 
-exp_dir = 'experiments/p_nonlinear/2022_07_28__17_05_55'
+exp_dir = 'experiments/p_nonlinear/2022_07_30__19_07_19'
 
-method_names = ['johnson_freeze__theta__prior_phi', 
+method_names = ['johnson_freeze__theta', 
                 'johnson_explicit_proposal_freeze__theta']
 pretty_names = ['Ours','Johnson']
 
@@ -38,11 +38,11 @@ os.makedirs(eval_dir, exist_ok=True)
 
 
 key_theta = jax.random.PRNGKey(train_args.seed_theta)
-num_particles = 10000
+num_particles = 1000
 num_smooth_particles = 1000
 num_seqs = 10
 seq_length = train_args.seq_length
-load = True
+load = False
 
 
 
@@ -83,6 +83,9 @@ if not load:
 
     filt_results.append((means_filt_smc, covs_filt_smc))
     smooth_results.append((means_smooth_smc, covs_smooth_smc))
+
+
+
 
 qs = []
 phis = []
@@ -137,6 +140,34 @@ if not load:
     with open(os.path.join(eval_dir, 'results.pickle'),'wb') as f:
         pickle.dump((filt_results, smooth_results), f)
 
+#%%
+import numpy as np
+
+colors = ['blue',
+         'red']
+print('Plotting individual sequences...')
+for task_name, results in zip(['filtering', 'smoothing'], [filt_results, smooth_results]): 
+    for seq_nb in range(num_seqs):
+        fig, axes = plt.subplots(train_args.state_dim, len(method_names), sharey=True)
+        axes = np.atleast_2d(axes)
+        name = f'{task_name}_seq_{seq_nb}'
+        for dim_nb in range(train_args.state_dim):
+            for method_nb, method_name in enumerate(pretty_names): 
+                mean_q, cov_q = results[method_nb+1]
+                # axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], ='grey', linestyle='dashed', marker='.', label='True state')
+                mean_ffbsi, cov_ffbsi = results[0]
+                utils.plot_relative_errors_1D(axes[dim_nb,method_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.2, label='FFBSi', hatch='//')
+                # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
+                utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.1, label=f'{method_name}')
+                # else:
+                #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
+                axes[dim_nb, method_nb].legend()
+
+        plt.autoscale(True)
+        plt.tight_layout()
+        plt.savefig(os.path.join(eval_dir, name+'.pdf'), format='pdf')
+        plt.clf()
+
 
 def eval_smoothing_single_seq(state_seq, obs_seq, slices, method_nb):
 
@@ -166,6 +197,7 @@ slices = jnp.array(list(range(0, len(obs_seqs[0])+1, slice_length)))[1:]
 q_vs_ref_marginals_all = []
 q_vs_ref_additive_all = []
 ref_and_q_vs_states_all = []
+
 for method_nb, (method_name, pretty_name) in enumerate(zip(method_names, pretty_names)):
 
     if not load: 
@@ -197,6 +229,7 @@ for method_nb, (method_name, pretty_name) in enumerate(zip(method_names, pretty_
 ref_and_q_vs_states = pd.concat(ref_and_q_vs_states_all, axis=1)
 ref_and_q_vs_states = ref_and_q_vs_states.T.drop_duplicates().T
 ref_and_q_vs_states = ref_and_q_vs_states[['FFBSi','Ours','Johnson','Additive |FFBSi-Ours|','Additive |FFBSi-Johnson|']]
+print(ref_and_q_vs_states.to_latex(float_format="%.2f" ))
 q_vs_ref_marginals = pd.concat(q_vs_ref_marginals_all, keys=pretty_names)
 q_vs_ref_marginals.columns = ['Sequence', 'Timestep', 'Value']
 q_vs_ref_marginals = q_vs_ref_marginals.reset_index(level=0).reset_index(drop=True)
@@ -256,30 +289,3 @@ plt.clf()
 #         pass
 
 
-# #%%
-# import numpy as np
-
-# colors = ['blue',
-#          'red']
-# print('Plotting individual sequences...')
-# for task_name, results in zip(['filtering', 'smoothing'], [filt_results, smooth_results]): 
-#     for seq_nb in range(num_seqs):
-#         fig, axes = plt.subplots(train_args.state_dim, len(method_names), figsize=(30,30), sharey=True)
-#         axes = np.atleast_2d(axes)
-#         name = f'{task_name}_seq_{seq_nb}'
-#         for dim_nb in range(train_args.state_dim):
-#             for method_nb, method_name in enumerate(pretty_names): 
-#                 mean_q, cov_q = results[method_nb+1]
-#                 # axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], ='grey', linestyle='dashed', marker='.', label='True state')
-#                 mean_ffbsi, cov_ffbsi = results[0]
-#                 utils.plot_relative_errors_1D(axes[dim_nb,method_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.2, label='FFBSi', hatch='//')
-#                 # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
-#                 utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.1, label=f'{method_name}')
-#                 # else:
-#                 #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
-#                 axes[dim_nb, method_nb].legend()
-
-#         plt.autoscale(True)
-#         plt.tight_layout()
-#         plt.savefig(os.path.join(eval_dir, name+'.pdf'), format='pdf')
-#         plt.clf()

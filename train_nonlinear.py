@@ -132,6 +132,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
+    parser.add_argument('--learning_rate', type=float, default=0.001)
     args = parser.parse_args()
 
 
@@ -149,7 +150,7 @@ if __name__ == '__main__':
         args.seed_theta = 1329
         args.seed_phi = 4569
 
-        args.state_dim, args.obs_dim = 10,10
+        args.state_dim, args.obs_dim = 5,5
         args.transition_matrix_conditionning = 'diagonal'
 
         args.emission_map_layers = ()
@@ -163,7 +164,6 @@ if __name__ == '__main__':
         args.optimizer = 'adamw'
         args.batch_size = 100
         args.parametrization = 'cov_chol'
-        args.learning_rate = 1e-3 # {'std':1e-2, 'nn':1e-1}
         args.num_epochs = 2000
         args.store_every = args.num_epochs // 5
         args.num_fits = 1

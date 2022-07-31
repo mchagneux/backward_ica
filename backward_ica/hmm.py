@@ -7,6 +7,7 @@ import haiku as hk
 from jax import lax, vmap
 from .utils import *
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf, pdf as gaussian_pdf
+from jax.scipy.stats.t import logpdf as student_logpdf, pdf as student_pdf
 from functools import partial
 from jax import nn
 import optax
@@ -166,6 +167,41 @@ class Gaussian:
         base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
         return GaussianParams(mean=params.mean, scale=Scale(**base_scale))
 
+class Student: 
+
+    @staticmethod
+    def sample(key, params):
+        return params.mean + params.scale.cov_chol @ random.normal(key, (params.mean.shape[0],))
+    
+    @staticmethod
+    def logpdf(x, params):
+        return student_logpdf(x, params.mean, params.scale.cov)
+    
+    @staticmethod
+    def pdf(x, params):
+        return student_pdf(x, params.mean, params.scale.cov)
+
+    @staticmethod
+    def get_random_params(key, dim, default_mean=0.0, default_base_scale=None):
+        
+        subkeys = random.split(key,2)
+
+        if default_mean is not None:
+            mean = default_mean * jnp.ones((dim,))
+        else: mean = random.uniform(subkeys[0], shape=(dim,), minval=-1, maxval=1)
+        
+        if default_base_scale is not None: 
+            scale = default_base_scale * jnp.ones((dim,))
+        else: 
+            scale = random.uniform(subkeys[1], shape=(dim,), minval=-1, maxval=1)
+        if HMM.parametrization == 'prec_chol':scale=1/scale
+        return GaussianParams(mean=mean, scale={HMM.parametrization:scale})
+
+    @staticmethod
+    def format_params(params):
+        base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
+        return GaussianParams(mean=params.mean, scale=Scale(**base_scale))
+
 class Kernel:
 
     def __init__(self,
@@ -176,6 +212,10 @@ class Kernel:
 
         self.in_dim = in_dim
         self.out_dim = out_dim 
+        if noise_dist==Gaussian:
+            self.noise_params_class = GaussianParams
+        
+
 
 
         if kernel_def['map_type'] == 'linear':
@@ -254,7 +294,7 @@ class Kernel:
         
     def map(self, state, params):
         mean, scale = self._apply_map(params, state)
-        return GaussianParams(mean=mean, scale=scale)
+        return self.noise_params_class(mean=mean, scale=scale)
     
     def sample(self, key, state, params):
         return self.noise_dist.sample(key, self.map(state, params))
