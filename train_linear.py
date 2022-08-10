@@ -21,15 +21,15 @@ def main(args, save_dir):
                             emission_bias=args.emission_bias) 
                         
     key, subkey = jax.random.split(key_theta, 2)
-    theta = p.get_random_params(subkey)
-    utils.save_params(theta, 'theta', save_dir)
+    theta_star = p.get_random_params(subkey)
+    utils.save_params(theta_star, 'theta', save_dir)
 
     key, subkey = jax.random.split(key, 2)
-    obs_seqs = p.sample_multiple_sequences(subkey, theta, args.num_seqs, args.seq_length)[1]
+    obs_seqs = p.sample_multiple_sequences(subkey, theta_star, args.num_seqs, args.seq_length)[1]
 
     check_linear_gaussian_elbo(p, args.num_seqs, args.seq_length)
     print('Computing evidence...')
-    avg_evidence = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta))(obs_seqs)) / args.seq_length
+    avg_evidence = jnp.mean(jax.vmap(lambda obs_seq: p.likelihood_seq(obs_seq, theta_star))(obs_seqs)) / args.seq_length
     print('Avg evidence:', avg_evidence)
 
 
@@ -40,6 +40,8 @@ def main(args, save_dir):
                 transition_bias=args.transition_bias,
                 emission_bias=args.emission_bias)
 
+    frozen_params = utils.define_frozen_tree(key_phi, args.frozen_params, p, q, theta_star)
+
 
     trainer = SVITrainer(p=p, 
                         q=q, 
@@ -47,43 +49,45 @@ def main(args, save_dir):
                         learning_rate=args.learning_rate,
                         num_epochs=args.num_epochs, 
                         batch_size=args.batch_size, 
-                        force_full_mc=args.force_full_mc,
-                        schedule=args.schedule,
-                        freeze_subset_params=False)
+                        num_samples=0,
+                        force_full_mc=args.full_mc,
+                        frozen_params=frozen_params,
+                        online=False)
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
-    params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
-                                                                        obs_seqs, 
-                                                                        args.num_fits, 
-                                                                        theta, 
-                                                                        store_every=args.store_every,
-                                                                        log_dir=save_dir)
 
-    utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True)
+    params, avg_elbos = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
+                            data=obs_seqs, 
+                            num_fits=args.num_fits,
+                            log_dir=save_dir,
+                            store_every=args.store_every)
+
     utils.save_params(params, 'phi', save_dir)
+    import pickle
+    with open(os.path.join(save_dir, 'train_logs'), 'wb') as f: 
+        pickle.dump((avg_evidence, avg_elbos), f)
+    # phi = params[-1]
 
-    phi = params[-1]
-
-    state_seq, obs_seq = p.sample_seq(key, theta, 100)
+    # state_seq, obs_seq = p.sample_seq(key, theta, 100)
 
 
 
-    means_star, covs_star = p.smooth_seq(obs_seq, theta)
-    means_mle, covs_mle = q.smooth_seq(obs_seq, phi)
+    # means_star, covs_star = p.smooth_seq(obs_seq, theta)
+    # means_mle, covs_mle = q.smooth_seq(obs_seq, phi)
 
-    import matplotlib.pyplot as plt 
-    fig, axes = plt.subplots(args.state_dim,2, figsize=(15,15))
-    import numpy as np
-    axes = np.atleast_2d(axes)
+    # import matplotlib.pyplot as plt 
+    # fig, axes = plt.subplots(args.state_dim,2, figsize=(15,15))
+    # import numpy as np
+    # axes = np.atleast_2d(axes)
 
-    for dim_nb in range(args.state_dim):
+    # for dim_nb in range(args.state_dim):
         
-        utils.plot_relative_errors_1D(axes[dim_nb,0], state_seq[:,dim_nb], means_star[:,dim_nb], covs_star[:,dim_nb,dim_nb])
-        utils.plot_relative_errors_1D(axes[dim_nb,1], state_seq[:,dim_nb], means_mle[:,dim_nb], covs_mle[:,dim_nb,dim_nb])
+    #     utils.plot_relative_errors_1D(axes[dim_nb,0], state_seq[:,dim_nb], means_star[:,dim_nb], covs_star[:,dim_nb,dim_nb])
+    #     utils.plot_relative_errors_1D(axes[dim_nb,1], state_seq[:,dim_nb], means_mle[:,dim_nb], covs_mle[:,dim_nb,dim_nb])
 
-    plt.autoscale(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'example_smoothed_states'))
+    # plt.autoscale(True)
+    # plt.tight_layout()
+    # plt.savefig(os.path.join(save_dir, 'example_smoothed_states'))
 
 if __name__ == '__main__':
 
@@ -93,7 +97,7 @@ if __name__ == '__main__':
     experiment_name = 'q_linear'
     date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
 
-    save_dir = os.path.join(os.path.join('experiments/p_linear', 'trainings', experiment_name, date))
+    save_dir = os.path.join(os.path.join('experiments/p_linear', date))
     os.makedirs(save_dir, exist_ok=True)
 
     parser = argparse.ArgumentParser()
@@ -106,20 +110,21 @@ if __name__ == '__main__':
     else: 
         args.seed_theta = 0
         args.seed_phi = 1
+        args.frozen_params = ['theta']
 
-        args.state_dim, args.obs_dim = 1,1
+        args.state_dim, args.obs_dim = 5,5
         args.transition_matrix_conditionning = 'diagonal'
 
-        args.seq_length = 10
-        args.num_seqs = 10000
+        args.seq_length = 50
+        args.num_seqs = 1000
 
         args.optimizer = 'adam'
         args.batch_size = args.num_seqs // 100
-        args.learning_rate = 1e-2 #{'std':1e-2, 'nn':1e-1}
-        args.num_epochs = 100
+        args.learning_rate = 1e-3 #{'std':1e-2, 'nn':1e-1}
+        args.num_epochs = 200
         args.schedule = {} #{300:0.1}
-        args.store_every = args.num_epochs // 5
-        args.num_fits = 5
+        args.store_every = 5
+        args.num_fits = 1
 
         args.parametrization = 'cov_chol'
         import math
@@ -131,7 +136,7 @@ if __name__ == '__main__':
         args.default_transition_bias = 0
         args.transition_bias = False
         args.emission_bias = False
-        args.force_full_mc = False
+        args.full_mc = False
 
     args.save_dir = save_dir
 

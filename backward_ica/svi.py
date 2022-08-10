@@ -484,7 +484,6 @@ class SVITrainer:
         subkeys = self.get_montecarlo_keys(key_montecarlo, num_seqs, self.num_epochs)
 
 
-        @jax.jit
         def batch_step(carry, x):
 
             def step(params, opt_state, batch, keys):
@@ -521,6 +520,7 @@ class SVITrainer:
                                                                 xs = batch_start_indices)
 
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
+            
             # avg_grads_batches = [grad for mask, grad in zip(tree_flatten(self.trainable_params)[0], 
             #                                                 tree_flatten(avg_grads_batches)[0]) 
             #                                             if mask]
@@ -573,9 +573,8 @@ class SVITrainer:
             print(f'Best ELBO {best_elbo:.3f} at epoch {best_epoch}')
         
             if store_every is not None:
-                selected_epochs = list(range(0, self.num_epochs+1, store_every))
-                for i in range(1,len(selected_epochs)): selected_epochs[i]-=1
-                all_params.append([[params[epoch_nb] for epoch_nb in selected_epochs], params[best_epoch]])
+                selected_epochs = list(range(0, self.num_epochs, store_every))
+                all_params.append({epoch_nb:params[epoch_nb] for epoch_nb in selected_epochs})
 
             else: 
                 all_params.append(params[best_epoch])
@@ -587,7 +586,7 @@ class SVITrainer:
         best_params = all_params[best_optim]
 
         if store_every is not None: 
-            return best_params, (best_optim, [[selected_epochs for _ in range(num_fits)], best_epoch], all_avg_elbos)
+            return best_params, all_avg_elbos[best_optim]
         else: 
             return best_params, (best_optim, best_epochs, all_avg_elbos)
 

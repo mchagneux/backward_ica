@@ -10,8 +10,6 @@ from backward_ica.svi import SVITrainer
 utils.enable_x64(True)
 
 
-
-
 import tensorflow as tf
 
 def main(args, save_dir):
@@ -37,7 +35,11 @@ def main(args, save_dir):
 
     utils.save_params(theta_star, 'theta', save_dir)
 
-    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, args.num_seqs, args.seq_length, single_split_seq=args.single_split_seq)
+    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, 
+                                                    theta_star, 
+                                                    args.num_seqs, 
+                                                    args.seq_length, 
+                                                    single_split_seq=args.single_split_seq)
 
 
     key_smoothing, key_evidence = jax.random.split(key_smc, 2)
@@ -133,6 +135,7 @@ if __name__ == '__main__':
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
     parser.add_argument('--learning_rate', type=float, default=0.001)
+    parser.add_argument('--dims', type=int, nargs='+')
     args = parser.parse_args()
 
 
@@ -150,21 +153,21 @@ if __name__ == '__main__':
         args.seed_theta = 1329
         args.seed_phi = 4569
 
-        args.state_dim, args.obs_dim = 5,5
+        args.state_dim, args.obs_dim = args.dims
         args.transition_matrix_conditionning = 'diagonal'
 
         args.emission_map_layers = ()
         args.slope = 0
 
 
-        args.seq_length = 100
-        args.num_seqs = 200
+        args.seq_length = 500
+        args.num_seqs = 500
 
 
         args.optimizer = 'adamw'
-        args.batch_size = 100
+        args.batch_size = 500
         args.parametrization = 'cov_chol'
-        args.num_epochs = 2000
+        args.num_epochs = 1000
         args.store_every = args.num_epochs // 5
         args.num_fits = 1
 
@@ -178,8 +181,8 @@ if __name__ == '__main__':
         import math
         args.default_prior_mean = 0.0
         args.range_transition_map_params = [0.99,1]
-        args.default_prior_base_scale = math.sqrt(1e-1)
-        args.default_transition_base_scale = math.sqrt(1e-1)
+        args.default_prior_base_scale = math.sqrt(1e-2)
+        args.default_transition_base_scale = math.sqrt(1e-2)
         args.default_emission_base_scale = math.sqrt(1e-2)
         args.default_transition_bias = 0
         args.transition_bias = False

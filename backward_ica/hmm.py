@@ -1104,8 +1104,6 @@ class GeneralBackwardSmoother(Smoother):
         
 
 
-
-
 # class NeuralLinearForwardSmoother(Smoother):
 
 #     def __init__(self, state_dim, obs_dim,            
