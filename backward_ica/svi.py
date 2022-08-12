@@ -192,11 +192,12 @@ class OnlineGeneralBackwardELBO:
                         return log_weight, component
                     log_weights, components = vmap(sum_component)(samples, log_probs, tau)
 
-                    return jnp.sum(self.normalizer(log_weights) * components)
+                    normalized_weights = self.normalizer(log_weights)
+                    return normalized_weights, jnp.sum(normalized_weights * components)
                 
-                new_tau = vmap(update_component_tau)(new_samples, new_log_probs) 
+                weights, new_tau = vmap(update_component_tau)(new_samples, new_log_probs) 
 
-                return (new_tau, new_samples, new_log_probs), (new_samples, new_log_probs)
+                return (new_tau, new_samples, new_log_probs), (new_samples, weights)
 
             key, subkey = random.split(key, 2)
 
@@ -204,18 +205,18 @@ class OnlineGeneralBackwardELBO:
 
             tau = vmap(init_functional)(samples)                            
 
-            (tau, _ , _), (samples_seq, log_probs_seq) =  lax.scan(update_tau, 
-                                                                init=(tau, samples, log_probs), 
-                                                                xs=(random.split(key, len(obs_seq)-1), 
-                                                                    obs_seq[1:],
-                                                                    tree_dropfirst(q_filt_state_seq),
-                                                                    q_backwd_state_seq))
+            (tau, _ , _), (samples_seq, weights_seq) = lax.scan(update_tau, 
+                                                                    init=(tau, samples, log_probs), 
+                                                                    xs=(random.split(key, len(obs_seq)-1), 
+                                                                        obs_seq[1:],
+                                                                        tree_dropfirst(q_filt_state_seq),
+                                                                        q_backwd_state_seq))
 
-            return tau, tree_prepend(samples, samples_seq), tree_prepend(log_probs, log_probs_seq)
+            return tau, tree_prepend(samples, samples_seq), weights_seq
 
-        tau, samples_seq, log_probs_seq = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
+        tau, samples_seq, weights_seq = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
 
-        return jnp.mean(tau), (samples_seq, log_probs_seq, backwd_state_seq)
+        return jnp.mean(tau), (samples_seq, weights_seq, backwd_state_seq)
 
 class OnlineBackwardLinearELBO:
 

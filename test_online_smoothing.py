@@ -9,11 +9,12 @@ import backward_ica.smc as smc
 from backward_ica.svi import BackwardLinearELBO, GeneralBackwardELBO, LinearGaussianELBO, OnlineBackwardLinearELBO, OnlineGeneralBackwardELBO
 import seaborn as sns
 import os 
+import pandas as pd
 import matplotlib.pyplot as plt
 
-state_dim = 2
-obs_dim = 2
-num_seqs = 1
+state_dim = 10
+obs_dim = 10
+num_seqs = 5
 num_samples = 1000
 
 seq_length = 50
@@ -61,35 +62,72 @@ online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineGeneralBackwardELBO
 keys = jax.random.split(key, num_seqs)
 true_elbo_values = closed_form_elbo(obs_seqs)
 offline_mc_elbo_values = offline_mc_elbo(keys, obs_seqs)
-online_mc_elbo_values, (samples_seqs, log_probs_seqs, backwd_state_seqs) = online_mc_elbo(keys, obs_seqs)
+online_mc_elbo_values, (samples_seqs, weights_seqs, backwd_state_seqs) = online_mc_elbo(keys, obs_seqs)
 
-print('Offline ELBO error:', jnp.mean(jnp.abs(true_elbo_values - offline_mc_elbo_values)))
-print('Online ELBO error:', jnp.mean(jnp.abs(true_elbo_values - online_mc_elbo_values)))
-n_pts = 1000
+
 import random
 
 get_colors = lambda n: list(map(lambda i: "#" + "%06x" % random.randint(0, 0xFFFFFF),range(n)))
-colors = get_colors(3)
-for seq_nb in range(num_seqs):
-    samples_seq = samples_seqs[seq_nb]
-    log_probs_seq = log_probs_seqs[seq_nb]
-    backwd_state_seq = utils.tree_get_idx(seq_nb, backwd_state_seqs)
-    for time_idx in range(0, seq_length, seq_length // 10):
-        fig, axes = plt.subplots(state_dim, 1)
-        samples = samples_seq[time_idx]
-        weights = smc.exp_and_normalize(log_probs_seq[time_idx])
-        key, subkey = jax.random.split(key, 2)
-        next_sample = jax.random.choice(subkey, samples_seq[time_idx+1])
-        backwd_params = q.backwd_kernel.map(next_sample, utils.tree_get_idx(time_idx, backwd_state_seq))
-        backwd_pdf = lambda x: q.backwd_kernel.pdf(x, next_sample, utils.tree_get_idx(time_idx, backwd_state_seq))
-        
-        for dim in range(state_dim):
-            mu, sigma = backwd_params.mean[dim], backwd_params.scale.cov[dim][dim]
-            x = jnp.linspace(mu - 3*sigma, mu + 3*sigma, n_pts)
-            sns.histplot(x=x, y=samples[:,dim], weights=weights, ax=axes[dim], bins=10)
+num_indices = 5
+colors = get_colors(num_indices)
+import numpy as np
 
+for seq_nb in range(num_seqs):
+    
+    samples_seq = samples_seqs[seq_nb]
+    weights_seq = weights_seqs[seq_nb]
+    backwd_state_seq = utils.tree_get_idx(seq_nb, backwd_state_seqs)
+
+    for time_idx in range(0, seq_length, seq_length // 5):
+        fig, axes = plt.subplots(state_dim+1, 1, figsize=(20,30))
+
+        samples = samples_seq[time_idx]
+        key, subkey = jax.random.split(key, 2)
+
+        random_indices = jax.random.choice(subkey, 
+                                        jnp.arange(0, len(samples_seq[time_idx+1])), 
+                                        shape=(num_indices,),
+                                        replace=False)
+        for dim_nb in range(state_dim):
+
+            sns.histplot(samples[:,dim_nb], 
+                        ax=axes[dim_nb], 
+                        stat='density',
+                        label=f'$\\xi_t^j[{dim_nb}]$',
+                        color='grey')
+
+        for num_idx in range(num_indices):
+            random_idx = random_indices[num_idx]
+
+
+
+            next_sample = samples_seq[time_idx+1][random_idx]
+            weights = weights_seq[time_idx][random_idx]
+
+            backwd_params = q.backwd_kernel.map(next_sample, utils.tree_get_idx(time_idx, backwd_state_seq))
+
+            for dim_nb in range(state_dim):
+                samples_x = samples[:,dim_nb]
+                range_x = jnp.linspace(samples_x.min(), samples_x.max(), 100)
+                mu, sigma = backwd_params.mean[dim_nb], backwd_params.scale.cov[dim_nb, dim_nb]
+                backwd_pdf = lambda x: hmm.gaussian_pdf(x, mu, sigma)
+                                                        
+                axes[dim_nb].plot(range_x, backwd_pdf(range_x), label=f'$q(x_t[{dim_nb}] | \\xi_{{t+1}}^{{{random_idx}}})$', color=colors[num_idx])
+                axes[dim_nb].legend()
+            sns.histplot(weights, ax=axes[state_dim], label=f'$\\omega_t^{{{random_idx}}}j$', color=colors[num_idx])
+            axes[state_dim].legend()
+
+
+        plt.suptitle(f'Sequence {seq_nb}, time {time_idx}, (online/offline ELBO error {jnp.abs(true_elbo_values[seq_nb] - online_mc_elbo_values[seq_nb]):.2f}/{jnp.abs(true_elbo_values[seq_nb] - offline_mc_elbo_values[seq_nb]):.2f})')
+        plt.autoscale(True)
+        plt.tight_layout()
+
+        # sns.pairplot(data=samples, 
+        #                 diag_kws={'weights':weights}, 
+        #                 plot_kws={'weights':weights}, kind="kde")
         plt.savefig(os.path.join('experiments','tests', 'online', f'seq_{seq_nb}_time_{time_idx}'))
-        plt.clf()
+        plt.close()
+        # plt.savefig('')
 
 
 # get_colors = lambda n: list(map(lambda i: "#" + "%06x" % random.randint(0, 0xFFFFFF),range(n)))
