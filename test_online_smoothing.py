@@ -19,6 +19,7 @@ num_indices = 5
 seq_length = 50
 num_particles = 1000
 num_smooth_particles = 1000
+
 save_dir = 'experiments/tests/online/trained_nonlinear_model'
 os.makedirs(save_dir, exist_ok=True)
 
