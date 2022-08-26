@@ -133,7 +133,7 @@ for method_name in method_names:
 
     if 'linear' in args.q_version:
 
-        p = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
+        q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
                                 obs_dim=args.obs_dim, 
                                 transition_matrix_conditionning=args.transition_matrix_conditionning,
                                 range_transition_map_params=args.range_transition_map_params,

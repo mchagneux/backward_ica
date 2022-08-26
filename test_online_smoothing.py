@@ -11,66 +11,95 @@ import seaborn as sns
 import os 
 import pandas as pd
 import matplotlib.pyplot as plt
+import random
 
-state_dim = 10
-obs_dim = 10
 num_seqs = 5
 num_samples = 1000
-
+num_indices = 5
 seq_length = 50
-save_dir = 'experiments/tests/online'
+num_particles = 1000
+num_smooth_particles = 1000
+save_dir = 'experiments/tests/online/trained_nonlinear_model'
+os.makedirs(save_dir, exist_ok=True)
 
-args = argparse.Namespace()
 
-args.parametrization = 'cov_chol'
-import math
-args.default_prior_mean = 0.0
-args.range_transition_map_params = [0.99,1]
-args.default_prior_base_scale = math.sqrt(1e-2)
-args.default_transition_base_scale = math.sqrt(1e-2)
-args.default_emission_base_scale = math.sqrt(1e-3)
-args.default_transition_bias = 0
-args.transition_bias = False
-utils.set_global_cov_mode(args)
+exp_dir = 'experiments/p_linear/2022_08_02__10_09_43'
 
-p = hmm.LinearGaussianHMM(state_dim, obs_dim, 'diagonal', (0.99,1), False, False)
-q = hmm.LinearGaussianHMM(state_dim, obs_dim ,'diagonal', (0.8, 1), False, False)
+method_name = 'johnson_freeze__theta'
+
+train_args = utils.load_args('train_args',os.path.join(exp_dir, method_name))
+utils.set_global_cov_mode(train_args)
+
+
+p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
+                        obs_dim=train_args.obs_dim, 
+                        transition_matrix_conditionning=train_args.transition_matrix_conditionning,
+                        layers=train_args.emission_map_layers,
+                        slope=train_args.slope,
+                        num_particles=num_particles,
+                        num_smooth_particles=num_smooth_particles,
+                        transition_bias=train_args.transition_bias,
+                        range_transition_map_params=train_args.range_transition_map_params,
+                        injective=train_args.injective) # specify the structure of the true model
+
+
+theta_star = utils.load_params('theta_star', os.path.join(exp_dir, method_name))
+
+
+method_dir = os.path.join(exp_dir, method_name)
+args = utils.load_args('train_args', method_dir)
+
+if 'linear' in args.q_version:
+
+    q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
+                            obs_dim=args.obs_dim, 
+                            transition_matrix_conditionning=args.transition_matrix_conditionning,
+                            range_transition_map_params=args.range_transition_map_params,
+                            transition_bias=args.transition_bias,
+                            emission_bias=args.emission_bias) 
+
+elif 'johnson' in args.q_version:
+    q = hmm.JohnsonBackwardSmoother(transition_kernel=p.transition_kernel,
+                                    obs_dim=args.obs_dim, 
+                                    update_layers=args.update_layers,
+                                    explicit_proposal='explicit_proposal' in args.q_version)
+
+
+else:
+    q = hmm.GeneralBackwardSmoother(state_dim=args.state_dim, 
+                                    obs_dim=args.obs_dim, 
+                                    update_layers=args.update_layers,
+                                    backwd_layers=args.backwd_map_layers)
 
 key = jax.random.PRNGKey(0)
 
-key, subkey_theta, subkey_phi = jax.random.split(key, 3)
 
-theta = p.get_random_params(subkey_theta)
-phi = q.get_random_params(subkey_phi)
-# phi = theta
+phi = utils.load_params('phi', method_dir)[1]
 
-# phi = theta
+# phi = theta_star
 key, subkey = jax.random.split(key, 2)
 
-state_seqs, obs_seqs = p.sample_multiple_sequences(subkey, theta, num_seqs, seq_length)
+state_seqs, obs_seqs = p.sample_multiple_sequences(subkey, theta_star, num_seqs, seq_length)
 
 # normalizer = lambda x: jnp.mean(jnp.exp(x))
 normalizer = smc.exp_and_normalize
 
-closed_form_elbo = jax.vmap(jax.jit(lambda obs_seq: LinearGaussianELBO(p,q)(obs_seq, p.format_params(theta), q.format_params(phi))))
-# offline_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: BackwardLinearELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
-offline_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: GeneralBackwardELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
+# closed_form_elbo = jax.jit(jax.vmap(lambda obs_seq: LinearGaussianELBO(p,q)(obs_seq, p.format_params(theta_star), q.format_params(phi))))
+# offline_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: BackwardLinearELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta_star), q.format_params(phi))))
+offline_mc_elbo = jax.jit(jax.vmap(lambda key, obs_seq: GeneralBackwardELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta_star), q.format_params(phi))))
 
-online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineGeneralBackwardELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))))
-# online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineBackwardLinearELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta), q.format_params(phi))[0]))
+online_mc_elbo = jax.jit(jax.vmap(lambda key, obs_seq: OnlineGeneralBackwardELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta_star), q.format_params(phi))))
+# online_mc_elbo = jax.vmap(jax.jit(lambda key, obs_seq: OnlineBackwardLinearELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta_star), q.format_params(phi))[0]))
 
 keys = jax.random.split(key, num_seqs)
-true_elbo_values = closed_form_elbo(obs_seqs)
+# true_elbo_values = closed_form_elbo(obs_seqs)
 offline_mc_elbo_values = offline_mc_elbo(keys, obs_seqs)
 online_mc_elbo_values, (samples_seqs, weights_seqs, backwd_state_seqs) = online_mc_elbo(keys, obs_seqs)
 
 
-import random
-
+state_dim = train_args.state_dim
 get_colors = lambda n: list(map(lambda i: "#" + "%06x" % random.randint(0, 0xFFFFFF),range(n)))
-num_indices = 5
 colors = get_colors(num_indices)
-import numpy as np
 
 for seq_nb in range(num_seqs):
     
@@ -79,7 +108,7 @@ for seq_nb in range(num_seqs):
     backwd_state_seq = utils.tree_get_idx(seq_nb, backwd_state_seqs)
 
     for time_idx in range(0, seq_length, seq_length // 5):
-        fig, axes = plt.subplots(state_dim+1, 1, figsize=(20,30))
+        fig, axes = plt.subplots(state_dim, 1, figsize=(20,30))
 
         samples = samples_seq[time_idx]
         key, subkey = jax.random.split(key, 2)
@@ -102,7 +131,7 @@ for seq_nb in range(num_seqs):
 
 
             next_sample = samples_seq[time_idx+1][random_idx]
-            weights = weights_seq[time_idx][random_idx]
+            # weights = weights_seq[time_idx][random_idx]
 
             backwd_params = q.backwd_kernel.map(next_sample, utils.tree_get_idx(time_idx, backwd_state_seq))
 
@@ -112,13 +141,16 @@ for seq_nb in range(num_seqs):
                 mu, sigma = backwd_params.mean[dim_nb], backwd_params.scale.cov[dim_nb, dim_nb]
                 backwd_pdf = lambda x: hmm.gaussian_pdf(x, mu, sigma)
                                                         
-                axes[dim_nb].plot(range_x, backwd_pdf(range_x), label=f'$q(x_t[{dim_nb}] | \\xi_{{t+1}}^{{{random_idx}}})$', color=colors[num_idx])
+                axes[dim_nb].plot(range_x, 
+                                backwd_pdf(range_x), 
+                                label=f'$q(x_t[{dim_nb}] | \\xi_{{t+1}}^{{{random_idx}}})$', 
+                                color=colors[num_idx])
                 axes[dim_nb].legend()
-            sns.histplot(weights, ax=axes[state_dim], label=f'$\\omega_t^{{{random_idx}}}j$', color=colors[num_idx])
-            axes[state_dim].legend()
+            # sns.histplot(weights, ax=axes[state_dim], label=f'$\\omega_t^{{{random_idx}}}j$', color=colors[num_idx])
+            # axes[state_dim].legend()
 
 
-        plt.suptitle(f'Sequence {seq_nb}, time {time_idx}, (online/offline ELBO error {jnp.abs(true_elbo_values[seq_nb] - online_mc_elbo_values[seq_nb]):.2f}/{jnp.abs(true_elbo_values[seq_nb] - offline_mc_elbo_values[seq_nb]):.2f})')
+        # plt.suptitle(f'Sequence {seq_nb}, time {time_idx}, (online/offline ELBO error {jnp.abs(true_elbo_values[seq_nb] - online_mc_elbo_values[seq_nb]):.2f}/{jnp.abs(true_elbo_values[seq_nb] - offline_mc_elbo_values[seq_nb]):.2f})')
         plt.autoscale(True)
         plt.tight_layout()
 
@@ -142,7 +174,7 @@ for seq_nb in range(num_seqs):
 
 # weights = jnp.exp(log_weights) / num_samples
 
-# for t, weights_t in enumerate(weights):
+# for t, weights_t in enumerate(weights):s
 #     g = sns.displot(weights_t.flatten(), bins=100, kind='hist')
 #     g.savefig(os.path.join(save_dir, f'{t}'))
 
