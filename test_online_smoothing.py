@@ -24,7 +24,7 @@ save_dir = 'experiments/tests/online/trained_nonlinear_model'
 os.makedirs(save_dir, exist_ok=True)
 
 
-exp_dir = 'experiments/p_linear/2022_08_02__10_09_43'
+exp_dir = 'experiments/p_nonlinear/2022_07_27__12_21_27'
 
 method_name = 'johnson_freeze__theta'
 
@@ -44,7 +44,7 @@ p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim,
                         injective=train_args.injective) # specify the structure of the true model
 
 
-theta_star = utils.load_params('theta_star', os.path.join(exp_dir, method_name))
+theta_star = utils.load_params('theta', os.path.join(exp_dir, method_name))
 
 
 method_dir = os.path.join(exp_dir, method_name)
@@ -111,16 +111,17 @@ for seq_nb in range(num_seqs):
     for time_idx in range(0, seq_length, seq_length // 5):
         fig, axes = plt.subplots(state_dim, 1, figsize=(20,30))
 
-        samples = samples_seq[time_idx]
+        samples_old = samples_seq[time_idx]
+        samples_new = samples_seq[time_idx+1]
         key, subkey = jax.random.split(key, 2)
 
         random_indices = jax.random.choice(subkey, 
-                                        jnp.arange(0, len(samples_seq[time_idx+1])), 
+                                        jnp.arange(0, len(samples_new)), 
                                         shape=(num_indices,),
                                         replace=False)
         for dim_nb in range(state_dim):
 
-            sns.histplot(samples[:,dim_nb], 
+            sns.histplot(samples_old[:,dim_nb], 
                         ax=axes[dim_nb], 
                         stat='density',
                         label=f'$\\xi_t^j[{dim_nb}]$',
@@ -129,16 +130,14 @@ for seq_nb in range(num_seqs):
         for num_idx in range(num_indices):
             random_idx = random_indices[num_idx]
 
-
-
-            next_sample = samples_seq[time_idx+1][random_idx]
+            new_sample_i = samples_new[random_idx]
             # weights = weights_seq[time_idx][random_idx]
 
-            backwd_params = q.backwd_kernel.map(next_sample, utils.tree_get_idx(time_idx, backwd_state_seq))
+            backwd_params = q.backwd_kernel.map(new_sample_i, utils.tree_get_idx(time_idx, backwd_state_seq))
 
             for dim_nb in range(state_dim):
-                samples_x = samples[:,dim_nb]
-                range_x = jnp.linspace(samples_x.min(), samples_x.max(), 100)
+                samples_x = samples_old[:,dim_nb]
+                range_x = jnp.linspace(samples_x.min(), samples_x.max(), 1000)
                 mu, sigma = backwd_params.mean[dim_nb], backwd_params.scale.cov[dim_nb, dim_nb]
                 backwd_pdf = lambda x: hmm.gaussian_pdf(x, mu, sigma)
                                                         
@@ -151,14 +150,14 @@ for seq_nb in range(num_seqs):
             # axes[state_dim].legend()
 
 
-        # plt.suptitle(f'Sequence {seq_nb}, time {time_idx}, (online/offline ELBO error {jnp.abs(true_elbo_values[seq_nb] - online_mc_elbo_values[seq_nb]):.2f}/{jnp.abs(true_elbo_values[seq_nb] - offline_mc_elbo_values[seq_nb]):.2f})')
+        plt.suptitle(f'Sequence {seq_nb}, time {time_idx}, (difference online/offline ELBO {jnp.abs(online_mc_elbo_values[seq_nb] - offline_mc_elbo_values[seq_nb]):.2f})')
         plt.autoscale(True)
         plt.tight_layout()
 
         # sns.pairplot(data=samples, 
         #                 diag_kws={'weights':weights}, 
         #                 plot_kws={'weights':weights}, kind="kde")
-        plt.savefig(os.path.join('experiments','tests', 'online', f'seq_{seq_nb}_time_{time_idx}'))
+        plt.savefig(os.path.join(save_dir, f'seq_{seq_nb}_time_{time_idx}'))
         plt.close()
         # plt.savefig('')
 
