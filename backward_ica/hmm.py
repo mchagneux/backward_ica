@@ -166,6 +166,27 @@ class Gaussian:
     def format_params(params):
         base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
         return GaussianParams(mean=params.mean, scale=Scale(**base_scale))
+    
+    @staticmethod
+    def KL(params_0, params_1):
+        mu_0, sigma_0 = params_0.mean, params_0.scale.cov
+        mu_1, sigma_1, inv_sigma_1 = params_1.mean, params_1.scale.cov, params_1.scale.prec 
+        d = mu_0.shape[0]
+
+        return 0.5 * (jnp.trace(inv_sigma_1 @ sigma_0) \
+                    + (mu_1 - mu_0).T @ inv_sigma_1 @ (mu_1 - mu_0) 
+                    - d \
+                    + jnp.log(jnp.linalg.det(sigma_1) / jnp.linalg.det(sigma_0)))
+
+    @staticmethod
+    def squared_wasserstein_2(params_0, params_1):
+        mu_0, sigma_0 = params_0.mean, params_0.scale.cov
+        mu_1, sigma_1 = params_1.mean, params_1.scale.cov
+        sigma_0_half = jnp.sqrt(sigma_0)
+        return jnp.linalg.norm(mu_0 - mu_1, ord=2) ** 2 \
+                + jnp.trace(sigma_0 + sigma_1  - 2*jnp.sqrt(sigma_0_half @ sigma_1 @ sigma_0_half))
+
+        
 
 class Student: 
 

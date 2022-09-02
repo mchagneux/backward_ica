@@ -216,7 +216,7 @@ class OnlineGeneralBackwardELBO:
 
         tau, samples_seq, weights_seq = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
 
-        return jnp.mean(tau), (samples_seq, weights_seq, backwd_state_seq)
+        return jnp.mean(tau), (samples_seq, weights_seq, filt_state_seq, backwd_state_seq)
 
 class OnlineBackwardLinearELBO:
 
