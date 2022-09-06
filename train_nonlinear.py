@@ -14,12 +14,13 @@ import tensorflow as tf
 
 def main(args, save_dir):
 
-    utils.set_global_cov_mode(args)
+    utils.set_defaults(args)
 
     key_theta = jax.random.PRNGKey(args.seed_theta)
     key_phi = jax.random.PRNGKey(args.seed_phi)
 
-    p = hmm.NonLinearGaussianHMM(state_dim=args.state_dim, 
+
+    p = hmm.NonLinearHMM(state_dim=args.state_dim, 
                             obs_dim=args.obs_dim, 
                             transition_matrix_conditionning=args.transition_matrix_conditionning,
                             layers=args.emission_map_layers,

@@ -24,7 +24,7 @@ exp_dir = 'experiments/p_linear/2022_08_02__15_26_01'
 
      
 train_args = utils.load_args('train_args',os.path.join(exp_dir))
-utils.set_global_cov_mode(train_args)
+utils.set_defaults(train_args)
 
 eval_dir = os.path.join(exp_dir, 'eval')
 os.makedirs(eval_dir, exist_ok=True)

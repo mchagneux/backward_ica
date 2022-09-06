@@ -15,9 +15,9 @@ def main(train_args, eval_args):
 
     key = jax.random.PRNGKey(eval_args.seed)
     
-    utils.set_global_cov_mode(train_args)
+    utils.set_defaults(train_args)
 
-    p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
+    p = hmm.NonLinearHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
                             range_transition_map_params=train_args.range_transition_map_params,

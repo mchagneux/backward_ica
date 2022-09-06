@@ -11,7 +11,7 @@ def main(args, save_dir):
     key_theta = jax.random.PRNGKey(args.seed_theta)
     key_phi = jax.random.PRNGKey(args.seed_phi)
 
-    utils.set_global_cov_mode(args)
+    utils.set_defaults(args)
 
     p = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
                             obs_dim=args.obs_dim, 

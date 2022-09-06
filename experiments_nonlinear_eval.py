@@ -14,11 +14,11 @@ def run_ffbsi_em_on_train_data(train_args, mle_args):
 
     key_theta = jax.random.PRNGKey(train_args.seed_theta)
 
-    utils.set_global_cov_mode(train_args)
+    utils.set_defaults(train_args)
 
     key_params, key_gen, key_mle = jax.random.split(key_theta, 3)
 
-    p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
+    p = hmm.NonLinearHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
                             range_transition_map_params=train_args.range_transition_map_params,
@@ -47,11 +47,11 @@ def run_ffbsi_em_on_train_data(train_args, mle_args):
 
 def run_ffbsi_smoothing_on_eval_data(train_args, eval_args, ground_truth=True):
 
-    utils.set_global_cov_mode(train_args)
+    utils.set_defaults(train_args)
 
     key = jax.random.PRNGKey(eval_args.seed)
 
-    p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
+    p = hmm.NonLinearHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
                             range_transition_map_params=train_args.range_transition_map_params,

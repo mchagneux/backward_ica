@@ -19,7 +19,7 @@ args.default_transition_base_scale = math.sqrt(0.1)
 args.default_emission_base_scale = math.sqrt(0.1)
 args.parametrization = 'cov_chol'
 
-utils.set_global_cov_mode(args)
+utils.set_defaults(args)
 
 p_star = hmm.LinearGaussianHMM(state_dim, obs_dim,
                         transition_matrix_conditionning='diagonal',

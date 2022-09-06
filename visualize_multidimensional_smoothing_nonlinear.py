@@ -26,7 +26,7 @@ method_names = ['johnson_freeze__theta',
 pretty_names = ['Ours', 'Johnson']
 
 train_args = utils.load_args('train_args',os.path.join(exp_dir, method_names[0]))
-utils.set_global_cov_mode(train_args)
+utils.set_defaults(train_args)
 
 eval_dir = os.path.join(exp_dir, 'eval')
 os.makedirs(eval_dir, exist_ok=True)
@@ -76,7 +76,7 @@ def profile_q(key, p, q, theta, phi, obs_seqs):
     
 
 
-p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
+p = hmm.NonLinearHMM(state_dim=train_args.state_dim, 
                         obs_dim=train_args.obs_dim, 
                         transition_matrix_conditionning=train_args.transition_matrix_conditionning,
                         layers=train_args.emission_map_layers,

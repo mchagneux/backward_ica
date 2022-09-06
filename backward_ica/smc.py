@@ -115,7 +115,7 @@ class SMC:
 
     #     probs_seq, particles_seq = filt_seq
 
-    #     sigma_plus = 1 / jnp.sqrt(((2*jnp.pi)**self.transition_kernel.in_dim)*jnp.linalg.det(params.transition.scale.cov))
+    #     sigma_plus = 1 / jnp.sqrt(((2*jnp.pi)**self.transition_kernel.in_dim)*jnp.linalg.det(params.transition.noise.scale.cov))
 
     #     @jit
     #     def _sample_path(key, probs_seq, particles_seq):

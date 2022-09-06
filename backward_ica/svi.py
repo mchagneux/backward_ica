@@ -50,13 +50,13 @@ def constant_terms_from_log_gaussian(dim:int, log_det:float)->float:
 def transition_term_integrated_under_backward(q_backwd_state, transition_params):
     # expectation of the quadratic form that appears in the log of the state transition density
 
-    A = transition_params.map.w @ q_backwd_state.map.w - jnp.eye(transition_params.scale.cov.shape[0])
+    A = transition_params.map.w @ q_backwd_state.map.w - jnp.eye(transition_params.noise.scale.cov.shape[0])
     b = transition_params.map.w @ q_backwd_state.map.b + transition_params.map.b
-    Omega = transition_params.scale.prec
+    Omega = transition_params.noise.scale.prec
     
     result = -0.5 * QuadTerm.from_A_b_Omega(A, b, Omega)
-    result.c += -0.5 * jnp.trace(transition_params.scale.prec @ transition_params.map.w @ q_backwd_state.scale.cov @ transition_params.map.w.T) \
-                + constant_terms_from_log_gaussian(transition_params.scale.cov.shape[0], transition_params.scale.log_det)
+    result.c += -0.5 * jnp.trace(transition_params.noise.scale.prec @ transition_params.map.w @ q_backwd_state.scale.cov @ transition_params.map.w.T) \
+                + constant_terms_from_log_gaussian(transition_params.noise.scale.cov.shape[0], transition_params.noise.scale.log_det)
     return result 
 
 def expect_quadratic_term_under_backward(quad_form:QuadTerm, backwd_state):
@@ -84,9 +84,9 @@ def quadratic_term_from_log_gaussian(gaussian_params):
 def get_tractable_emission_term(obs, emission_params):
     A = emission_params.map.w
     b = emission_params.map.b - obs
-    Omega = emission_params.scale.prec
+    Omega = emission_params.noise.scale.prec
     emission_term = -0.5*QuadTerm.from_A_b_Omega(A, b, Omega)
-    emission_term.c += constant_terms_from_log_gaussian(emission_params.scale.cov.shape[0], emission_params.scale.log_det)
+    emission_term.c += constant_terms_from_log_gaussian(emission_params.noise.scale.cov.shape[0], emission_params.noise.scale.log_det)
     return emission_term
 
 def get_tractable_emission_term_from_natparams(emission_natparams):
@@ -121,6 +121,7 @@ class GeneralBackwardELBO:
             def _sample_step(next_sample, x):
                 
                 key, obs, backwd_state = x
+                
                 sample = self.q.backwd_kernel.sample(key, next_sample, backwd_state)
 
                 emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)

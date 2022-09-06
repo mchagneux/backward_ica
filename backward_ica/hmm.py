@@ -12,7 +12,7 @@ from functools import partial
 from jax import nn
 import optax
 config.update('jax_enable_x64',True)
-
+import copy 
 _conditionnings = {'diagonal':lambda param: jnp.diag(param),
                 'symetric_def_pos': lambda param: param @ param.T,
                 None:lambda x:x}
@@ -99,6 +99,11 @@ def neural_map_noninjective(input, layers, slope, out_dim):
     x = net(input)
     return jnp.cos(x)
 
+def chaotic_map(x, grid_size, gamma, tau, out_dim):
+    linear_map = hk.Linear(out_dim, 
+                        with_bias=False, 
+                        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'normal'))
+    return x + grid_size * (-x + gamma * linear_map(nn.tanh(x))) / tau
 
 def linear_map_apply(map_params, input):
     out =  jnp.dot(map_params.w, input)
@@ -113,9 +118,7 @@ def linear_map_init_params(key, dummy_in, out_dim, conditionning, bias, range_pa
         w = random.uniform(key_w, (out_dim, len(dummy_in)))
     
     if bias: 
-        if HMM.default_transition_bias is not None: 
-            b = HMM.default_transition_bias * jnp.ones((out_dim,))
-        else: b = random.uniform(key_b, (out_dim,))
+        b = random.uniform(key_b, (out_dim,))
         return LinearMapParams(w=w, b=b)
     else: 
         return LinearMapParams(w=w)
@@ -147,26 +150,25 @@ class Gaussian:
         return gaussian_pdf(x, params.mean, params.scale.cov)
 
     @staticmethod
-    def get_random_params(key, dim, default_mean=0.0, default_base_scale=None):
+    def get_random_params(key, dim):
         
         subkeys = random.split(key,2)
 
-        if default_mean is not None:
-            mean = default_mean * jnp.ones((dim,))
-        else: mean = random.uniform(subkeys[0], shape=(dim,), minval=-1, maxval=1)
-        
-        if default_base_scale is not None: 
-            scale = default_base_scale * jnp.ones((dim,))
-        else: 
-            scale = random.uniform(subkeys[1], shape=(dim,), minval=-1, maxval=1)
-        if HMM.parametrization == 'prec_chol':scale=1/scale
-        return GaussianParams(mean=mean, scale={HMM.parametrization:scale})
+        mean = random.uniform(subkeys[0], shape=(dim,), minval=-1, maxval=1)
+        return GaussianParams(mean, Scale.get_random(key, dim, HMM.parametrization))
 
     @staticmethod
     def format_params(params):
-        base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
-        return GaussianParams(mean=params.mean, scale=Scale(**base_scale))
-    
+        return GaussianParams(mean=params.mean, scale=Scale.format(params.scale))
+
+    @staticmethod
+    def get_random_noise_params(key, dim):
+        return GaussianNoiseParams(Scale.get_random(key, dim, HMM.parametrization))
+
+    @staticmethod
+    def format_noise_params(noise_params):
+        return GaussianNoiseParams(Scale.format(noise_params.scale))
+
     @staticmethod
     def KL(params_0, params_1):
         mu_0, sigma_0 = params_0.mean, params_0.scale.cov
@@ -186,136 +188,122 @@ class Gaussian:
         return jnp.linalg.norm(mu_0 - mu_1, ord=2) ** 2 \
                 + jnp.trace(sigma_0 + sigma_1  - 2*jnp.sqrt(sigma_0_half @ sigma_1 @ sigma_0_half))
 
-        
-
 class Student: 
 
     @staticmethod
     def sample(key, params):
-        return params.mean + params.scale.cov_chol @ random.normal(key, (params.mean.shape[0],))
+        return params.loc + params.scale.cov_chol @ random.t(key, df=params.df, shape=(params.loc.shape[0],))
     
     @staticmethod
     def logpdf(x, params):
-        return student_logpdf(x, params.mean, params.scale.cov)
+        return student_logpdf(x, df=params.df, loc=params.loc, scale=params.scale)
     
     @staticmethod
     def pdf(x, params):
-        return student_pdf(x, params.mean, params.scale.cov)
+        return student_pdf(x, df=params.df, loc=params.loc, scale=params.scale)
 
     @staticmethod
-    def get_random_params(key, dim, default_mean=0.0, default_base_scale=None):
+    def get_random_params(key, dim):
         
-        subkeys = random.split(key,2)
+        subkeys = random.split(key,3)
 
-        if default_mean is not None:
-            mean = default_mean * jnp.ones((dim,))
-        else: mean = random.uniform(subkeys[0], shape=(dim,), minval=-1, maxval=1)
-        
-        if default_base_scale is not None: 
-            scale = default_base_scale * jnp.ones((dim,))
-        else: 
-            scale = random.uniform(subkeys[1], shape=(dim,), minval=-1, maxval=1)
-        if HMM.parametrization == 'prec_chol':scale=1/scale
-        return GaussianParams(mean=mean, scale={HMM.parametrization:scale})
+
+        mean = random.uniform(subkeys[0], shape=(dim,), minval=-1, maxval=1)
+        df = random.randint(subkeys[1], shape=(1,), minval=1, maxval=10)
+        scale = Scale.get_random(subkeys[3], dim, HMM.parametrization)
+        return StudentParams(loc=mean, 
+                            df=df, 
+                            scale=scale)
 
     @staticmethod
     def format_params(params):
-        base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
-        return GaussianParams(mean=params.mean, scale=Scale(**base_scale))
+        return StudentParams(loc=params.loc, df=params.df, scale=Scale.format(params.scale))
+
+    @staticmethod
+    def get_random_noise_params(key, dim):
+        subkeys = random.split(key, 2)
+        df = random.randint(subkeys[1], shape=(1,), minval=1, maxval=10)
+        scale = Scale.get_random(subkeys[1], dim, HMM.parametrization)
+        return StudentNoiseParams(df, scale)
+
+    @staticmethod 
+    def format_noise_params(noise_params):
+        return StudentNoiseParams(noise_params.df, Scale.format(noise_params.scale))
 
 class Kernel:
 
     def __init__(self,
                 in_dim, 
                 out_dim,
-                kernel_def, 
+                map_def, 
                 noise_dist=Gaussian):
 
         self.in_dim = in_dim
         self.out_dim = out_dim 
-        if noise_dist==Gaussian:
-            self.noise_params_class = GaussianParams
-        
+
+        self.noise_dist = noise_dist
 
 
 
-        if kernel_def['map_type'] == 'linear':
+        if noise_dist == Gaussian:
+            self.format_output = lambda mean, noise, params: GaussianParams(mean, noise.scale)
+            self.params_type = GaussianNoiseParams
+            
+        elif noise_dist == Student:
+            self.format_output = lambda mean, noise, params: StudentParams(loc=mean, df=noise.df, scale=noise.scale)
+            self.params_type = StudentNoiseParams
 
-            apply_map = lambda params, input: (linear_map_apply(params.map, input), params.scale)
+        if map_def['map_type'] == 'linear':
+
+            apply_map = lambda params, input: (linear_map_apply(params.map, input), params.noise)
 
             init_map_params = partial(linear_map_init_params, out_dim=out_dim, 
-                                    conditionning=kernel_def['map_info']['conditionning'], 
-                                    bias=kernel_def['map_info']['bias'], range_params=kernel_def['map_info']['range_params'])
+                                    conditionning=map_def['map_info']['conditionning'], 
+                                    bias=map_def['map_info']['bias'], 
+                                    range_params=map_def['map_info']['range_params'])
+
+            get_random_map_params = lambda key: init_map_params(key, jnp.empty((self.in_dim,)))
 
             format_map_params = partial(linear_map_format_params, 
-                                        conditionning_func=_conditionnings[kernel_def['map_info']['conditionning']])
+                                        conditionning_func=_conditionnings[map_def['map_info']['conditionning']])
 
-            def get_random_params(key, default_base_scale=None):
-                key, subkey = random.split(key, 2)
-                map_params = init_map_params(key, jnp.empty((self.in_dim,)))
 
-                if default_base_scale is not None: 
-                    scale=default_base_scale * jnp.ones((self.out_dim,))
 
-                else: scale = random.uniform(subkey, shape=(self.out_dim,), minval=0.01, maxval=1)
-                if HMM.parametrization == 'prec_chol':scale=1/scale
 
-                return KernelParams(map=map_params, scale={HMM.parametrization:scale})
-
-            def format_params(params):
-                base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
-
-                return KernelParams(map=format_map_params(params.map),
-                            scale=Scale(**base_scale))
-
-        elif kernel_def['map_type'] == 'nonlinear':
-            if kernel_def['map_info']['homogeneous']: 
+        elif map_def['map_type'] == 'nonlinear':
+            if map_def['map_info']['homogeneous']: 
         
-                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(kernel_def['map'], 
-                                                                                    out_dim=out_dim)))
-                apply_map = lambda params, input: (nonlinear_apply_map(params.map, input), params.scale)
+                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(map_def['map'], 
+                                                                                    out_dim=out_dim)))                                 
+                apply_map = lambda params, input: (nonlinear_apply_map(params.map, input), params.noise)
+
+                get_random_map_params = lambda key: init_map_params(key, jnp.empty((self.in_dim,)))
 
                 format_map_params = lambda x:x
                 
-                def get_random_params(key, default_base_scale=None):
-                    key, subkey = random.split(key, 2)
-                    map_params = init_map_params(key, jnp.empty((self.in_dim,)))
-
-                    if default_base_scale is not None: 
-                        scale=default_base_scale * jnp.ones((self.out_dim,))
-
-                    else: scale = jnp.random.uniform(subkey, shape=(self.out_dim,), minval=0.01, maxval=1)
-                    if HMM.parametrization == 'prec_chol':scale=1/scale
-
-                    return KernelParams(map=map_params, scale={HMM.parametrization:scale})
-
-                def format_params(params):
-                    base_scale = {k:jnp.diag(v) for k,v in params.scale.items()}
-
-                    return KernelParams(map=format_map_params(params.map),
-                            scale=Scale(**base_scale))
-
             else: 
                 
-                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(kernel_def['map'], 
+                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(map_def['map'], 
                                                                                 state_dim=out_dim)))
                 
                 apply_map = lambda params, input: nonlinear_apply_map(params.inner, params.varying, input)
 
-                def get_random_params(key):
-                    return init_map_params(key, jnp.empty((kernel_def['map_info']['varying_params_shape'],)), jnp.empty((self.in_dim,)))
+                get_random_map_params = lambda key: init_map_params(key, 
+                                                                    jnp.empty((map_def['map_info']['varying_params_shape'],)), 
+                                                                    jnp.empty((self.in_dim,)))
                 
-                def format_params(params):
-                    return params 
+                format_map_params = lambda x:x
+        
+
 
         self._apply_map = apply_map 
-        self.get_random_params = get_random_params
-        self._format_params = format_params
-        self.noise_dist:Gaussian = noise_dist
-        
+        self._get_random_map_params = get_random_map_params
+        self._format_map_params = format_map_params 
+        self._get_random_noise_params = lambda key: noise_dist.get_random_noise_params(key, self.out_dim)
+
     def map(self, state, params):
         mean, scale = self._apply_map(params, state)
-        return self.noise_params_class(mean=mean, scale=scale)
+        return self.format_output(mean, scale, params)
     
     def sample(self, key, state, params):
         return self.noise_dist.sample(key, self.map(state, params))
@@ -326,17 +314,18 @@ class Kernel:
     def pdf(self, x, state, params):
         return self.noise_dist.pdf(x, self.map(state, params))
 
+    def get_random_params(self, key):
+        key, subkey = random.split(key, 2)
+        return KernelParams(self._get_random_map_params(key), self._get_random_noise_params(subkey))
+
     def format_params(self, params):
-        return self._format_params(params)
-   
+        return KernelParams(self._format_map_params(params.map), 
+                            self.noise_dist.format_noise_params(params.noise))
+
+
 class HMM: 
 
-    default_prior_mean = None
-    default_prior_base_scale = None 
-    default_transition_base_scale = None 
-    default_emission_base_scale = None 
-    default_transition_bias = None
-
+    parametrization = 'cov_chol'
 
     def __init__(self, 
                 state_dim, 
@@ -361,14 +350,13 @@ class HMM:
 
     def get_random_params(self, key):
         key_prior, key_transition, key_emission = random.split(key, 3)
+
         prior_params = self.prior_dist.get_random_params(key_prior, 
-                                                        self.state_dim, 
-                                                        default_mean=self.default_prior_mean, 
-                                                        default_base_scale=self.default_prior_base_scale)
-        transition_params = self.transition_kernel.get_random_params(key_transition, 
-                                                            default_base_scale=self.default_transition_base_scale)
-        emission_params = self.emission_kernel.get_random_params(key_emission, 
-                                                                default_base_scale=self.default_emission_base_scale)
+                                                        self.state_dim)
+
+        transition_params = self.transition_kernel.get_random_params(key_transition)
+        emission_params = self.emission_kernel.get_random_params(key_emission)
+
         return HMMParams(prior_params, 
                         transition_params, 
                         emission_params)
@@ -406,6 +394,22 @@ class HMM:
         print('Num params:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params)))
         print('-- in prior + predict:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
         print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.emission)))
+
+    @staticmethod
+    def set_params(params, args):
+        new_params = copy.deepcopy(params)
+        for k,v in vars(args).items():         
+            if k == 'prior_mean':
+                new_params.prior.mean = v * jnp.ones_like(params.prior.mean)
+            elif k == 'prior_base_scale':
+                new_params.prior.scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
+            elif k == 'transition_base_scale': 
+                new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
+            elif k == 'emission_base_scale': 
+                new_params.emission.noise.scale = Scale.set_default(params.emission.noise.scale, v, HMM.parametrization)
+            elif k == 'emission_df':
+                new_params.emission.noise.df = v
+        return new_params
 
 class Smoother(metaclass=ABCMeta):
 
@@ -529,7 +533,7 @@ class LinearBackwardSmoother(Smoother):
 
     def new_backwd_state(self, filt_state, params):
 
-        A, a, Q = params.transition.map.w, params.transition.map.b, params.transition.scale.cov
+        A, a, Q = params.transition.map.w, params.transition.map.b, params.transition.noise.scale.cov
         mu, Sigma = filt_state.out.mean, filt_state.out.scale.cov
         I = jnp.eye(self.state_dim)
 
@@ -540,7 +544,7 @@ class LinearBackwardSmoother(Smoother):
         a_back = C @ mu - K @ a
         cov_back = C @ Sigma
 
-        return KernelParams(LinearMapParams(A_back, a_back), Scale(cov=cov_back))
+        return KernelParams(LinearMapParams(A_back, a_back), GaussianNoiseParams(Scale(cov=cov_back)))
 
     def compute_marginals(self, last_filt_state, backwd_state_seq):
         last_filt_state_mean, last_filt_state_cov = last_filt_state.out.mean, last_filt_state.out.scale.cov
@@ -561,7 +565,6 @@ class LinearBackwardSmoother(Smoother):
         marginals = tree_append(marginals, GaussianParams(mean=last_filt_state_mean, scale=Scale(cov=last_filt_state_cov)))
 
         return marginals
-
 
     def filt_seq(self, obs_seq, params):
         
@@ -657,7 +660,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         params = self.get_random_params(key_init_params)
 
         prior_scale = theta_star.prior.scale
-        transition_scale = theta_star.transition.scale
+        transition_scale = theta_star.transition.noise.scale
         emission_params = theta_star.emission
 
         def build_params(params):
@@ -718,40 +721,75 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         formatted_params.compute_covs()
         return super().compute_filt_state_seq(obs_seq, formatted_params)
 
-class NonLinearGaussianHMM(HMM):
+class NonLinearHMM(HMM):
 
+    @staticmethod
+    def linear_transition_with_nonlinear_emission(args):
+        if args.injective:
+            nonlinear_map_forward = partial(neural_map, layers=args.emission_layers, slope=args.slope)
+        else: 
+            nonlinear_map_forward = partial(neural_map_noninjective, layers=args.emission_layers, slope=args.slope)
+            
+        transition_kernel_def = {'map':{'map_type':'linear',
+                                        'map_info' : {'conditionning': args.transition_matrix_conditionning, 
+                                        'bias': args.transition_bias,
+                                        'range_params':args.range_transition_map_params}}, 
+                                'noise_dist':Gaussian}
+
+
+        emission_kernel_def = {'map':{'map_type':'nonlinear',
+                                    'map_info' : {'homogeneous': True},
+                                    'map': nonlinear_map_forward},
+                            'noise_dist':Gaussian}
+
+        return NonLinearHMM(args.state_dim, 
+                                    args.obs_dim, 
+                                    transition_kernel_def, 
+                                    emission_kernel_def, 
+                                    args.num_particles, 
+                                    args.num_smooth_particles)
+    @staticmethod
+    def chaotic_rnn(args):
+        nonlinear_map_forward = partial(chaotic_map, 
+                                        grid_size=args.grid_size, 
+                                        gamma=args.gamma,
+                                        tau=args.tau)
+
+        transition_kernel_def = {'map':{'map_type':'nonlinear',
+                                        'map_info' : {'homogeneous': True},
+                                        'map': nonlinear_map_forward},
+                                'noise_dist':Gaussian}
+        
+        emission_kernel_def = {'map':{'map_type':'linear',
+                                    'map_info' : {'conditionning': args.emission_matrix_conditionning, 
+                                    'bias': args.emission_bias,
+                                    'range_params':args.range_emission_map_params}}, 
+                                'noise_dist':Student}
+
+
+        return NonLinearHMM(args.state_dim, 
+                            args.obs_dim, 
+                            transition_kernel_def, 
+                            emission_kernel_def, 
+                            prior_dist = Gaussian,
+                            num_particles = args.num_particles, 
+                            num_smooth_particles=args.num_smooth_particles)
+        
     def __init__(self, 
                 state_dim, 
                 obs_dim, 
-                transition_matrix_conditionning,
-                layers,
-                slope,
+                transition_kernel_def,
+                emission_kernel_def,
+                prior_dist = Gaussian,
                 num_particles=100, 
-                num_smooth_particles=None,
-                range_transition_map_params=(0,1),
-                transition_bias=True,
-                injective=True):
-
-        if injective:
-            nonlinear_map_forward = partial(neural_map, layers=layers, slope=slope)
-        else: 
-            nonlinear_map_forward = partial(neural_map_noninjective, layers=layers, slope=slope)
-            
-        transition_kernel_def = {'map_type':'linear',
-                            'map_info' : {'conditionning': transition_matrix_conditionning, 
-                                        'bias': transition_bias,
-                                        'range_params':range_transition_map_params}}
-
-
-        emission_kernel_def = {'map_type':'nonlinear',
-                            'map_info' : {'homogeneous': True},
-                            'map': nonlinear_map_forward}
+                num_smooth_particles=None):
                                                 
         HMM.__init__(self, 
                     state_dim, 
                     obs_dim, 
-                    transition_kernel_type = lambda state_dim: Kernel(state_dim, state_dim, transition_kernel_def), 
-                    emission_kernel_type  = lambda state_dim, obs_dim:Kernel(state_dim, obs_dim, emission_kernel_def))
+                    transition_kernel_type = lambda state_dim: Kernel(state_dim, state_dim, transition_kernel_def['map'], transition_kernel_def['noise_dist']), 
+                    emission_kernel_type  = lambda state_dim, obs_dim:Kernel(state_dim, obs_dim, emission_kernel_def['map'], emission_kernel_def['noise_dist']),
+                    prior_dist = prior_dist)
 
         self.smc = SMC(self.transition_kernel, 
                     self.emission_kernel, 
@@ -968,14 +1006,11 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
         key_prior, key_transition, key_filt = random.split(key, 3)
 
         dummy_obs = jnp.empty((self.obs_dim,))
-        transition_params = self.transition_kernel.get_random_params(key_transition, 
-                                                default_base_scale=HMM.default_transition_base_scale)
+        transition_params = self.transition_kernel.get_random_params(key_transition)
 
         if self.explicit_proposal:
             prior_params = self.prior_dist.get_random_params(key_prior, 
-                                                            self.state_dim, 
-                                                            default_mean=0.0, 
-                                                            default_base_scale=HMM.default_prior_base_scale)
+                                                            self.state_dim)
                                                             
             dummy_pred_state = GaussianParams(mean=jnp.ones((self.state_dim,)), 
                                             scale=Scale(cov_chol=jnp.eye(self.state_dim)))

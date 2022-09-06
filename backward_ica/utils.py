@@ -167,7 +167,7 @@ class lazy_property(object):
         return value
 
 
-KernelParams = namedtuple('KernelParams', ['map','scale'])
+KernelParams = namedtuple('KernelParams', ['map','noise'])
 FiltState = namedtuple('FiltState', ['out','hidden'])
 BackwardState = namedtuple('BackwardState', ['inner', 'varying'])
 GeneralBackwardSmootherParams = namedtuple('GeneralBackwardSmootherParams',['prior', 'filt_update','backwd'])
@@ -224,16 +224,17 @@ def params_to_flattened_dict(params):
     params_dict = params_to_dict(params)
     return pd.json_normalize(params_dict, sep='/').to_dict(orient='records')[0]
     
-def set_global_cov_mode(args):
+def set_parametrization(args=None):
         
-    hmm.HMM.parametrization = args.parametrization 
-    GaussianParams.parametrization = args.parametrization
+    if args is None: 
+        hmm.HMM.parametrization = 'cov_chol' 
+        GaussianParams.parametrization = 'cov_chol'
 
-    hmm.HMM.default_prior_mean = args.default_prior_mean
-    hmm.HMM.default_prior_base_scale = args.default_prior_base_scale
-    hmm.HMM.default_transition_base_scale = args.default_transition_base_scale
-    hmm.HMM.default_emission_base_scale = args.default_emission_base_scale
-    hmm.HMM.default_transition_bias = args.default_transition_bias
+
+    else:
+        hmm.HMM.parametrization = args.parametrization 
+        GaussianParams.parametrization = args.parametrization
+
 
 
 @register_pytree_node_class
@@ -310,13 +311,79 @@ class Scale:
     def __repr__(self):
         return str(vars(self))
 
+    @staticmethod
+    def get_random(key, dim, parametrization):
+
+        scale = random.uniform(key, shape=(dim,), minval=-1, maxval=1)
+
+        if parametrization == 'prec_chol':scale=1/scale
+
+        return {parametrization:scale}
+
+    @classmethod
+    def format(cls, scale):
+        base_scale =  {k:jnp.diag(v) for k,v in scale.items()}
+        return cls(**base_scale)
+
+    @staticmethod
+    def set_default(previous_value, default_value, parametrization):
+        scale = default_value * jnp.ones_like(previous_value[parametrization])
+
+        if parametrization == 'prec_chol':scale=1/scale
+        return {parametrization:scale}
+
+@register_pytree_node_class
+@dataclass(init=True)
+class StudentParams:
+    
+    loc: jnp.ndarray
+    df: int
+    scale: Scale
+
+
+    def tree_flatten(self):
+        return ((self.loc, self.df, self.scale), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+
+@register_pytree_node_class
+@dataclass(init=True)
+class StudentNoiseParams:
+    
+    df: int
+    scale: Scale
+
+    def tree_flatten(self):
+        return ((self.df, self.scale), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+@register_pytree_node_class
+@dataclass(init=True)
+class GaussianNoiseParams:
+    
+    scale: Scale
+
+    def tree_flatten(self):
+        return ((self.scale,), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+
 def empty_add(d):
     return jnp.zeros((d,d))
 
 @register_pytree_node_class
 class GaussianParams: 
 
-    parametrization = None
+    parametrization = 'cov_chol'
     
     def __init__(self, mean=None, scale=None, eta1=None, eta2=None):
 
@@ -420,8 +487,8 @@ class HMMParams:
 
     def compute_covs(self):
         self.prior.scale.cov
-        self.transition.scale.cov
-        self.emission.scale.cov
+        self.transition.noise.scale.cov
+        self.emission.noise.scale.cov
 
     def tree_flatten(self):
         return ((self.prior, self.transition, self.emission), None)
@@ -441,7 +508,7 @@ class JohnsonBackwardSmootherParams:
 
     def compute_covs(self):
         self.prior.scale.cov
-        self.transition.scale.cov
+        self.transition.noise.scale.cov
 
     def tree_flatten(self):
         return ((self.prior, self.transition, self.filt_update), None)
@@ -850,9 +917,9 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
 
     train_args = load_args('train_args', train_dirs[0])
 
-    set_global_cov_mode(train_args)
+    set_defaults(train_args)
 
-    p = hmm.NonLinearGaussianHMM(state_dim=train_args.state_dim, 
+    p = hmm.NonLinearHMM(state_dim=train_args.state_dim, 
                             obs_dim=train_args.obs_dim, 
                             transition_matrix_conditionning=train_args.transition_matrix_conditionning,
                             range_transition_map_params=train_args.range_transition_map_params,

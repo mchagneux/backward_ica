@@ -12,7 +12,7 @@ import pickle
 
 def main(train_args, eval_args):
 
-    utils.set_global_cov_mode(train_args)
+    utils.set_defaults(train_args)
     
     key_eval = jax.random.PRNGKey(eval_args.seed)
 

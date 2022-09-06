@@ -104,6 +104,8 @@ def main(args):
         state_dim, obs_dim = args.state_dim, args.obs_dim
 
         args_p = argparse.Namespace()
+        args_p.state_dim, args_p.obs_dim = args.state_dim, args.obs_dim
+
         args_p.linear = True
         args_p.layers = ()
         args_p.slope = 0
@@ -131,7 +133,7 @@ def main(args):
         args_q.backwd_layers = False
         args_q.explicit_proposal = False 
 
-    utils.set_global_cov_mode(args_p)
+    utils.set_parametrization(args_p)
 
 
     if args_p.linear:
@@ -143,16 +145,7 @@ def main(args):
 
     else: 
 
-        p = hmm.NonLinearGaussianHMM(state_dim=state_dim, 
-                                    obs_dim=obs_dim, 
-                                    transition_matrix_conditionning=args_p.transition_matrix_conditionning,
-                                    layers=args_p.emission_map_layers,
-                                    slope=args_p.slope,
-                                    num_particles=args_p.num_particles,
-                                    num_smooth_particles=args_p.num_smooth_particles,
-                                    transition_bias=args_p.transition_bias,
-                                    range_transition_map_params=args_p.range_transition_map_params,
-                                    injective=args_p.injective) # specify the structure of the true model
+        p = hmm.NonLinearHMM.linear_transition_with_nonlinear_emission(args_p) # specify the structure of the true model
 
     if 'linear' in args_q.q_version:
 
