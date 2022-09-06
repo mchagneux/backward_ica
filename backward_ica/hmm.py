@@ -399,15 +399,15 @@ class HMM:
     def set_params(params, args):
         new_params = copy.deepcopy(params)
         for k,v in vars(args).items():         
-            if k == 'prior_mean':
+            if k == 'default_prior_mean':
                 new_params.prior.mean = v * jnp.ones_like(params.prior.mean)
-            elif k == 'prior_base_scale':
+            elif k == 'default_prior_base_scale':
                 new_params.prior.scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
-            elif k == 'transition_base_scale': 
+            elif k == 'default_transition_base_scale': 
                 new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
-            elif k == 'emission_base_scale': 
+            elif k == 'default_emission_base_scale': 
                 new_params.emission.noise.scale = Scale.set_default(params.emission.noise.scale, v, HMM.parametrization)
-            elif k == 'emission_df':
+            elif k == 'default_emission_df':
                 new_params.emission.noise.df = v
         return new_params
 
@@ -551,7 +551,7 @@ class LinearBackwardSmoother(Smoother):
 
         @jit
         def _step(filt_state, backwd_state):
-            A_back, a_back, cov_back = backwd_state.map.w, backwd_state.map.b, backwd_state.scale.cov
+            A_back, a_back, cov_back = backwd_state.map.w, backwd_state.map.b, backwd_state.noise.scale.cov
             smoothed_mean, smoothed_cov = filt_state
             mean = A_back @ smoothed_mean + a_back
             cov = A_back @ smoothed_cov @ A_back.T + cov_back
@@ -726,9 +726,9 @@ class NonLinearHMM(HMM):
     @staticmethod
     def linear_transition_with_nonlinear_emission(args):
         if args.injective:
-            nonlinear_map_forward = partial(neural_map, layers=args.emission_layers, slope=args.slope)
+            nonlinear_map_forward = partial(neural_map, layers=args.emission_map_layers, slope=args.slope)
         else: 
-            nonlinear_map_forward = partial(neural_map_noninjective, layers=args.emission_layers, slope=args.slope)
+            nonlinear_map_forward = partial(neural_map_noninjective, layers=args.emission_map_layers, slope=args.slope)
             
         transition_kernel_def = {'map':{'map_type':'linear',
                                         'map_info' : {'conditionning': args.transition_matrix_conditionning, 
@@ -742,12 +742,14 @@ class NonLinearHMM(HMM):
                                     'map': nonlinear_map_forward},
                             'noise_dist':Gaussian}
 
+
         return NonLinearHMM(args.state_dim, 
-                                    args.obs_dim, 
-                                    transition_kernel_def, 
-                                    emission_kernel_def, 
-                                    args.num_particles, 
-                                    args.num_smooth_particles)
+                            args.obs_dim, 
+                            transition_kernel_def, 
+                            emission_kernel_def, 
+                            prior_dist = Gaussian,
+                            num_particles = args.num_particles, 
+                            num_smooth_particles=args.num_smooth_particles)
     @staticmethod
     def chaotic_rnn(args):
         nonlinear_map_forward = partial(chaotic_map, 
@@ -1030,6 +1032,18 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
                                             transition_params, 
                                             filt_update_params)
 
+
+    def set_params(self, params, args):
+        new_params = copy.deepcopy(params)
+        for k,v in vars(args).items():         
+            if k == 'default_prior_mean' and self.explicit_proposal:
+                new_params.prior.mean = v * jnp.ones_like(params.prior.mean)
+            elif k == 'default_prior_base_scale' and self.explicit_proposal:
+                new_params.prior.scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
+            elif k == 'default_transition_base_scale': 
+                new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
+        return new_params
+
     def init_filt_state(self, obs, params):
 
         return self._init_filt_state(obs, params)
@@ -1193,7 +1207,7 @@ class GeneralBackwardSmoother(Smoother):
 
 #     def new_filt_state(self, obs, filt_state, params):
 
-#         pred_mean, pred_cov = Kalman.predict(filt_state.mean, filt_state.scale.cov, params.transition)
+#         pred_mean, pred_cov = Kalman.predict(filt_state.mean, filt_state.noise.scale.cov, params.transition)
 #         pred_state = vec_from_gaussian_params(GaussianParams(pred_mean, Scale(cov=pred_cov)), self.state_dim)
 
 #         filt_state  = self.filt_update_apply(params.filt_update, obs, pred_state)

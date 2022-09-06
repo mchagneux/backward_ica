@@ -33,7 +33,6 @@ def plot_to_image(figure):
     image = tf.expand_dims(image, 0)
     return image
 
-
 def constant_terms_from_log_gaussian(dim:int, log_det:float)->float:
     """Utility function to compute the log of the term that is against the exponential for a multivariate Normal
 
@@ -55,7 +54,7 @@ def transition_term_integrated_under_backward(q_backwd_state, transition_params)
     Omega = transition_params.noise.scale.prec
     
     result = -0.5 * QuadTerm.from_A_b_Omega(A, b, Omega)
-    result.c += -0.5 * jnp.trace(transition_params.noise.scale.prec @ transition_params.map.w @ q_backwd_state.scale.cov @ transition_params.map.w.T) \
+    result.c += -0.5 * jnp.trace(transition_params.noise.scale.prec @ transition_params.map.w @ q_backwd_state.noise.scale.cov @ transition_params.map.w.T) \
                 + constant_terms_from_log_gaussian(transition_params.noise.scale.cov.shape[0], transition_params.noise.scale.log_det)
     return result 
 
@@ -64,7 +63,7 @@ def expect_quadratic_term_under_backward(quad_form:QuadTerm, backwd_state):
 
     W = backwd_state.map.w.T @ quad_form.W @ backwd_state.map.w
     v = backwd_state.map.w.T @ (quad_form.v + (quad_form.W + quad_form.W.T) @ backwd_state.map.b)
-    c = quad_form.c + jnp.trace(quad_form.W @ backwd_state.scale.cov) + backwd_state.map.b.T @ quad_form.W @ backwd_state.map.b + quad_form.v.T @ backwd_state.map.b 
+    c = quad_form.c + jnp.trace(quad_form.W @ backwd_state.noise.scale.cov) + backwd_state.map.b.T @ quad_form.W @ backwd_state.map.b + quad_form.v.T @ backwd_state.map.b 
 
     return QuadTerm(W=W, v=v, c=c)
 
@@ -121,7 +120,7 @@ class GeneralBackwardELBO:
             def _sample_step(next_sample, x):
                 
                 key, obs, backwd_state = x
-                
+
                 sample = self.q.backwd_kernel.sample(key, next_sample, backwd_state)
 
                 emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
@@ -245,7 +244,7 @@ class OnlineBackwardLinearELBO:
             kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
                     + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
 
-            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
+            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.noise.scale.log_det) +  0.5 * self.p.state_dim
             q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
 
 
@@ -329,7 +328,7 @@ class BackwardLinearELBO:
             kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
                     + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
 
-            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
+            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.noise.scale.log_det) +  0.5 * self.p.state_dim
             q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
 
 
@@ -389,7 +388,7 @@ class LinearGaussianELBO:
                     + get_tractable_emission_term(obs, theta.emission)
 
 
-            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.scale.log_det) +  0.5 * self.p.state_dim
+            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.noise.scale.log_det) +  0.5 * self.p.state_dim
             q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
 
             return (q_filt_state, kl_term), q_backwd_state
@@ -467,7 +466,7 @@ class SVITrainer:
             self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
 
 
-    def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None):
+    def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None):
 
         key_theta, key_phi = random.split(key_params, 2)
 
@@ -476,6 +475,9 @@ class SVITrainer:
 
         theta = self.p.get_random_params(key_theta)
         phi = self.q.get_random_params(key_phi)
+        if args is not None:
+            theta = self.p.set_params(theta, args)
+            phi = self.q.set_params(phi, args)
         params = (theta, phi)
 
         params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
@@ -547,7 +549,7 @@ class SVITrainer:
                     
         return all_params, avg_elbos
 
-    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, store_every=None, log_dir=''):
+    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, store_every=None, log_dir='', args=None):
 
 
         all_avg_elbos = []
@@ -566,7 +568,7 @@ class SVITrainer:
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
-            params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer)
+            params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer, args)
 
             best_epoch = jnp.nanargmax(jnp.array(avg_elbos))
             best_epochs.append(best_epoch)

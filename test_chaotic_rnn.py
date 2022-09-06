@@ -26,11 +26,16 @@ args.range_emission_map_params = None
 args.num_particles = 1000
 args.num_smooth_particles = 1000
 
+args.injective = True
+args.emission_layers = (8,)
+args.slope = 0
+args.transition_matrix_conditionning = 'diagonal'
+args.range_transition_map_params = (0.99,1)
 
-p = NonLinearHMM.chaotic_rnn(args)
+p = NonLinearHMM.linear_transition_with_nonlinear_emission(args)
 
 theta = p.get_random_params(random.PRNGKey(0))
 theta = p.set_params(theta, args)
 formatted_theta = p.format_params(theta)
-
+print(formatted_theta)
 state_seq, obs_seq = p.sample_seq(random.PRNGKey(0), theta, 100)

@@ -14,25 +14,18 @@ import tensorflow as tf
 
 def main(args, save_dir):
 
-    utils.set_defaults(args)
+    utils.set_parametrization(args)
 
     key_theta = jax.random.PRNGKey(args.seed_theta)
     key_phi = jax.random.PRNGKey(args.seed_phi)
 
 
-    p = hmm.NonLinearHMM(state_dim=args.state_dim, 
-                            obs_dim=args.obs_dim, 
-                            transition_matrix_conditionning=args.transition_matrix_conditionning,
-                            layers=args.emission_map_layers,
-                            slope=args.slope,
-                            num_particles=args.num_particles,
-                            transition_bias=args.transition_bias,
-                            range_transition_map_params=args.range_transition_map_params,
-                            injective=args.injective) # specify the structure of the true model
+    p = hmm.NonLinearHMM.linear_transition_with_nonlinear_emission(args) # specify the structure of the true model
                             
     key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
 
     theta_star = p.get_random_params(key_params) # sample params randomly (but covariances are fixed to default values)
+    theta_star = p.set_params(theta_star, args)
 
     utils.save_params(theta_star, 'theta', save_dir)
 
@@ -115,7 +108,8 @@ def main(args, save_dir):
     params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
                                                             data=obs_seqs, 
                                                             num_fits=args.num_fits,
-                                                            log_dir=save_dir) # returns the best fit (based on the last value of the elbo)
+                                                            log_dir=save_dir,
+                                                            args=args) # returns the best fit (based on the last value of the elbo)
     
     utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True, best_epochs_only=True)
     utils.save_params(params, 'phi', save_dir)
@@ -136,7 +130,7 @@ if __name__ == '__main__':
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--dims', type=int, nargs='+')
+    parser.add_argument('--dims', type=int, nargs='+', default=(2,3))
     args = parser.parse_args()
 
 
@@ -192,6 +186,10 @@ if __name__ == '__main__':
         args.frozen_params  = args.q_version.split('__')[1:]        
         args.online = 'online' in args.q_version
         args.single_split_seq = False
+
+
+        args.num_particles = 100
+        args.num_smooth_particles = 100
 
     utils.save_args(args, 'train_args', save_dir)
 

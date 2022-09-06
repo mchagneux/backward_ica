@@ -120,7 +120,7 @@ def main(args):
         args_p.default_prior_mean = 0.0
         args_p.default_prior_base_scale = math.sqrt(1e-2)
         args_p.default_transition_base_scale = math.sqrt(1e-2)
-        args_p.default_emission_base_scale = math.sqrt(1e-3)
+        args_p.default_emission_base_scale = math.sqrt(1e-2)
         args_p.default_transition_bias = 0
 
         args_q = argparse.Namespace()
@@ -177,7 +177,10 @@ def main(args):
     else: 
         key, subkey_theta, subkey_phi = jax.random.split(key, 3)
         theta_star = p.get_random_params(subkey_theta)
+        theta_star = p.set_params(theta_star, args_p)
         phi = q.get_random_params(subkey_phi)
+        phi = q.set_params(phi, args_p)
+
 
 
     key, subkey = jax.random.split(key, 2)
