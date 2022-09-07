@@ -28,7 +28,7 @@ def run_ffbsi_em_on_train_data(train_args, mle_args):
                             transition_bias=train_args.transition_bias,
                             injective=train_args.injective) # specify the structure of the true model
     
-    theta_star = p.get_random_params(key_params)
+    theta_star = p.get_random_params(key_params, train_args)
     utils.save_params(theta_star, 'theta', train_args.save_dir)
 
     obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, train_args.num_seqs, train_args.seq_length)[1]

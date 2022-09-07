@@ -196,11 +196,11 @@ class Student:
     
     @staticmethod
     def logpdf(x, params):
-        return student_logpdf(x, df=params.df, loc=params.loc, scale=params.scale)
+        return student_logpdf(x, df=params.df, loc=params.loc, scale=params.scale.cov_chol)
     
     @staticmethod
     def pdf(x, params):
-        return student_pdf(x, df=params.df, loc=params.loc, scale=params.scale)
+        return student_pdf(x, df=params.df, loc=params.loc, scale=params.scale.cov_chol)
 
     @staticmethod
     def get_random_params(key, dim):
@@ -243,6 +243,8 @@ class Kernel:
 
         self.noise_dist = noise_dist
 
+        self.map_type = map_def['map_type']
+
 
 
         if noise_dist == Gaussian:
@@ -253,7 +255,7 @@ class Kernel:
             self.format_output = lambda mean, noise, params: StudentParams(loc=mean, df=noise.df, scale=noise.scale)
             self.params_type = StudentNoiseParams
 
-        if map_def['map_type'] == 'linear':
+        if self.map_type == 'linear':
 
             apply_map = lambda params, input: (linear_map_apply(params.map, input), params.noise)
 
@@ -270,7 +272,7 @@ class Kernel:
 
 
 
-        elif map_def['map_type'] == 'nonlinear':
+        elif self.map_type == 'nonlinear':
             if map_def['map_info']['homogeneous']: 
         
                 init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(map_def['map'], 
@@ -348,7 +350,7 @@ class HMM:
             sampler = vmap(self.sample_seq, in_axes=(0, None, None))
             return sampler(jnp.array(subkeys), params, seq_length)
 
-    def get_random_params(self, key):
+    def get_random_params(self, key, params_to_set=None):
         key_prior, key_transition, key_emission = random.split(key, 3)
 
         prior_params = self.prior_dist.get_random_params(key_prior, 
@@ -356,10 +358,12 @@ class HMM:
 
         transition_params = self.transition_kernel.get_random_params(key_transition)
         emission_params = self.emission_kernel.get_random_params(key_emission)
-
-        return HMMParams(prior_params, 
+        params = HMMParams(prior_params, 
                         transition_params, 
                         emission_params)
+        if params_to_set is not None: 
+            params = self.set_params(params, params_to_set)
+        return params 
         
     def format_params(self, params):
 
@@ -409,6 +413,8 @@ class HMM:
                 new_params.emission.noise.scale = Scale.set_default(params.emission.noise.scale, v, HMM.parametrization)
             elif k == 'default_emission_df':
                 new_params.emission.noise.df = v
+            elif k == 'default_emission_matrix' and hasattr(new_params.emission.map, 'w'):
+                new_params.emission.map.w = v * jnp.ones_like(params.emission.map.w)
         return new_params
 
 class Smoother(metaclass=ABCMeta):
@@ -1003,7 +1009,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
         self._init_filt_state =_init_filt_state
         self._new_filt_state = _new_filt_state
                                 
-    def get_random_params(self, key):
+    def get_random_params(self, key, params_to_set=None):
 
         key_prior, key_transition, key_filt = random.split(key, 3)
 
@@ -1028,9 +1034,14 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
 
 
 
-        return JohnsonBackwardSmootherParams(prior_params, 
+        params =  JohnsonBackwardSmootherParams(prior_params, 
                                             transition_params, 
                                             filt_update_params)
+        
+        if params_to_set is not None:
+            params = self.set_params(params, params_to_set)
+        return params  
+        
 
 
     def set_params(self, params, args):
@@ -1042,6 +1053,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
                 new_params.prior.scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
             elif k == 'default_transition_base_scale': 
                 new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
+
         return new_params
 
     def init_filt_state(self, obs, params):

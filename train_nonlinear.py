@@ -1,16 +1,11 @@
-from argparse import ArgumentParser
-from re import I
 import jax 
 import jax.numpy as jnp
-from jax import config, tree_map 
+import math
 
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 from backward_ica.svi import SVITrainer
 utils.enable_x64(True)
-
-
-import tensorflow as tf
 
 def main(args, save_dir):
 
@@ -19,42 +14,33 @@ def main(args, save_dir):
     key_theta = jax.random.PRNGKey(args.seed_theta)
     key_phi = jax.random.PRNGKey(args.seed_phi)
 
-
-    p = hmm.NonLinearHMM.linear_transition_with_nonlinear_emission(args) # specify the structure of the true model
+    if args.p_version == 'linear':
+        p = hmm.LinearGaussianHMM(args.state_dim, 
+                                args.obs_dim, 
+                                args.transition_matrix_conditionning, 
+                                args.range_transition_map_params,
+                                args.transition_bias, 
+                                args.emission_bias)
+    elif 'choatic_rnn' in args.p_version:
+        p = hmm.NonLinearHMM.chaotic_rnn(args)
+    else: 
+        p = hmm.NonLinearHMM.linear_transition_with_nonlinear_emission(args) # specify the structure of the true model
                             
     key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
 
-    theta_star = p.get_random_params(key_params) # sample params randomly (but covariances are fixed to default values)
-    theta_star = p.set_params(theta_star, args)
+    theta_star = p.get_random_params(key_params, args) # sample params randomly (but covariances are fixed to default values)
 
     utils.save_params(theta_star, 'theta', save_dir)
 
-    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, 
+    _ , obs_seqs = p.sample_multiple_sequences(key_gen, 
                                                     theta_star, 
                                                     args.num_seqs, 
                                                     args.seq_length, 
                                                     single_split_seq=args.single_split_seq)
 
 
-    key_smoothing, key_evidence = jax.random.split(key_smc, 2)
 
-    # state_seq, obs_seq = state_seqs[0], obs_seqs[0]
-
-    # means_smc, covs_smc = p.smooth_seq(key_smoothing, obs_seq, theta)
-
-    # import matplotlib.pyplot as plt
-    # fig, axes = plt.subplots(args.state_dim, figsize=(30,30))
-    # for dim_nb in range(args.state_dim):
-        
-    #     utils.plot_relative_errors_1D(axes[dim_nb], state_seq[:,dim_nb], means_smc[:,dim_nb], covs_smc[:,dim_nb])
-    #     utils.plot_relative_errors_1D(axes[dim_nb], state_seq[:,dim_nb], means_smc[:,dim_nb], covs_smc[:,dim_nb])
-
-    # plt.autoscale(True)
-    # plt.tight_layout()
-    # plt.savefig(os.path.join(save_dir, 'smc_smoothing_on_first_seq.pdf'),format='pdf')
-    # plt.clf()
-
-    evidence_keys = jax.random.split(key_evidence, args.num_seqs)
+    evidence_keys = jax.random.split(key_smc, args.num_seqs)
 
     print('Computing evidence...')
 
@@ -125,12 +111,15 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('--p_version', type=str, default='chaotic_rnn')
     parser.add_argument('--q_version',type=str, default='johnson_freeze__theta')
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--dims', type=int, nargs='+', default=(2,3))
+    parser.add_argument('--dims', type=int, nargs='+', default=(2,2))
+
+
     args = parser.parse_args()
 
 
@@ -145,51 +134,62 @@ if __name__ == '__main__':
         args = utils.load_args('train_args',args.args_path)
         args.save_dir = save_dir
     else:
+
+        ## randomness 
         args.seed_theta = 1329
         args.seed_phi = 4569
 
-        args.state_dim, args.obs_dim = args.dims
-        args.transition_matrix_conditionning = 'diagonal'
-
-        args.emission_map_layers = ()
-        args.slope = 0
-
-
-        args.seq_length = 500
-        args.num_seqs = 500
+        ## dataset 
+        args.state_dim, args.obs_dim = args.dims 
+        args.seq_length = 50 # length of the train sequences
+        args.num_seqs = 100 # number of train sequences
+        args.single_split_seq = False # whether to draw one long sample of length seq_length * num_seqs and divide it in seq_length // num_seqs sequences
 
 
-        args.optimizer = 'adamw'
-        args.batch_size = 500
-        args.parametrization = 'cov_chol'
-        args.num_epochs = 1000
-        args.store_every = args.num_epochs // 5
-        args.num_fits = 1
+        args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
 
-        args.update_layers = (16,16)
-        args.backwd_map_layers = (8,8)
+        ## prior 
+        args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior
+        args.default_prior_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the prior
 
-
-        args.num_particles = 2
-        args.num_samples = 1
-        args.parametrization = 'cov_chol'
-        import math
-        args.default_prior_mean = 0.0
-        args.range_transition_map_params = [0.99,1]
-        args.default_prior_base_scale = math.sqrt(1e-2)
-        args.default_transition_base_scale = math.sqrt(1e-2)
-        args.default_emission_base_scale = math.sqrt(1e-2)
+        ## transition 
+        args.transition_matrix_conditionning = 'diagonal' # constraint on the transition matrix 
+        args.range_transition_map_params = [0.99,1] # range of the components of the transition matrix
+        args.default_transition_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the transition kernel
+        args.transition_bias = False 
         args.default_transition_bias = 0
-        args.transition_bias = False
-        args.full_mc = 'full_mc' in args.q_version
-        args.explicit_proposal = 'explicit_proposal' in args.q_version 
-        args.frozen_params  = args.q_version.split('__')[1:]        
-        args.online = 'online' in args.q_version
-        args.single_split_seq = False
 
+        ## emission 
+        args.emission_matrix_conditionning = 'diagonal'
+        args.emission_bias = False
+        args.emission_map_layers = (8,)
+        args.range_emission_map_params = (0.99,1)
+        args.default_emission_base_scale = math.sqrt(1e-2)
+        args.default_emission_matrix = 1
+        args.slope = 0 # amount of linearity in the emission function
+        args.grid_size = 0.001 # discretization parameter for the chaotic rnn
+        args.gamma = 2.5 # gamma for the chaotic rnn
+        args.tau = 0.025 # tau for the chaotic rnn
 
-        args.num_particles = 100
-        args.num_smooth_particles = 100
+        ## variational family
+        args.explicit_proposal = 'explicit_proposal' in args.q_version # whether to use a Kalman predict step as a first move to update the variational filtering familiy
+        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
+        args.backwd_map_layers = (8,8) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
+
+        ## SMC 
+        args.num_particles = 2 # number of particles for bootstrap filtering step
+        args.num_smooth_particles = 2 # number of particles for the FFBSi ancestral sampling step
+
+        ## optimizer
+        args.optimizer = 'adamw' 
+        args.batch_size = 100
+        args.num_epochs = 1000
+        args.store_every = args.num_epochs // 5 # step to store intermediate parameter values
+        args.num_fits = 1 # number of optimization runs starting from multiple seeds
+        args.num_samples = 1  # number of MCMC samples used to compute the ELBO
+        args.full_mc = 'full_mc' in args.q_version # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
+        args.frozen_params  = args.q_version.split('__')[1:] # list of parameter groups which are not learnt
+        args.online = 'online' in args.q_version # whether to use the online ELBO or not
 
     utils.save_args(args, 'train_args', save_dir)
 

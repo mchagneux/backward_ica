@@ -6,6 +6,7 @@ from .utils import *
 import tensorboard
 import tensorflow as tf
 import seaborn as sns
+from backward_ica.smc import exp_and_normalize
 config.update('jax_enable_x64',True)
 import io
 
@@ -423,7 +424,7 @@ class SVITrainer:
                 num_samples=1, 
                 force_full_mc=False,
                 frozen_params=None,
-                online=True):
+                online=False):
 
         self.num_epochs = num_epochs
         self.batch_size = batch_size
@@ -449,21 +450,24 @@ class SVITrainer:
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
             self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
-        elif isinstance(self.p, LinearGaussianHMM):
-            self.elbo = LinearGaussianELBO(self.p, self.q)
-            self.get_montecarlo_keys = get_dummy_keys
-            self.loss = lambda key, data, params: -self.elbo(data, *format_params(params))
-        elif isinstance(self.q, LinearBackwardSmoother):
-            # if online:
-            #     self.elbo = OnlineBackwardLinearELBO(self.p, self.q, exp_and_normalize, num_samples)
-            # else: 
-            self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
-            self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
         else:
-            self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+            if isinstance(self.p, LinearGaussianHMM):
+                self.elbo = LinearGaussianELBO(self.p, self.q)
+                self.get_montecarlo_keys = get_dummy_keys
+                self.loss = lambda key, data, params: -self.elbo(data, *format_params(params))
+            elif isinstance(self.q, LinearBackwardSmoother) and self.p.transition_kernel.map_type == 'linear':
+                self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
+                self.get_montecarlo_keys = get_keys
+                self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
+            else:
+                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+                self.get_montecarlo_keys = get_keys
+                self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
+
+        if online:
+            self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize, num_samples)
             self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
+            self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))[0]
 
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None):
@@ -687,4 +691,5 @@ def check_backward_linear_elbo(mc_key, p:LinearGaussianHMM, num_seqs, seq_length
     # evidence_elbo = vmap(lambda key, seq: elbo(key, seq, theta, theta))(mc_keys, seqs)
     # # print('ELBO:', evidence_elbo)
     # print('ELBO sanity check:',jnp.mean(jnp.abs(evidence_elbo - evidence_reference)))
+
 

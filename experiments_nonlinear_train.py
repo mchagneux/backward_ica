@@ -2,19 +2,21 @@ import subprocess
 import os
 from datetime import datetime 
 injective = True
-base_dir = os.path.join('experiments', 'p_nonlinear')
+
+p_version = 'nonlinear'
+base_dir = os.path.join('experiments', f'p_{p_version}')
 
 q_versions = ['linear_freeze__theta',
             'johnson_freeze__theta',
             'johnson_explicit_proposal_freeze__theta']
 
-learning_rates = ['0.01',
+learning_rates = ['0.001',
                 '0.001',
-                '0.01']
+                '0.001']
 
-dims_list = ['1 1',
-            '1 1',
-            '1 1']
+dims_list = ['10 10',
+            '10 10',
+            '10 10']
 os.makedirs(base_dir, exist_ok=True)
 
 logfiles = []
@@ -32,6 +34,7 @@ for q_version in q_versions:
 arg = '--injective' if injective else ''
 
 processes = [subprocess.Popen(f'python train_nonlinear.py \
+                            --p_version {p_version} \
                             --q_version {q_version} \
                             --save_dir {save_dir} {arg} \
                             --learning_rate {learning_rate} \

@@ -176,10 +176,8 @@ def main(args):
 
     else: 
         key, subkey_theta, subkey_phi = jax.random.split(key, 3)
-        theta_star = p.get_random_params(subkey_theta)
-        theta_star = p.set_params(theta_star, args_p)
-        phi = q.get_random_params(subkey_phi)
-        phi = q.set_params(phi, args_p)
+        theta_star = p.get_random_params(subkey_theta, args_p)
+        phi = q.get_random_params(subkey_phi, args_p)
 
 
 
