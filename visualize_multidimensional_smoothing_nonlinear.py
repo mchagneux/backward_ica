@@ -41,7 +41,7 @@ num_particles = 100000
 num_smooth_particles = 1000
 num_seqs = 1
 seq_length = train_args.seq_length
-load = False
+load = True
 metrics = False
 plot_sequences = True
 recompute_marginals = False
@@ -103,12 +103,12 @@ if not load:
     means_filt_smc, covs_filt_smc = jax.vmap(p.filt_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
 
     print('Done.')
-    # print('FFBSi smoothing...')
-    # means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
-    # print('Done.')
+    print('FFBSi smoothing...')
+    means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
+    print('Done.')
 
     filt_results.append((means_filt_smc, covs_filt_smc))
-    # smooth_results.append((means_smooth_smc, covs_smooth_smc))
+    smooth_results.append((means_smooth_smc, covs_smooth_smc))
 
 
 
@@ -169,6 +169,8 @@ if filter_rmse:
     for method_nb, method_name in enumerate(method_names): 
         filt_rmse_q = jnp.mean(jnp.sqrt(jnp.mean((filt_results[method_nb+1][0] - state_seqs)**2, axis=-1)))
         print(f'Filter RMSE {method_name}:', filt_rmse_q)
+    smooth_rmse_q_ours = jnp.mean(jnp.sqrt(jnp.mean((smooth_results[0][0] - state_seqs)**2, axis=-1)))
+    print('Smoothing RMSE ours:', smooth_rmse_q_ours)
     if method_name == 'campbell':
         filt_rmses_campbell = jnp.load('external_data/2022-09-07_14-56-16_Train_run/filter_RMSEs.npy')[:,-1]
         print(f'Filter RMSE campbell external:', jnp.mean(filt_rmses_campbell))
@@ -184,7 +186,7 @@ if plot_sequences:
     # for task_name, results in zip(['filtering','smoothing], [filt_results, smooth_results]): 
     for task_name, results in zip(['filtering'], [filt_results]): 
         for seq_nb in range(num_seqs):
-            fig, axes = plt.subplots(train_args.state_dim, len(method_names), sharey=True, figsize=(30,20))
+            fig, axes = plt.subplots(train_args.state_dim, len(method_names), sharey='row', figsize=(30,30))
             plt.autoscale(True)
             plt.tight_layout()
             if len(method_names) > 1: axes = np.atleast_2d(axes)

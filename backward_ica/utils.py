@@ -143,13 +143,13 @@ def get_config(p_version=None,
     if 'johnson' in args.q_version:
         ## variational family
         args.explicit_proposal = 'explicit_proposal' in args.q_version # whether to use a Kalman predict step as a first move to update the variational filtering familiy
-        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (8,) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (8,8) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
 
 
     ## SMC 
-    args.num_particles = 100000 # number of particles for bootstrap filtering step
+    args.num_particles = 2 # number of particles for bootstrap filtering step
     args.num_smooth_particles = 1000 # number of particles for the FFBSi ancestral sampling step
 
     ## optimizer
