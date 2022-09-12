@@ -18,15 +18,15 @@ import pickle
 from backward_ica.svi import BackwardLinearELBO
 
 
-exp_dir = 'experiments/p_linear/2022_08_02__10_09_43'
+exp_dir = 'experiments/p_chaotic_rnn/2022_09_09__11_24_37'
 
-method_names = ['johnson_freeze__theta',
-                'johnson_explicit_proposal_freeze__theta']
+method_names = ['linear_freeze__theta', 
+                'campbell']
                 
-pretty_names = ['Ours', 'Johnson']
+pretty_names = ['Linear', 'Campbell']
 
 train_args = utils.load_args('train_args',os.path.join(exp_dir, method_names[0]))
-utils.set_defaults(train_args)
+utils.set_parametrization(train_args)
 
 eval_dir = os.path.join(exp_dir, 'eval')
 os.makedirs(eval_dir, exist_ok=True)
@@ -36,17 +36,19 @@ from time import time
 
 
 
-
 key_theta = jax.random.PRNGKey(train_args.seed_theta)
-num_particles = 1000
+num_particles = 100000
 num_smooth_particles = 1000
-num_seqs = 10
+num_seqs = 1
 seq_length = train_args.seq_length
-load = True
+load = False
 metrics = False
-plot_sequences = False
+plot_sequences = True
 recompute_marginals = False
-profile = True
+profile = False
+filter_rmse = True
+train_args.num_particles = num_particles
+train_args.num_smooth_particles = num_smooth_particles
 
 def profile_q(key, p, q, theta, phi, obs_seqs):
 
@@ -74,20 +76,9 @@ def profile_q(key, p, q, theta, phi, obs_seqs):
     return time_inference, time_elbo, time_grad_elbo
 
     
-
-
-p = hmm.NonLinearHMM(state_dim=train_args.state_dim, 
-                        obs_dim=train_args.obs_dim, 
-                        transition_matrix_conditionning=train_args.transition_matrix_conditionning,
-                        layers=train_args.emission_map_layers,
-                        slope=train_args.slope,
-                        num_particles=num_particles,
-                        num_smooth_particles=num_smooth_particles,
-                        transition_bias=train_args.transition_bias,
-                        range_transition_map_params=train_args.range_transition_map_params,
-                        injective=train_args.injective) # specify the structure of the true model
-                        
+p = utils.get_generative_model(train_args)
 theta_star = utils.load_params('theta', os.path.join(exp_dir, method_names[0]))
+
 if load: 
     print('Loading sequences and results...')
     with open(os.path.join(eval_dir, 'sequences.pickle'),'rb') as f:
@@ -97,22 +88,27 @@ if load:
     print('Done.')
 else:
     key_theta, key_gen, key_ffbsi = jax.random.split(key_theta,3)
-    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, num_seqs, seq_length)
+    if train_args.loaded_data: 
+        state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, train_args.num_seqs, train_args.seq_length, train_args.single_split_seq, train_args.loaded_data)
+    else:
+        state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, num_seqs, seq_length)
 
-
+    print(state_seqs.shape)
+    print(state_seqs.dtype)
 
 keys_ffbsi = jax.random.split(key_theta, num_seqs)
 if not load: 
     filt_results, smooth_results = [], []
     print('Bootstrap filtering...')
     means_filt_smc, covs_filt_smc = jax.vmap(p.filt_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
+
     print('Done.')
-    print('FFBSi smoothing...')
-    means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
-    print('Done.')
+    # print('FFBSi smoothing...')
+    # means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
+    # print('Done.')
 
     filt_results.append((means_filt_smc, covs_filt_smc))
-    smooth_results.append((means_smooth_smc, covs_smooth_smc))
+    # smooth_results.append((means_smooth_smc, covs_smooth_smc))
 
 
 
@@ -120,6 +116,12 @@ if not load:
 qs = []
 phis = []
 for method_name in method_names:
+    if method_name == 'campbell':
+        means_filt_q = jnp.load('external_data/2022-09-07_14-56-16_Train_run/filter_means.npy')[jnp.newaxis,:]
+        covs_filt_q = jnp.load('external_data/2022-09-07_14-56-16_Train_run/filter_covs.npy')[jnp.newaxis,:]
+        filt_results.append((means_filt_q, covs_filt_q))
+        continue 
+
     method_dir = os.path.join(exp_dir, method_name)
     args = utils.load_args('train_args', method_dir)
 
@@ -128,30 +130,10 @@ for method_name in method_names:
     key_phi, key_filt_q, key_smooth_q = jax.random.split(key_phi, 3)
     keys_smooth_q = jax.random.split(key_smooth_q, num_seqs)
 
-    phi = utils.load_params('phi', method_dir)[1]
+    phi = utils.load_params('phi', method_dir)
     phis.append(phi)
 
-    if 'linear' in args.q_version:
-
-        q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
-                                obs_dim=args.obs_dim, 
-                                transition_matrix_conditionning=args.transition_matrix_conditionning,
-                                range_transition_map_params=args.range_transition_map_params,
-                                transition_bias=args.transition_bias,
-                                emission_bias=args.emission_bias) 
-
-    elif 'johnson' in args.q_version:
-        q = hmm.JohnsonBackwardSmoother(transition_kernel=p.transition_kernel,
-                                        obs_dim=args.obs_dim, 
-                                        update_layers=args.update_layers,
-                                        explicit_proposal='explicit_proposal' in args.q_version)
-
-
-    else:
-        q = hmm.GeneralBackwardSmoother(state_dim=args.state_dim, 
-                                        obs_dim=args.obs_dim, 
-                                        update_layers=args.update_layers,
-                                        backwd_layers=args.backwd_map_layers)
+    q = utils.get_variational_model(args, p)
 
     if profile: 
         state_seqs_profile, obs_seqs_profile = p.sample_multiple_sequences(key_theta, theta_star, 1000, 100)
@@ -176,6 +158,22 @@ if not load:
     with open(os.path.join(eval_dir, 'results.pickle'),'wb') as f:
         pickle.dump((filt_results, smooth_results), f)
 
+# filt_rmse = state_seqs - means_filt_q
+# smooth_rmse = state_seqs - means_smooth_q
+
+
+
+if filter_rmse: 
+    filt_rmse_smc = jnp.mean(jnp.sqrt(jnp.mean((filt_results[0][0] - state_seqs)**2, axis=-1)))
+    print('Filter RMSE SMC:', filt_rmse_smc)
+    for method_nb, method_name in enumerate(method_names): 
+        filt_rmse_q = jnp.mean(jnp.sqrt(jnp.mean((filt_results[method_nb+1][0] - state_seqs)**2, axis=-1)))
+        print(f'Filter RMSE {method_name}:', filt_rmse_q)
+    if method_name == 'campbell':
+        filt_rmses_campbell = jnp.load('external_data/2022-09-07_14-56-16_Train_run/filter_RMSEs.npy')[:,-1]
+        print(f'Filter RMSE campbell external:', jnp.mean(filt_rmses_campbell))
+    # with open(os.path.join(eval_dir, 'filter_rmse.pickle'),'wb') as f:
+    #     pickle.dump((filt_rmse_smc, filt_rmse_q), f)
 #%%
 import numpy as np
 
@@ -183,25 +181,38 @@ if plot_sequences:
     colors = ['blue',
             'red']
     print('Plotting individual sequences...')
-    for task_name, results in zip(['filtering', 'smoothing'], [filt_results, smooth_results]): 
+    # for task_name, results in zip(['filtering','smoothing], [filt_results, smooth_results]): 
+    for task_name, results in zip(['filtering'], [filt_results]): 
         for seq_nb in range(num_seqs):
-            fig, axes = plt.subplots(train_args.state_dim, len(method_names), sharey=True)
-            axes = np.atleast_2d(axes)
-            name = f'{task_name}_seq_{seq_nb}'
-            for dim_nb in range(train_args.state_dim):
-                for method_nb, method_name in enumerate(pretty_names): 
-                    mean_q, cov_q = results[method_nb+1]
-                    axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='grey', linestyle='dashed', marker='.', label='True state')
-                    mean_ffbsi, cov_ffbsi = results[0]
-                    utils.plot_relative_errors_1D(axes[dim_nb,method_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
-                    # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
-                    utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
-                    # else:
-                    #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
-                    axes[dim_nb, method_nb].legend()
-
+            fig, axes = plt.subplots(train_args.state_dim, len(method_names), sharey=True, figsize=(30,20))
             plt.autoscale(True)
             plt.tight_layout()
+            if len(method_names) > 1: axes = np.atleast_2d(axes)
+            name = f'{task_name}_seq_{seq_nb}'
+            for dim_nb in range(train_args.state_dim):
+                if len(method_names) > 1:
+                    for method_nb, method_name in enumerate(pretty_names): 
+                        mean_q, cov_q = results[method_nb+1]
+                        axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
+                        mean_ffbsi, cov_ffbsi = results[0]
+                        utils.plot_relative_errors_1D(axes[dim_nb,method_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
+                        # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
+                        utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
+                        # else:
+                        #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
+                        axes[dim_nb, method_nb].legend()
+                else: 
+                    mean_q, cov_q = results[1]
+                    axes[dim_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
+                    mean_ffbsi, cov_ffbsi = results[0]
+                    utils.plot_relative_errors_1D(axes[dim_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
+                    # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
+                    utils.plot_relative_errors_1D(axes[dim_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
+                    # else:
+                    #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
+                    axes[dim_nb].legend()
+
+
             plt.savefig(os.path.join(eval_dir, name+'.pdf'), format='pdf')
             plt.clf()
 

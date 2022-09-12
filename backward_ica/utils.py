@@ -15,12 +15,156 @@ import argparse
 from typing import Any
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
-from backward_ica import hmm 
+from backward_ica import hmm
 import numpy as np
 import pandas as pd
 from jaxlib.xla_extension import DeviceArray
 # Containers for parameters of various objects 
 config.update('jax_enable_x64',True)
+
+
+
+def get_generative_model(args, key_for_random_params=None):
+    if args.p_version == 'linear':
+        p = hmm.LinearGaussianHMM(args.state_dim, 
+                                args.obs_dim, 
+                                args.transition_matrix_conditionning, 
+                                args.range_transition_map_params,
+                                args.transition_bias, 
+                                args.emission_bias)
+    elif 'chaotic_rnn' in args.p_version:
+        p = hmm.NonLinearHMM.chaotic_rnn(args)
+    else: 
+        p = hmm.NonLinearHMM.linear_transition_with_nonlinear_emission(args) # specify the structure of the true model
+    
+    if key_for_random_params is not None:
+        theta_star = p.get_random_params(key_for_random_params, args)
+        return p, theta_star
+    else:
+        return p
+
+def get_variational_model(args, p=None, key_for_random_params=None):
+
+    if 'linear' in args.q_version:
+
+        q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
+                            obs_dim=args.obs_dim,
+                            transition_matrix_conditionning=args.transition_matrix_conditionning,
+                            transition_bias=args.transition_bias, 
+                            emission_bias=False)
+
+    elif 'johnson' in args.q_version:
+        if (p is not None) and (p.transition_kernel.map_type == 'linear'):
+            transition_kernel = p.transition_kernel
+        else:
+            transition_kernel = hmm.Kernel.linear_gaussian(args.transition_matrix_conditionning, 
+                                                        args.transition_bias, 
+                                                        range_params=(0,1))(args.state_dim, args.obs_dim)
+
+        q = hmm.JohnsonBackwardSmoother(transition_kernel=transition_kernel,
+                                        obs_dim=args.obs_dim, 
+                                        update_layers=args.update_layers,
+                                        explicit_proposal=args.explicit_proposal)
+
+    else:
+        q = hmm.GeneralBackwardSmoother(state_dim=args.state_dim, 
+                                        obs_dim=args.obs_dim, 
+                                        update_layers=args.update_layers,
+                                        backwd_layers=args.backwd_map_layers)
+    if key_for_random_params is not None:
+        phi = q.get_random_params(key_for_random_params, args)
+        return q, phi
+    else:
+        return q
+
+def get_config(p_version=None, 
+            q_version=None, 
+            dims=None,
+            external_args=None):
+
+    if external_args is None:
+        args = argparse.Namespace()
+    else: 
+        args = external_args
+        args.state_dim, args.obs_dim = args.dims
+        del args.dims
+
+    args.seed_theta = 1329
+    args.seed_phi = 4569
+    import math 
+
+    ## dataset 
+    if external_args is None:
+        args.p_version = p_version
+        args.q_version = q_version
+        args.state_dim, args.obs_dim = dims
+    args.seq_length = 500 # length of the train sequences
+    args.num_seqs = 1 # number of train sequences
+    args.single_split_seq = False # whether to draw one long sample of length seq_length * num_seqs and divide it in seq_length // num_seqs sequences
+    
+    if args.p_version == 'chaotic_rnn': 
+        args.loaded_data = ('params/x_data.npy', 'params/y_data.npy') 
+    else: args.loaded_data = None
+
+
+    args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
+
+    ## prior 
+    args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior
+    args.default_prior_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the prior
+
+    ## transition 
+    args.transition_matrix_conditionning = 'diagonal' # constraint on the transition matrix 
+    args.range_transition_map_params = [0.99,1] # range of the components of the transition matrix
+    args.default_transition_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the transition kernel
+    args.transition_bias = False 
+    args.default_transition_bias = 0.0
+
+    ## emission 
+    args.default_emission_base_scale = math.sqrt(1e-2)
+
+    if args.p_version == 'chaotic_rnn' or args.p_version == 'linear':
+        args.emission_bias = False
+        args.range_emission_map_params = (0.99,1)
+        args.emission_matrix_conditionning = 'diagonal'
+
+    
+    if args.p_version == 'chaotic_rnn':
+        args.default_emission_matrix = 1.0
+        args.grid_size = 0.001 # discretization parameter for the chaotic rnn
+        args.gamma = 2.5 # gamma for the chaotic rnn
+        args.tau = 0.025 # tau for the chaotic rnn
+        args.default_transition_matrix = 'params/W.npy'
+    if 'nonlinear_emission' in args.p_version:
+        args.emission_map_layers = (8,)
+        args.slope = 0 # amount of linearity in the emission function
+
+
+    if 'johnson' in args.q_version:
+        ## variational family
+        args.explicit_proposal = 'explicit_proposal' in args.q_version # whether to use a Kalman predict step as a first move to update the variational filtering familiy
+        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
+        args.backwd_map_layers = (8,8) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
+
+
+
+    ## SMC 
+    args.num_particles = 100000 # number of particles for bootstrap filtering step
+    args.num_smooth_particles = 1000 # number of particles for the FFBSi ancestral sampling step
+
+    ## optimizer
+    args.optimizer = 'adamw' 
+    args.batch_size = 1
+    args.num_epochs = 10000
+    args.store_every = args.num_epochs // 5 # step to store intermediate parameter values
+    args.num_fits = 1 # number of optimization runs starting from multiple seeds
+    args.num_samples = 1  # number of MCMC samples used to compute the ELBO
+    args.full_mc = 'full_mc' in args.q_version # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
+    args.frozen_params  = args.q_version.split('__')[1:] # list of parameter groups which are not learnt
+    args.online = 'online' in args.q_version # whether to use the online ELBO or not
+
+
+    return args
 
 def enable_x64(use_x64=True):
     """
@@ -172,18 +316,16 @@ FiltState = namedtuple('FiltState', ['out','hidden'])
 BackwardState = namedtuple('BackwardState', ['inner', 'varying'])
 GeneralBackwardSmootherParams = namedtuple('GeneralBackwardSmootherParams',['prior', 'filt_update','backwd'])
 
-def define_frozen_tree(key, frozen_params, p, q, theta_star):
+def define_frozen_tree(key, frozen_params, q, theta_star):
 
-    key_theta, key_phi = random.split(key, 2)
-    frozen_theta = p.get_random_params(key_theta)
-    frozen_theta = tree_map(lambda x: '', frozen_theta)
+    # key_theta, key_phi = random.split(key, 2)
 
-    frozen_phi = q.get_random_params(key_phi)
+    frozen_phi = q.get_random_params(key)
     frozen_phi = tree_map(lambda x: '', frozen_phi)
 
 
-    if 'theta' in frozen_params: 
-        frozen_theta = theta_star 
+    # if 'theta' in frozen_params: 
+    #     frozen_theta = theta_star 
 
     if 'prior_phi' in frozen_params:
         if isinstance(q, hmm.LinearGaussianHMM) or (isinstance(q, hmm.JohnsonBackwardSmoother) and q.explicit_proposal):
@@ -200,9 +342,9 @@ def define_frozen_tree(key, frozen_params, p, q, theta_star):
         else: 
             frozen_phi.transition = theta_star.transition
     
-    frozen_params = (frozen_theta, frozen_phi)
+    # frozen_params = (frozen_theta, frozen_phi)
 
-    return frozen_params
+    return frozen_phi
 
 
 def params_to_dict(params):
@@ -336,13 +478,13 @@ class Scale:
 @dataclass(init=True)
 class StudentParams:
     
-    loc: jnp.ndarray
+    mean: jnp.ndarray
     df: int
     scale: Scale
 
 
     def tree_flatten(self):
-        return ((self.loc, self.df, self.scale), None)
+        return ((self.mean, self.df, self.scale), None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
@@ -566,7 +708,7 @@ def plot_relative_errors_1D(ax, pred_means, pred_covs, color='black', alpha=0.2,
     upper = pred_means + yerr 
     lower = pred_means - yerr 
 
-    ax.plot(time_axis, pred_means, marker='.', linestyle='dotted', c=color, label=label)
+    ax.plot(time_axis, pred_means, linestyle='dashed', c=color, label=label)
     ax.fill_between(time_axis, lower, upper, alpha=alpha, color=color, hatch=hatch)
     # ax.errorbar(x=time_axis, y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), c='blue', label='Smoothed z, $1.96\\sigma$', linestyle='dashed')
 

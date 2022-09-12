@@ -416,6 +416,7 @@ def winsorize_grads():
 class SVITrainer:
 
     def __init__(self, p:HMM, 
+                theta_star,
                 q:Smoother, 
                 optimizer, 
                 learning_rate, 
@@ -431,6 +432,7 @@ class SVITrainer:
         self.q = q 
         # self.q.print_num_params()
         self.p = p 
+        self.theta_star = theta_star
         self.frozen_params = frozen_params
 
         self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
@@ -438,51 +440,46 @@ class SVITrainer:
 
         base_optimizer = optax.apply_if_finite(optax.masked(getattr(optax, optimizer)(learning_rate), 
                                                             self.trainable_params), 
-                                        max_consecutive_errors=10)
+                                            max_consecutive_errors=10)
 
         zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
 
         self.optimizer = optax.chain(zero_grads_optimizer, base_optimizer)
         
-        format_params = lambda params: (self.p.format_params(params[0]), self.q.format_params(params[1]))
+        # format_params = lambda params: self.q.format_params(params)
 
         if force_full_mc: 
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
+            self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
         else:
             if isinstance(self.p, LinearGaussianHMM):
                 self.elbo = LinearGaussianELBO(self.p, self.q)
                 self.get_montecarlo_keys = get_dummy_keys
-                self.loss = lambda key, data, params: -self.elbo(data, *format_params(params))
+                self.loss = lambda key, data, params: -self.elbo(data, self.p.format_params(self.theta_star), q.format_params(params))
             elif isinstance(self.q, LinearBackwardSmoother) and self.p.transition_kernel.map_type == 'linear':
                 self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
                 self.get_montecarlo_keys = get_keys
-                self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
+                self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
             else:
                 self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                 self.get_montecarlo_keys = get_keys
-                self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))
+                self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
 
         if online:
             self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize, num_samples)
             self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, params: -self.elbo(key, data, *format_params(params))[0]
+            self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))[0]
 
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None):
 
-        key_theta, key_phi = random.split(key_params, 2)
 
         num_seqs = data.shape[0]
         seq_length = len(data[0])
 
-        theta = self.p.get_random_params(key_theta)
-        phi = self.q.get_random_params(key_phi)
-        if args is not None:
-            theta = self.p.set_params(theta, args)
-            phi = self.q.set_params(phi, args)
-        params = (theta, phi)
+        # theta = self.p.get_random_params(key_theta, args)
+        params = self.q.get_random_params(key_params, args)
 
         params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
                         params, 
@@ -523,6 +520,8 @@ class SVITrainer:
             
             data = jax.random.permutation(subkey_batcher, data)
         
+
+            # print(self.loss(key_batcher, data[0], params))
             (_ , params, opt_state, _), (avg_elbo_batches, avg_grads_batches) = jax.lax.scan(batch_step,  
                                                                 init=(data, params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)

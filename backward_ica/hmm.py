@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+from random import gauss
 from jax import numpy as jnp, random, value_and_grad, tree_util, grad, config
 from jax.tree_util import tree_leaves
 from backward_ica.kalman import Kalman
@@ -8,6 +9,7 @@ from jax import lax, vmap
 from .utils import *
 from jax.scipy.stats.multivariate_normal import logpdf as gaussian_logpdf, pdf as gaussian_pdf
 from jax.scipy.stats.t import logpdf as student_logpdf, pdf as student_pdf
+
 from functools import partial
 from jax import nn
 import optax
@@ -190,17 +192,27 @@ class Gaussian:
 
 class Student: 
 
-    @staticmethod
-    def sample(key, params):
-        return params.loc + params.scale.cov_chol @ random.t(key, df=params.df, shape=(params.loc.shape[0],))
+    # @staticmethod
+    # def sample(key, params):
+    #     key, subkey = random.split(key, 2)
+    #     y = params.scale.cov_chol @ random.normal(key, shape=(params.mean.shape[0],))
+    #     u = random.gamma(subkey, a=params.df / 2) / 0.5 
+
+    #     return params.mean + jnp.sqrt(params.df / u) * y
     
+    def sample(key, params):
+        return params.mean + params.scale.cov_chol @ random.t(key, params.df, shape=(params.mean.shape[0],))
+
     @staticmethod
     def logpdf(x, params):
-        return student_logpdf(x, df=params.df, loc=params.loc, scale=params.scale.cov_chol)
+
+        return vmap(student_logpdf, in_axes=(0, None, 0, 0))(x, params.df, params.mean, jnp.diag(params.scale.cov_chol)).sum()
+
     
     @staticmethod
     def pdf(x, params):
-        return student_pdf(x, df=params.df, loc=params.loc, scale=params.scale.cov_chol)
+        return vmap(student_pdf, in_axes=(0, None, 0, 0))(x, params.df, params.mean, jnp.diag(params.scale.cov_chol)).prod()
+
 
     @staticmethod
     def get_random_params(key, dim):
@@ -211,13 +223,13 @@ class Student:
         mean = random.uniform(subkeys[0], shape=(dim,), minval=-1, maxval=1)
         df = random.randint(subkeys[1], shape=(1,), minval=1, maxval=10)
         scale = Scale.get_random(subkeys[3], dim, HMM.parametrization)
-        return StudentParams(loc=mean, 
+        return StudentParams(mean=mean, 
                             df=df, 
                             scale=scale)
 
     @staticmethod
     def format_params(params):
-        return StudentParams(loc=params.loc, df=params.df, scale=Scale.format(params.scale))
+        return StudentParams(mean=params.mean, df=params.df, scale=Scale.format(params.scale))
 
     @staticmethod
     def get_random_noise_params(key, dim):
@@ -232,6 +244,15 @@ class Student:
 
 class Kernel:
 
+    @staticmethod
+    def linear_gaussian(matrix_conditonning, bias, range_params):
+        transition_kernel_def = {'map_type':'linear',
+                        'map_info' : {'conditionning': matrix_conditonning, 
+                                    'bias': bias,
+                                    'range_params':range_params}}
+        return lambda state_dim, obs_dim: Kernel(state_dim, obs_dim, transition_kernel_def)
+                                    
+                                            
     def __init__(self,
                 in_dim, 
                 out_dim,
@@ -252,7 +273,7 @@ class Kernel:
             self.params_type = GaussianNoiseParams
             
         elif noise_dist == Student:
-            self.format_output = lambda mean, noise, params: StudentParams(loc=mean, df=noise.df, scale=noise.scale)
+            self.format_output = lambda mean, noise, params: StudentParams(mean=mean, df=noise.df, scale=noise.scale)
             self.params_type = StudentNoiseParams
 
         if self.map_type == 'linear':
@@ -341,14 +362,23 @@ class HMM:
         self.transition_kernel:Kernel = transition_kernel_type(state_dim)
         self.emission_kernel:Kernel = emission_kernel_type(state_dim, obs_dim)
         
-    def sample_multiple_sequences(self, key, params, num_seqs, seq_length, single_split_seq=False):
-        if single_split_seq: 
-            state_seq, obs_seq = self.sample_seq(key, params, num_seqs*seq_length)
-            return jnp.array(jnp.split(state_seq, num_seqs)), jnp.array(jnp.split(obs_seq, num_seqs))
+    def sample_multiple_sequences(self, key, params, num_seqs, seq_length, single_split_seq=False, loaded_data=None):
+
+        if loaded_data is not None: 
+            state_seq, obs_seq = jnp.load(loaded_data[0]).astype(jnp.float64), jnp.load(loaded_data[1]).astype(jnp.float64)
+            print('Sequences loaded.')
+            if single_split_seq: 
+                return jnp.array(jnp.split(state_seq, num_seqs)), jnp.array(jnp.split(obs_seq, num_seqs))
+            else: 
+                return state_seq[jnp.newaxis,:], obs_seq[jnp.newaxis,:]
         else: 
-            key, *subkeys = random.split(key, num_seqs+1)
-            sampler = vmap(self.sample_seq, in_axes=(0, None, None))
-            return sampler(jnp.array(subkeys), params, seq_length)
+            if single_split_seq: 
+                state_seq, obs_seq = self.sample_seq(key, params, num_seqs*seq_length)
+                return jnp.array(jnp.split(state_seq, num_seqs)), jnp.array(jnp.split(obs_seq, num_seqs))
+            else: 
+                key, *subkeys = random.split(key, num_seqs+1)
+                sampler = vmap(self.sample_seq, in_axes=(0, None, None))
+                return sampler(jnp.array(subkeys), params, seq_length)
 
     def get_random_params(self, key, params_to_set=None):
         key_prior, key_transition, key_emission = random.split(key, 3)
@@ -399,8 +429,7 @@ class HMM:
         print('-- in prior + predict:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
         print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.emission)))
 
-    @staticmethod
-    def set_params(params, args):
+    def set_params(self, params, args):
         new_params = copy.deepcopy(params)
         for k,v in vars(args).items():         
             if k == 'default_prior_mean':
@@ -415,6 +444,8 @@ class HMM:
                 new_params.emission.noise.df = v
             elif k == 'default_emission_matrix' and hasattr(new_params.emission.map, 'w'):
                 new_params.emission.map.w = v * jnp.ones_like(params.emission.map.w)
+            elif (k == 'default_transition_matrix') and (self.transition_kernel.map_type != 'linear'):
+                if (type(v) == str): new_params.transition.map['linear']['w'] = jnp.load(v)
         return new_params
 
 class Smoother(metaclass=ABCMeta):
@@ -617,21 +648,17 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
                 transition_bias=False,
                 emission_bias=False):
 
-        transition_kernel_def = {'map_type':'linear',
-                            'map_info' : {'conditionning': transition_matrix_conditionning, 
-                                        'bias': transition_bias,
-                                        'range_params':range_transition_map_params}}
+        transition_kernel = Kernel.linear_gaussian(transition_matrix_conditionning, 
+                                                    transition_bias, 
+                                                    range_transition_map_params)
                                         
-        emission_kernel_def = {'map_type':'linear',
-                            'map_info' : {'conditionning': None, 
-                                        'bias': emission_bias,
-                                        'range_params':(0,1)}}                             
+        emission_kernel = Kernel.linear_gaussian(None, emission_bias, (0,1))                     
 
         HMM.__init__(self, 
                     state_dim, 
                     obs_dim, 
-                    transition_kernel_type = lambda state_dim:Kernel(state_dim, state_dim, transition_kernel_def), 
-                    emission_kernel_type = lambda state_dim, obs_dim:Kernel(state_dim, obs_dim, emission_kernel_def))
+                    transition_kernel_type = lambda state_dim: transition_kernel(state_dim, state_dim), 
+                    emission_kernel_type = emission_kernel)
 
         LinearBackwardSmoother.__init__(self, state_dim)
 
