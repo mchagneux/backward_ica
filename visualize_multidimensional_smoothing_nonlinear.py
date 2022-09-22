@@ -18,12 +18,12 @@ import pickle
 from backward_ica.svi import BackwardLinearELBO
 
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_09_09__11_24_37'
+exp_dir = 'experiments/p_chaotic_rnn/2022_09_14__17_32_41'
 
-method_names = ['linear_freeze__theta', 
+method_names = ['johnson_freeze__covariances__prior_phi', 
                 'campbell']
                 
-pretty_names = ['Linear', 'Campbell']
+pretty_names = ['Johnson', 'Campbell']
 
 train_args = utils.load_args('train_args',os.path.join(exp_dir, method_names[0]))
 utils.set_parametrization(train_args)
@@ -37,16 +37,18 @@ from time import time
 
 
 key_theta = jax.random.PRNGKey(train_args.seed_theta)
-num_particles = 100000
+num_particles = 1000
 num_smooth_particles = 1000
 num_seqs = 1
 seq_length = train_args.seq_length
-load = True
+load = False
 metrics = False
 plot_sequences = True
 recompute_marginals = False
 profile = False
 filter_rmse = True
+visualize_init = True
+
 train_args.num_particles = num_particles
 train_args.num_smooth_particles = num_smooth_particles
 
@@ -78,7 +80,6 @@ def profile_q(key, p, q, theta, phi, obs_seqs):
     
 p = utils.get_generative_model(train_args)
 theta_star = utils.load_params('theta', os.path.join(exp_dir, method_names[0]))
-
 if load: 
     print('Loading sequences and results...')
     with open(os.path.join(eval_dir, 'sequences.pickle'),'rb') as f:
@@ -103,12 +104,12 @@ if not load:
     means_filt_smc, covs_filt_smc = jax.vmap(p.filt_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
 
     print('Done.')
-    print('FFBSi smoothing...')
-    means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
-    print('Done.')
+    # print('FFBSi smoothing...')
+    # means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
+    # print('Done.')
 
     filt_results.append((means_filt_smc, covs_filt_smc))
-    smooth_results.append((means_smooth_smc, covs_smooth_smc))
+    # smooth_results.append((means_smooth_smc, covs_smooth_smc))
 
 
 
@@ -130,10 +131,15 @@ for method_name in method_names:
     key_phi, key_filt_q, key_smooth_q = jax.random.split(key_phi, 3)
     keys_smooth_q = jax.random.split(key_smooth_q, num_seqs)
 
-    phi = utils.load_params('phi', method_dir)
-    phis.append(phi)
+
 
     q = utils.get_variational_model(args, p)
+
+    if visualize_init: 
+        phi = q.get_random_params(key_phi, args)
+    else:
+        phi = utils.load_params('phi', method_dir)
+    phis.append(phi)
 
     if profile: 
         state_seqs_profile, obs_seqs_profile = p.sample_multiple_sequences(key_theta, theta_star, 1000, 100)
@@ -217,7 +223,6 @@ if plot_sequences:
 
             plt.savefig(os.path.join(eval_dir, name+'.pdf'), format='pdf')
             plt.clf()
-
 
 def eval_smoothing_single_seq(state_seq, obs_seq, slices, method_nb):
 

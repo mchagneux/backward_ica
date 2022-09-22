@@ -1,16 +1,15 @@
 import subprocess
 import os
 from datetime import datetime 
-injective = True
 
 p_version = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_version}')
 
-q_versions = ['linear_freeze__theta', 'johnson_explicit_proposal_freeze__theta', 'johnson_freeze__theta']
+q_versions = ['johnson_freeze__covariances__prior_phi']
 
-learning_rates = ['0.01', '5.0001', '.0001']
-
-dims_list = ['5 5', '5 5', '5 5']
+learning_rates = ['0.0001']
+num_epochs_list = ['30000']
+dims_list = ['5 5']
 
 os.makedirs(base_dir, exist_ok=True)
 
@@ -26,16 +25,25 @@ for q_version in q_versions:
     save_dirs.append(save_dir)
 
 
-arg = '--injective' if injective else ''
-
 processes = [subprocess.Popen(f'python train_nonlinear.py \
                             --p_version {p_version} \
                             --q_version {q_version} \
-                            --save_dir {save_dir} {arg} \
+                            --save_dir {save_dir} \
                             --learning_rate {learning_rate} \
+                            --num_epochs {num_epochs} \
                             --dims {dims}',
                         shell=True, stdout=logfile, stderr=logfile) \
-                for (q_version, learning_rate, dims, save_dir, logfile) in zip(q_versions, learning_rates, dims_list, save_dirs, logfiles)]
+                        for (q_version, 
+                            learning_rate, 
+                            dims, 
+                            num_epochs, 
+                            save_dir, 
+                            logfile) in zip(q_versions, 
+                                            learning_rates, 
+                                            dims_list, 
+                                            num_epochs_list, 
+                                            save_dirs, 
+                                            logfiles)]
 
 # print(date)
 

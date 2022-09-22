@@ -1,7 +1,7 @@
 from collections import namedtuple
 from dataclasses import dataclass
 
-from jax import numpy as jnp, vmap, config, random, jit, scipy as jsp
+from jax import numpy as jnp, vmap, config, random, jit, scipy as jsp, lax
 from functools import update_wrapper
 from jax.tree_util import register_pytree_node_class, tree_map
 from jax.scipy.linalg import solve_triangular
@@ -57,8 +57,8 @@ def get_variational_model(args, p=None, key_for_random_params=None):
         if (p is not None) and (p.transition_kernel.map_type == 'linear'):
             transition_kernel = p.transition_kernel
         else:
-            transition_kernel = hmm.Kernel.linear_gaussian(args.transition_matrix_conditionning, 
-                                                        args.transition_bias, 
+            transition_kernel = hmm.Kernel.linear_gaussian(None, 
+                                                        True, 
                                                         range_params=(0,1))(args.state_dim, args.obs_dim)
 
         q = hmm.JohnsonBackwardSmoother(transition_kernel=transition_kernel,
@@ -125,12 +125,14 @@ def get_config(p_version=None,
 
     if args.p_version == 'chaotic_rnn' or args.p_version == 'linear':
         args.emission_bias = False
-        args.range_emission_map_params = (0.99,1)
         args.emission_matrix_conditionning = 'diagonal'
+        args.range_emission_map_params = (0.99,1)
+
 
     
     if args.p_version == 'chaotic_rnn':
-        args.default_emission_matrix = 1.0
+        args.default_emission_df = 2 # degrees of freedom for the emission matrix
+        args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
         args.grid_size = 0.001 # discretization parameter for the chaotic rnn
         args.gamma = 2.5 # gamma for the chaotic rnn
         args.tau = 0.025 # tau for the chaotic rnn
@@ -138,12 +140,13 @@ def get_config(p_version=None,
     if 'nonlinear_emission' in args.p_version:
         args.emission_map_layers = (8,)
         args.slope = 0 # amount of linearity in the emission function
+        args.injective = True
 
 
     if 'johnson' in args.q_version:
         ## variational family
         args.explicit_proposal = 'explicit_proposal' in args.q_version # whether to use a Kalman predict step as a first move to update the variational filtering familiy
-        args.update_layers = (8,) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (16,) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (8,8) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
 
@@ -155,10 +158,9 @@ def get_config(p_version=None,
     ## optimizer
     args.optimizer = 'adamw' 
     args.batch_size = 1
-    args.num_epochs = 10000
     args.store_every = args.num_epochs // 5 # step to store intermediate parameter values
     args.num_fits = 1 # number of optimization runs starting from multiple seeds
-    args.num_samples = 1  # number of MCMC samples used to compute the ELBO
+    args.num_samples = 200  # number of MCMC samples used to compute the ELBO
     args.full_mc = 'full_mc' in args.q_version # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
     args.frozen_params  = args.q_version.split('__')[1:] # list of parameter groups which are not learnt
     args.online = 'online' in args.q_version # whether to use the online ELBO or not
@@ -175,7 +177,6 @@ def enable_x64(use_x64=True):
     if not use_x64:
         use_x64 = os.getenv("JAX_ENABLE_X64", 0)
     config.update("jax_enable_x64", use_x64)
-
 
 def set_platform(platform=None):
     """
@@ -341,6 +342,9 @@ def define_frozen_tree(key, frozen_params, q, theta_star):
             raise NotImplementedError
         else: 
             frozen_phi.transition = theta_star.transition
+
+    if 'covariances' in frozen_params: 
+        frozen_phi.transition.noise.scale = theta_star.transition.noise.scale
     
     # frozen_params = (frozen_theta, frozen_phi)
 
@@ -551,9 +555,23 @@ class GaussianParams:
         return obj
 
     @classmethod
-    def from_vec(cls, vec, d, chol_add=empty_add):
+    def from_vec(cls, vec, d, diag=True, chol_add=empty_add):
         mean = vec[:d]
-        chol = jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(vec[d:])
+
+
+        def diag_chol(vec, d):
+            return jnp.diag(vec[d:])
+
+        def non_diag_chol(vec, d):
+            return jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(vec[d:])
+            
+        if diag: 
+            chol = diag_chol(vec, d)
+        else: 
+            chol = non_diag_chol(vec, d)
+            
+        # chol = lax.cond(diag, diag_chol, non_diag_chol, vec, d)
+
         scale_kwargs = {cls.parametrization:chol + chol_add(d)}
         return cls(mean=mean, scale=Scale(**scale_kwargs))
     

@@ -6,6 +6,7 @@ import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 from backward_ica.svi import SVITrainer
 utils.enable_x64(True)
+# jax.config.update('jax_disable_jit', True)
 
 def main(args, save_dir):
 
@@ -20,7 +21,7 @@ def main(args, save_dir):
 
     utils.save_params(theta_star, 'theta', save_dir)
 
-    _ , obs_seqs = p.sample_multiple_sequences(key_gen, 
+    state_seqs , obs_seqs = p.sample_multiple_sequences(key_gen, 
                                             theta_star, 
                                             args.num_seqs, 
                                             args.seq_length, 
@@ -32,13 +33,13 @@ def main(args, save_dir):
 
     evidence_keys = jax.random.split(key_smc, args.num_seqs)
 
-    print('Computing evidence...')
+    # print('Computing evidence...')
 
-    avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, 
-                                                                        theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
+    # avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, 
+    #                                                                     theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
 
 
-    print('Oracle evidence:', avg_evidence)
+    # print('Oracle evidence:', avg_evidence)
 
     q = utils.get_variational_model(args, p=p)
 
@@ -48,6 +49,8 @@ def main(args, save_dir):
                                             q, 
                                             theta_star)
 
+    lambda_test = q.get_random_params(key_params, args)
+    
 
     trainer = SVITrainer(p=p, 
                         theta_star=theta_star,
@@ -70,7 +73,7 @@ def main(args, save_dir):
                                                             log_dir=save_dir,
                                                             args=args) # returns the best fit (based on the last value of the elbo)
     
-    utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True, best_epochs_only=True)
+    # utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True, best_epochs_only=True)
     utils.save_params(params, 'phi', save_dir)
 
 if __name__ == '__main__':
@@ -85,12 +88,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--p_version', type=str, default='chaotic_rnn')
-    parser.add_argument('--q_version',type=str, default='johnson_freeze__theta')
+    parser.add_argument('--q_version',type=str, default='johnson_freeze__covariances')
     parser.add_argument('--save_dir', type=str, default='')
-    parser.add_argument('--injective', dest='injective', action='store_true', default=True)
     parser.add_argument('--args_path', type=str, default='')
-    parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--dims', type=int, nargs='+', default=(5,5))
+
+    parser.add_argument('--learning_rate', type=float, default=0.001)
+    parser.add_argument('--num_epochs', type=int, default=2000)
 
 
     args = parser.parse_args()

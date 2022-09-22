@@ -370,7 +370,7 @@ class HMM:
             if single_split_seq: 
                 return jnp.array(jnp.split(state_seq, num_seqs)), jnp.array(jnp.split(obs_seq, num_seqs))
             else: 
-                return state_seq[jnp.newaxis,:], obs_seq[jnp.newaxis,:]
+                return state_seq[:seq_length][jnp.newaxis,:], obs_seq[:seq_length][jnp.newaxis,:]
         else: 
             if single_split_seq: 
                 state_seq, obs_seq = self.sample_seq(key, params, num_seqs*seq_length)
@@ -445,7 +445,7 @@ class HMM:
             elif k == 'default_emission_matrix' and hasattr(new_params.emission.map, 'w'):
                 new_params.emission.map.w = v * jnp.ones_like(params.emission.map.w)
             elif (k == 'default_transition_matrix') and (self.transition_kernel.map_type != 'linear'):
-                if (type(v) == str): new_params.transition.map['linear']['w'] = jnp.load(v)
+                if (type(v) == str): new_params.transition.map['linear']['w'] = jnp.load(v).astype(jnp.float64)
         return new_params
 
 class Smoother(metaclass=ABCMeta):
@@ -455,14 +455,15 @@ class Smoother(metaclass=ABCMeta):
 
         d = state_dim 
 
-        out_dim = d + d * (d+1) // 2 
-
+        out_dim = 2*d
         gru = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in (*layers,)])
-        projection = hk.Linear(out_dim)
+        projection = hk.Linear(out_dim, 
+                    w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                    b_init=hk.initializers.RandomNormal(),)
         out, new_state = gru(obs, prev_state)
         out = projection(out)
 
-        return GaussianParams.from_vec(out, d, chol_add=jnp.eye), new_state
+        return GaussianParams.from_vec(out, d, chol_add=empty_add), new_state
 
 
     @staticmethod
@@ -1069,8 +1070,6 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
             params = self.set_params(params, params_to_set)
         return params  
         
-
-
     def set_params(self, params, args):
         new_params = copy.deepcopy(params)
         for k,v in vars(args).items():         
@@ -1080,6 +1079,8 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
                 new_params.prior.scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
             elif k == 'default_transition_base_scale': 
                 new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
+            # elif (k == 'default_transition_matrix') and (self.transition_kernel.map_type != 'linear'):
+            #     if (type(v) == str): new_params.transition.map['linear']['w'] = jnp.load(v).astype(jnp.float64)                
 
         return new_params
 

@@ -492,6 +492,8 @@ class SVITrainer:
         def batch_step(carry, x):
 
             def step(params, opt_state, batch, keys):
+                # neg_elbo_values = jax.vmap(self.loss, in_axes=(0,0,None))(keys, batch, params)
+
                 neg_elbo_values, grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2), in_axes=(0,0,None))(keys, batch, params)
                 avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                 
@@ -525,6 +527,7 @@ class SVITrainer:
             (_ , params, opt_state, _), (avg_elbo_batches, avg_grads_batches) = jax.lax.scan(batch_step,  
                                                                 init=(data, params, opt_state, subkeys_epoch), 
                                                                 xs = batch_start_indices)
+
 
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
             

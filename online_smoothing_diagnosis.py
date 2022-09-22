@@ -101,12 +101,11 @@ def main(args):
 
 
     else: 
-        state_dim, obs_dim = args.state_dim, args.obs_dim
 
         args_p = argparse.Namespace()
         args_p.state_dim, args_p.obs_dim = args.state_dim, args.obs_dim
-
-        args_p.linear = True
+        args_p.emission_bias = False
+        args_p.p_version = 'linear'
         args_p.layers = ()
         args_p.slope = 0
         args_p.num_particles = 1000 
@@ -124,6 +123,7 @@ def main(args):
         args_p.default_transition_bias = 0
 
         args_q = argparse.Namespace()
+        args_q.state_dim, args_q.obs_dim = args.state_dim, args.obs_dim
         args_q.q_version = 'linear'
         args_q.transition_matrix_conditionning = 'diagonal'
         args_q.range_transition_map_params = args.range_transition_map_params
@@ -135,49 +135,15 @@ def main(args):
 
     utils.set_parametrization(args_p)
 
+    key, subkey_theta, subkey_phi = jax.random.split(key, 3)
 
-    if args_p.linear:
-        p = hmm.LinearGaussianHMM(state_dim, 
-                                obs_dim, 
-                                args_p.transition_matrix_conditionning, 
-                                args_p.range_transition_map_params, 
-                                args_p.transition_bias)
-
-    else: 
-
-        p = hmm.NonLinearHMM.linear_transition_with_nonlinear_emission(args_p) # specify the structure of the true model
-
-    if 'linear' in args_q.q_version:
-
-        q = hmm.LinearGaussianHMM(state_dim=state_dim, 
-                                obs_dim=obs_dim, 
-                                transition_matrix_conditionning=args_q.transition_matrix_conditionning,
-                                range_transition_map_params=args_q.range_transition_map_params,
-                                transition_bias=args_q.transition_bias,
-                                emission_bias=args_q.emission_bias) 
-
-    elif 'johnson' in args_q.q_version:
-        q = hmm.JohnsonBackwardSmoother(transition_kernel=p.transition_kernel,
-                                        obs_dim=obs_dim, 
-                                        update_layers=args_q.update_layers,
-                                        explicit_proposal='explicit_proposal' in args_q.q_version)
-
-
-    else:
-        q = hmm.GeneralBackwardSmoother(state_dim=state_dim, 
-                                        obs_dim=obs_dim, 
-                                        update_layers=args_q.update_layers,
-                                        backwd_layers=args_q.backwd_map_layers)
+    p, theta_star = utils.get_generative_model(args_p, subkey_theta)
+    q, phi = utils.get_variational_model(args_q, p, subkey_phi)
 
 
     if args.trained_model:
         theta_star = utils.load_params('theta', os.path.join(args.exp_dir, args.method_name))
         phi = utils.load_params('phi', args.method_dir)[1]
-
-    else: 
-        key, subkey_theta, subkey_phi = jax.random.split(key, 3)
-        theta_star = p.get_random_params(subkey_theta, args_p)
-        phi = q.get_random_params(subkey_phi, args_p)
 
 
 
@@ -188,33 +154,121 @@ def main(args):
     # normalizer = lambda x: jnp.mean(jnp.exp(x))
     normalizer = smc.exp_and_normalize
 
-    if args_p.linear:
-        closed_form_elbo = jax.jit(jax.vmap(lambda obs_seq: LinearGaussianELBO(p,q)(obs_seq, p.format_params(theta_star), q.format_params(phi))))
 
-    offline_mc_elbo = jax.jit(jax.vmap(lambda key, obs_seq: GeneralBackwardELBO(p, q, num_samples)(key, obs_seq, p.format_params(theta_star), q.format_params(phi))))
-    online_mc_elbo = jax.jit(jax.vmap(lambda key, obs_seq: OnlineGeneralBackwardELBO(p, q, normalizer, num_samples)(key, obs_seq, p.format_params(theta_star), q.format_params(phi))))
+    if args_p.p_version == 'linear':
+        closed_form_elbo = jax.vmap(lambda obs_seq: LinearGaussianELBO(p, q)(obs_seq, 
+                                                                            p.format_params(theta_star), 
+                                                                            q.format_params(phi)))
+
+    offline_mc_elbo = jax.vmap(in_axes=(0,0,None), fun=lambda key, obs_seq, num_samples: GeneralBackwardELBO(p, q, num_samples)(
+                                                                                                        key, 
+                                                                                                        obs_seq, 
+                                                                                                        p.format_params(theta_star), 
+                                                                                                        q.format_params(phi)))
+    
+    online_mc_elbo = jax.vmap(in_axes=(0,0,None), fun=lambda key, obs_seq, num_samples: OnlineGeneralBackwardELBO(p, q, normalizer, num_samples)(key, 
+                                                                                                                    obs_seq, 
+                                                                                                                    p.format_params(theta_star), 
+                                                                                                                    q.format_params(phi)))
 
     keys = jax.random.split(key, num_seqs)
 
-        
-    offline_mc_elbo_values = offline_mc_elbo(keys, obs_seqs)
-    online_mc_elbo_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = online_mc_elbo(keys, obs_seqs)
+    def compute_elbos(obs_seqs, num_samples):
 
+        offline_mc_elbo_values = offline_mc_elbo(keys, obs_seqs, num_samples)
+        online_mc_elbo_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = online_mc_elbo(keys, obs_seqs, num_samples)
 
-    offline_mc_elbo_values /= seq_length 
-    online_mc_elbo_values /= seq_length
+        offline_mc_elbo_values /= len(obs_seqs[0])
+        online_mc_elbo_values /= len(obs_seqs[0])
 
-    if args_p.linear: 
-        true_elbo_values = closed_form_elbo(obs_seqs) / seq_length
-        errors_online = jnp.abs(true_elbo_values - online_mc_elbo_values)
-        errors_offline = jnp.abs(true_elbo_values - offline_mc_elbo_values)
-        errors = pd.DataFrame({'Online':errors_online, 
-                                'Offline':errors_offline}).unstack().reset_index()
-        errors.columns = ['Method', 'Sequence nb', 'Error']
-        sns.boxplot(data=errors, x='Method', y='Error')
-        plt.savefig(os.path.join(save_dir, 'errors_boxplot.pdf'),format='pdf')
+        if args_p.p_version == 'linear': 
+            true_elbo_values = closed_form_elbo(obs_seqs) / len(obs_seqs[0])
+        else: 
+            true_elbo_values = None
+
+        return true_elbo_values, offline_mc_elbo_values, online_mc_elbo_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs)
+
+    
+    if args.evolution_wrt_seq_length != -1: 
+
+        true_values_list = dict()
+        offline_values_list = dict()
+        online_values_list = dict()
+
+        for stopping_point in range(args.evolution_wrt_seq_length, seq_length, args.evolution_wrt_seq_length):
+
+            true_values, offline_values, online_values = compute_elbos(obs_seqs[:,:stopping_point], num_samples)[:-1]
+
+            true_values_list[stopping_point] = true_values
+            offline_values_list[stopping_point] = offline_values
+            online_values_list[stopping_point] = online_values
+
+        true_elbo_values, offline_mc_elbo_values, online_mc_elbo_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = compute_elbos(obs_seqs, num_samples)
+
+        true_values_list[seq_length] = true_elbo_values
+        offline_values_list[seq_length] = offline_mc_elbo_values
+        online_values_list[seq_length] = online_mc_elbo_values
+
+        errors_online = dict()
+        errors_offline = dict()
+
+        for k in true_values_list.keys():
+            errors_online_k = jnp.abs(true_values_list[k] - online_values_list[k])
+            errors_online[k] = {k:v.tolist() for k,v in enumerate(errors_online_k)}
+            errors_offline_k  = jnp.abs(true_values_list[k] - offline_values_list[k])
+            errors_offline[k] = {k:v.tolist() for k,v in enumerate(errors_offline_k)}
+
+        errors_online = pd.DataFrame(errors_online).apply(pd.Series).unstack().reset_index()
+        errors_online['Method'] = 'Online'
+        errors_offline = pd.DataFrame(errors_offline).apply(pd.Series).unstack().reset_index()   
+        errors_offline['Method'] = 'Offline'
+        errors = pd.concat([errors_online, errors_offline], axis=0).reset_index().drop(columns='index')
+
+        errors.columns = ['Seq length', 'Seq nb', 'Value', 'Method']
+        sns.boxplot(data=errors, 
+                    x='Seq length', 
+                    y='Value',
+                    hue='Method')
+
+        plt.savefig(os.path.join(save_dir, 'errors_wrt_length_boxplot.pdf'), format='pdf')
+        plt.close()
+
+    elif args.evolution_wrt_num_samples != -1:
+
+        offline_values_list = dict()
+        online_values_list = dict()
+        if args_p.p_version == 'linear': true_values = closed_form_elbo(obs_seqs) / seq_length
+        for n_samples in range(1, num_samples+1, args.evolution_wrt_num_samples):
+            offline_values, online_values = compute_elbos(obs_seqs, n_samples)[1:-1]
+
+            offline_values_list[n_samples] = offline_values
+            online_values_list[n_samples] = online_values
+
+        errors_online = dict()
+        errors_offline = dict()
+
+        for k in offline_values_list.keys():
+            errors_online_k = jnp.abs(true_values - online_values_list[k])
+            errors_online[k] = {k:v.tolist() for k,v in enumerate(errors_online_k)}
+            errors_offline_k  = jnp.abs(true_values - offline_values_list[k])
+            errors_offline[k] = {k:v.tolist() for k,v in enumerate(errors_offline_k)}
+
+        errors_online = pd.DataFrame(errors_online).apply(pd.Series).unstack().reset_index()
+        errors_online['Method'] = 'Online'
+        errors_offline = pd.DataFrame(errors_offline).apply(pd.Series).unstack().reset_index()   
+        errors_offline['Method'] = 'Offline'
+        errors = pd.concat([errors_online, errors_offline], axis=0).reset_index().drop(columns='index')
+
+        errors.columns = ['Num samples', 'Seq nb', 'Value', 'Method']
+        sns.boxplot(data=errors, 
+                    x='Num samples', 
+                    y='Value',
+                    hue='Method')
+
+        plt.savefig(os.path.join(save_dir, 'errors_wrt_num_samples_boxplot.pdf'), format='pdf')
         plt.close()
         # sns.boxplot(errors)
+
     #%%
 
     def distance_backwd_to_filt(sample, filt_state, backwd_state):
@@ -263,16 +317,18 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
     
-    args.state_dim = 10
+    args.state_dim = 5
     args.obs_dim = 10
     args.num_samples = 1000
     args.num_seqs = 10
     args.seq_length = 50
     args.trained_model = False
-    args.range_transition_map_params = (0.99,1)
-    args.save_dir = 'experiments/tests/online/tests'
+    args.range_transition_map_params = (0.99, 1)
+    args.save_dir = 'experiments/tests/online/tests_linear_dim_100_200'
     args.exp_dir = 'experiments/p_nonlinear/2022_07_27__12_21_27'
     args.method_name = 'johnson_freeze__theta'
+    args.evolution_wrt_seq_length = -1
+    args.evolution_wrt_num_samples = 50
 
     main(args)
 
