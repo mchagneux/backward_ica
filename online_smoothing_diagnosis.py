@@ -134,11 +134,11 @@ def main(args, args_p, args_q):
 
     key = jax.random.PRNGKey(0)
 
-    os.makedirs(args.save_dir, exist_ok=True)
 
     utils.set_parametrization(args_p)
 
     if args.evolution_wrt_seq_length != -1: 
+
 
         key, *subkeys = jax.random.split(key, 3)
 
@@ -189,15 +189,16 @@ def main(args, args_p, args_q):
         errors.columns = ['Seq length', 'Seq nb', 'Value', 'Method']
         errors.to_csv(os.path.join(args.save_dir, 'errors_wrt_length.csv'))
 
-        sns.boxplot(data=errors, 
+        sns.violinplot(data=errors, 
                     x='Seq length', 
                     y='Value',
-                    hue='Method')
+                    hue='Method',
+                    inner='point')
 
-        plt.savefig(os.path.join(args.save_dir, 'errors_wrt_length_boxplot.pdf'), format='pdf')
+        plt.savefig(os.path.join(args.save_dir, 'errors_wrt_length_violinplot.pdf'), format='pdf')
         plt.close()
 
-    elif args.evolution_wrt_num_samples != -1:
+    if args.evolution_wrt_num_samples != -1:
 
         key, *subkeys = jax.random.split(key, 3)
 
@@ -239,12 +240,13 @@ def main(args, args_p, args_q):
 
         errors.columns = ['Num samples', 'Seq nb', 'Value', 'Method']
         errors.to_csv(os.path.join(args.save_dir, 'errors_wrt_num_samples.csv'))
-        sns.boxplot(data=errors, 
+        sns.violinplot(data=errors, 
                 x='Num samples', 
                 y='Value',
-                hue='Method')
+                hue='Method',
+                inner='point')
                 
-        plt.savefig(os.path.join(args.save_dir, 'errors_wrt_num_samples_boxplot.pdf'), format='pdf')
+        plt.savefig(os.path.join(args.save_dir, 'errors_wrt_num_samples_violinplot.pdf'), format='pdf')
         plt.close()
 
     elif args.evolution_wrt_dim != -1: 
@@ -254,7 +256,7 @@ def main(args, args_p, args_q):
         offline_values_list = dict()
         online_values_list = dict()
 
-        for dim in range(1, args.state_dim+1, args.evolution_wrt_dim):
+        for dim in range(args.evolution_wrt_dim, args.state_dim+1, args.evolution_wrt_dim):
             args_p.state_dim = args_q.state_dim = dim
             args_p.obs_dim = args_q.obs_dim = dim
 
@@ -271,7 +273,7 @@ def main(args, args_p, args_q):
 
 
         true_values = true_elbo(obs_seqs)
-        offline_values, online_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = mc_elbos(obs_seqs, args.num_samples)[:-1]
+        offline_values, online_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = mc_elbos(obs_seqs, args.num_samples)
 
         true_values_list[args.state_dim] = true_values
         offline_values_list[args.state_dim] = offline_values
@@ -296,14 +298,15 @@ def main(args, args_p, args_q):
 
         errors.to_csv(os.path.join(args.save_dir, 'errors_wrt_state_dim.csv'))
 
-        sns.boxplot(data=errors, 
+        sns.violinplot(data=errors, 
                 x='State dim', 
                 y='Value',
-                hue='Method')
+                hue='Method',
+                inner='point')
 
-        plt.ylabel('$\mathcal{L}(\\theta, \\lambda) - \hat{\mathcal{L}}(\\theta, \\lambda)$')
+        # plt.ylabel('$\mathcal{L}(\\theta, \\lambda) - \hat{\mathcal{L}}(\\theta, \\lambda)$')
 
-        plt.savefig(os.path.join(args.save_dir, 'errors_wrt_state_dim_boxplot.pdf'), format='pdf')
+        plt.savefig(os.path.join(args.save_dir, 'errors_wrt_state_dim_violinplot.pdf'), format='pdf')
         plt.close()
 
     else: 
@@ -347,11 +350,11 @@ def compute_distances_to_backward():
     plt.tight_layout()
     plt.autoscale()
     for seq_nb in range(args.num_seqs):
-        sns.boxplot(data=distances[seq_nb], x='Timestep',y='Value', ax=axes[seq_nb])
+        sns.violinplot(data=distances[seq_nb], x='Timestep',y='Value', ax=axes[seq_nb])
     plt.savefig(os.path.join(args.save_dir, 'kullback_distances.pdf'),format='pdf')
     plt.close()
 
-# sns.boxplot(data=distances, x='Timestep', y='Value', hue='Sequence_nb')
+# sns.violinplot(data=distances, x='Timestep', y='Value', hue='Sequence_nb')
 #
 #%%
         # plt.savefig('')
@@ -369,33 +372,28 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
     
-    args.state_dim = 5
-    args.obs_dim = 5
-    args.num_samples = 1000
+    args.state_dim = 20
+    args.obs_dim = 20
+    args.num_samples = 200
     args.num_seqs = 20
-    args.seq_length = 100
+    args.seq_length = 50
     args.trained_model = False
     args.range_transition_map_params = (0.99, 1)
-    args.save_dir = 'experiments/tests/online/tests_linear_dim_100_200'
+    args.save_dir = 'experiments/tests/online/test_evolution'
     args.exp_dir = 'experiments/p_nonlinear/2022_07_27__12_21_27'
     args.method_name = 'johnson_freeze__theta'
-    args.evolution_wrt_seq_length = 10
+    args.evolution_wrt_seq_length = -1
     args.evolution_wrt_num_samples = -1
-    args.evolution_wrt_dim = -1
+    args.evolution_wrt_dim = 4
 
 
-
-
-
-
-    if args.trained_model: 
+    if args.trained_model:
 
         args_p = utils.load_args('train_args',os.path.join(args.exp_dir, args.method_name))
 
         method_dir = os.path.join(args.exp_dir, args.method_name)
         args_q = utils.load_args('train_args', method_dir)
         args_p.linear = args_q.split('_')[0] == 'linear'
-
 
     else: 
 
@@ -430,8 +428,9 @@ if __name__ == '__main__':
         args_q.backwd_layers = False
         args_q.explicit_proposal = False 
 
+    os.makedirs(args.save_dir, exist_ok=True)
 
-        utils.save_args(args, 'args', args.save_dir)
+    utils.save_args(args, 'args', args.save_dir)
 
 
     main(args, args_p, args_q)
