@@ -99,7 +99,7 @@ def get_tractable_emission_term_from_natparams(emission_natparams):
 
 class GeneralBackwardELBO:
 
-    def __init__(self, p:HMM, q:Smoother, num_samples=200):
+    def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):
 
         self.p = p
         self.q = q
@@ -145,7 +145,7 @@ class GeneralBackwardELBO:
 
 class OnlineGeneralBackwardELBO:
 
-    def __init__(self, p:HMM, q:Smoother, normalizer, num_samples=200):
+    def __init__(self, p:HMM, q:BackwardSmoother, normalizer, num_samples=200):
 
         self.p = p
         self.q = q
@@ -417,7 +417,7 @@ class SVITrainer:
 
     def __init__(self, p:HMM, 
                 theta_star,
-                q:Smoother, 
+                q:BackwardSmoother, 
                 optimizer, 
                 learning_rate, 
                 num_epochs, 

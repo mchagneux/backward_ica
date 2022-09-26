@@ -17,7 +17,8 @@ config.update('jax_enable_x64',True)
 import copy 
 _conditionnings = {'diagonal':lambda param, d: jnp.diag(param),
                 'sym_def_pos': lambda param, d: mat_from_chol_vec(param, d) + jnp.eye(d),
-                None:lambda x, d:x}
+                None:lambda x, d:x,
+                'init_invertible': lambda x,d:x + jnp.eye(d)}
 
 def xtanh(slope):
     return lambda x: jnp.tanh(x) + slope*x
@@ -119,9 +120,12 @@ def linear_map_init_params(key, dummy_in, out_dim, conditionning, bias, range_pa
     elif conditionning == 'sym_def_pos':
         d = out_dim 
         w = random.uniform(key_w, ((d*(d+1)) // 2,), minval=range_params[0], maxval=range_params[1])
+    elif conditionning == 'init_invertible':
+        w = random.uniform(key_w, (out_dim, len(dummy_in)), minval=range_params[0], maxval=range_params[1])
+        w = w @ w.T
     else: 
         w = random.uniform(key_w, (out_dim, len(dummy_in)), minval=range_params[0], maxval=range_params[1])
-
+        
         
     if bias: 
         b = random.uniform(key_b, (out_dim,))
@@ -452,7 +456,7 @@ class HMM:
                 if (type(v) == str): new_params.transition.map['linear']['w'] = jnp.load(v).astype(jnp.float64)
         return new_params
 
-class Smoother(metaclass=ABCMeta):
+class BackwardSmoother(metaclass=ABCMeta):
 
     @staticmethod
     def filt_update_forward(obs, prev_state, layers, state_dim):
@@ -561,7 +565,7 @@ class Smoother(metaclass=ABCMeta):
         
         return vmap(self.new_backwd_state, in_axes=(0,None))(tree_droplast(filt_seq), formatted_params)
 
-class LinearBackwardSmoother(Smoother):
+class LinearBackwardSmoother(BackwardSmoother):
 
 
     def __init__(self, state_dim, filt_dist=Gaussian):
@@ -1137,7 +1141,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
         print('-- in prior + predict + backward:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
         print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt_update)))
     
-class GeneralBackwardSmoother(Smoother):
+class GeneralBackwardSmoother(BackwardSmoother):
 
     def __init__(self, 
                 state_dim, 
@@ -1166,7 +1170,7 @@ class GeneralBackwardSmoother(Smoother):
         super().__init__(filt_dist, 
                         Kernel(state_dim, state_dim, backwd_kernel_map_def, Gaussian))
 
-    def get_random_params(self, key):
+    def get_random_params(self, key, args=None):
         
         key_prior, key_filt, key_back = random.split(key, 3)
     
@@ -1245,7 +1249,7 @@ class GeneralBackwardSmoother(Smoother):
         
 
 
-# class NeuralLinearForwardSmoother(Smoother):
+# class NeuralLinearForwardSmoother(BackwardSmoother):
 
 #     def __init__(self, state_dim, obs_dim,            
 #                 transition_kernel_matrix_conditionning='diagonal', 

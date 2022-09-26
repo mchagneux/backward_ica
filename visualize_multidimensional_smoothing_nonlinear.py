@@ -19,14 +19,14 @@ from backward_ica.svi import BackwardLinearELBO
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_09_23__18_22_44'
+exp_dir = 'experiments/p_chaotic_rnn/2022_09_26__18_32_39'
 
 method_names = ['johnson', 
                 'campbell']
                 
 pretty_names = ['Johnson', 'Campbell']
 
-train_args = utils.load_args('train_args',os.path.join(exp_dir, method_names[0]))
+train_args = utils.load_args('train_args', os.path.join(exp_dir, method_names[0]))
 utils.set_parametrization(train_args)
 
 eval_dir = os.path.join(exp_dir, 'eval')
@@ -160,7 +160,6 @@ for method_name in method_names:
             means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,0, None, None))(keys_smooth_q, obs_seqs, phi, num_particles)
         else:     
             means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
-
             means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,None,None))(obs_seqs, phi, lag)
 
         filt_results.append((means_filt_q, covs_filt_q))
@@ -179,7 +178,7 @@ if not load:
 
 
 if filter_rmse: 
-    filt_rmse_smc = jnp.mean(jnp.sqrt(jnp.mean((filt_results[0][0] - state_seqs)**2, axis=-1)))
+    # filt_rmse_smc = jnp.mean(jnp.sqrt(jnp.mean((filt_results[0][0] - state_seqs)**2, axis=-1)))
     # print('Filter RMSE SMC:', filt_rmse_smc)
     for method_nb, (method_name, pretty_name) in enumerate(zip(method_names, pretty_names)): 
         filt_rmse_q = jnp.mean(jnp.sqrt(jnp.mean((filt_results[method_nb][0] - state_seqs)**2, axis=-1)))

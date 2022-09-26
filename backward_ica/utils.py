@@ -63,17 +63,18 @@ def get_variational_model(args, p=None, key_for_random_params=None):
 
         q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
                             obs_dim=args.obs_dim,
-                            transition_matrix_conditionning=args.transition_matrix_conditionning,
-                            transition_bias=args.transition_bias, 
-                            emission_bias=False)
+                            transition_matrix_conditionning=None,
+                            range_transition_map_params=(0.99,1),
+                            transition_bias=True, 
+                            emission_bias=True)
 
     elif 'johnson' in args.q_version:
         if (p is not None) and (p.transition_kernel.map_type == 'linear'):
             transition_kernel = p.transition_kernel
         else:
-            transition_kernel = hmm.Kernel.linear_gaussian(args.transition_matrix_conditionning, 
+            transition_kernel = hmm.Kernel.linear_gaussian('init_invertible', 
                                                         True, 
-                                                        range_params=args.range_transition_map_params)(args.state_dim, args.obs_dim)
+                                                        range_params=(-1,1))(args.state_dim, args.obs_dim)
 
         q = hmm.JohnsonBackwardSmoother(transition_kernel=transition_kernel,
                                         obs_dim=args.obs_dim, 
@@ -85,6 +86,7 @@ def get_variational_model(args, p=None, key_for_random_params=None):
                                         obs_dim=args.obs_dim, 
                                         update_layers=args.update_layers,
                                         backwd_layers=args.backwd_map_layers)
+
     if key_for_random_params is not None:
         phi = q.get_random_params(key_for_random_params, args)
         return q, phi
@@ -128,8 +130,8 @@ def get_config(p_version=None,
     args.default_prior_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the prior
 
     ## transition 
-    args.transition_matrix_conditionning = 'sym_def_pos' # constraint on the transition matrix 
-    args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
+    args.transition_matrix_conditionning = 'diagonal' # constraint on the transition matrix 
+    args.range_transition_map_params = [0.99,1] # range of the components of the transition matrix
     args.default_transition_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the transition kernel
     args.transition_bias = False 
     args.default_transition_bias = 0.0
@@ -162,7 +164,9 @@ def get_config(p_version=None,
         args.explicit_proposal = 'explicit_proposal' in args.q_version # whether to use a Kalman predict step as a first move to update the variational filtering familiy
         args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (8,8) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
-
+    else: 
+        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
+        args.backwd_map_layers = (8,8)
 
 
     ## SMC 
