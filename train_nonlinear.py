@@ -21,7 +21,7 @@ def main(args, save_dir):
 
     utils.save_params(theta_star, 'theta', save_dir)
 
-    state_seqs , obs_seqs = p.sample_multiple_sequences(key_gen, 
+    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, 
                                             theta_star, 
                                             args.num_seqs, 
                                             args.seq_length, 
@@ -29,17 +29,15 @@ def main(args, save_dir):
                                             loaded_data=args.loaded_data)
 
 
-    
-
     evidence_keys = jax.random.split(key_smc, args.num_seqs)
 
-    # print('Computing evidence...')
+    print('Computing evidence...')
 
-    # avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, 
-    #                                                                     theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
+    avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, 
+                                                                        theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
 
 
-    # print('Oracle evidence:', avg_evidence)
+    print('Oracle evidence:', avg_evidence)
 
     q = utils.get_variational_model(args, p=p)
 
@@ -48,8 +46,6 @@ def main(args, save_dir):
                                             args.frozen_params, 
                                             q, 
                                             theta_star)
-
-    lambda_test = q.get_random_params(key_params, args)
     
 
     trainer = SVITrainer(p=p, 
@@ -88,13 +84,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--p_version', type=str, default='chaotic_rnn')
-    parser.add_argument('--q_version',type=str, default='johnson_freeze__covariances')
+    parser.add_argument('--q_version',type=str, default='johnson_explicit_proposal')
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--args_path', type=str, default='')
     parser.add_argument('--dims', type=int, nargs='+', default=(5,5))
 
-    parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--num_epochs', type=int, default=2000)
+    parser.add_argument('--learning_rate', type=float, default=0.01)
+    parser.add_argument('--num_epochs', type=int, default=5000)
+    parser.add_argument('--num_samples', type=int, default=1)
 
 
     args = parser.parse_args()

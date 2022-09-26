@@ -207,11 +207,11 @@ class OnlineGeneralBackwardELBO:
             tau = vmap(init_functional)(samples)                            
 
             (tau, _ , _), (samples_seq, weights_seq) = lax.scan(update_tau, 
-                                                                    init=(tau, samples, log_probs), 
-                                                                    xs=(random.split(key, len(obs_seq)-1), 
-                                                                        obs_seq[1:],
-                                                                        tree_dropfirst(q_filt_state_seq),
-                                                                        q_backwd_state_seq))
+                                                                init=(tau, samples, log_probs), 
+                                                                xs=(random.split(key, len(obs_seq)-1), 
+                                                                    obs_seq[1:],
+                                                                    tree_dropfirst(q_filt_state_seq),
+                                                                    q_backwd_state_seq))
 
             return tau, tree_prepend(samples, samples_seq), weights_seq
 
@@ -432,6 +432,7 @@ class SVITrainer:
         self.q = q 
         # self.q.print_num_params()
         self.p = p 
+        
         self.theta_star = theta_star
         self.frozen_params = frozen_params
 
@@ -448,28 +449,29 @@ class SVITrainer:
         
         # format_params = lambda params: self.q.format_params(params)
 
-        if force_full_mc: 
-            self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-            self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
-        else:
-            if isinstance(self.p, LinearGaussianHMM):
-                self.elbo = LinearGaussianELBO(self.p, self.q)
-                self.get_montecarlo_keys = get_dummy_keys
-                self.loss = lambda key, data, params: -self.elbo(data, self.p.format_params(self.theta_star), q.format_params(params))
-            elif isinstance(self.q, LinearBackwardSmoother) and self.p.transition_kernel.map_type == 'linear':
-                self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
-                self.get_montecarlo_keys = get_keys
-                self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
-            else:
-                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-                self.get_montecarlo_keys = get_keys
-                self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
 
         if online:
             self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize, num_samples)
             self.get_montecarlo_keys = get_keys
             self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))[0]
+        else:
+            if force_full_mc: 
+                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+                self.get_montecarlo_keys = get_keys
+                self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
+            else:
+                if isinstance(self.p, LinearGaussianHMM):
+                    self.elbo = LinearGaussianELBO(self.p, self.q)
+                    self.get_montecarlo_keys = get_dummy_keys
+                    self.loss = lambda key, data, params: -self.elbo(data, self.p.format_params(self.theta_star), q.format_params(params))
+                elif isinstance(self.q, LinearBackwardSmoother) and self.p.transition_kernel.map_type == 'linear':
+                    self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
+                    self.get_montecarlo_keys = get_keys
+                    self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
+                else:
+                    self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+                    self.get_montecarlo_keys = get_keys
+                    self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
 
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None):
@@ -516,7 +518,9 @@ class SVITrainer:
         all_params = []
         batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
 
-        for epoch_nb in tqdm(range(self.num_epochs), 'Epoch'):
+        t = tqdm(total=self.num_epochs, desc='Epoch')
+        for epoch_nb in range(self.num_epochs):
+            t.update(1)
             subkeys_epoch = subkeys[epoch_nb]
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             
@@ -530,7 +534,8 @@ class SVITrainer:
 
 
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
-            
+            t.set_postfix({'Avg ELBO epoch':avg_elbo_epoch})
+
             # avg_grads_batches = [grad for mask, grad in zip(tree_flatten(self.trainable_params)[0], 
             #                                                 tree_flatten(avg_grads_batches)[0]) 
             #                                             if mask]
@@ -552,6 +557,7 @@ class SVITrainer:
                         # tf.summary.histogram('Minibatch grads', avg_grads_batch, epoch_nb*len(batch_start_indices) + batch_nb)
             avg_elbos.append(avg_elbo_epoch)
             all_params.append(params)
+        t.close()
                     
         return all_params, avg_elbos
 

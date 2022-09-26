@@ -313,9 +313,53 @@ def main(args, args_p, args_q):
         key, *subkeys = jax.random.split(key, 3)
 
         sampler, mc_elbos, true_elbo = get_sampler_and_elbos(subkeys[0], args, args_p, args_q)
+        state_seqs, obs_seqs = sampler(subkeys[1])
 
         true_values = true_elbo(obs_seqs)
         offline_values, online_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = mc_elbos(obs_seqs, args.num_samples)
+
+        errors_online = jnp.abs(true_values - online_values)
+        errors_offline = jnp.abs(true_values - offline_values)
+
+        errors_offline = {k:v.tolist() for k,v in enumerate(errors_offline)}
+        errors_online = {k:v.tolist() for k,v in enumerate(errors_online)}
+
+        # errors_online = pd.DataFrame(errors_online).apply(pd.Series).unstack().reset_index()
+        # errors_offline = pd.DataFrame(errors_offline).apply(pd.Series).unstack().reset_index()   
+
+
+        errors = pd.DataFrame({'Online':errors_online, 'Offline':errors_offline})
+        errors = errors.unstack().reset_index()
+        errors.columns = ['Method', 'Seq nb', 'Value']
+        errors.to_csv(os.path.join(args.save_dir, 'errors.csv'))
+
+
+        sns.boxplot(data=errors, 
+                    x='Method',
+                    y='Value')
+
+        plt.ylabel('$\mathcal{L}(\\theta, \\lambda) - \hat{\mathcal{L}}(\\theta, \\lambda)$')
+
+        plt.savefig(os.path.join(args.save_dir, 'errors.pdf'), format='pdf')
+        plt.close()
+
+        # errors_online['Method'] = 'Online'
+        # errors_offline['Method'] = 'Offline'
+        # errors = pd.concat([errors_online, errors_offline], axis=0).reset_index().drop(columns='index')
+
+        # errors.columns = ['State dim', 'Seq nb', 'Value', 'Method']
+
+
+        # sns.violinplot(data=errors, 
+        #         x='State dim', 
+        #         y='Value',
+        #         hue='Method',
+        #         inner='point')
+
+        # plt.ylabel('$\mathcal{L}(\\theta, \\lambda) - \hat{\mathcal{L}}(\\theta, \\lambda)$')
+
+        # plt.savefig(os.path.join(args.save_dir, 'errors_wrt_state_dim_violinplot.pdf'), format='pdf')
+        # plt.close()
 
 
 
@@ -372,19 +416,19 @@ if __name__ == '__main__':
 
     args = argparse.Namespace()
     
-    args.state_dim = 20
-    args.obs_dim = 20
-    args.num_samples = 200
-    args.num_seqs = 20
+    args.state_dim = 5
+    args.obs_dim = 5
+    args.num_samples = 100
+    args.num_seqs = 100
     args.seq_length = 50
     args.trained_model = False
-    args.range_transition_map_params = (0.99, 1)
+    args.range_transition_map_params = (0.5, 1)
     args.save_dir = 'experiments/tests/online/test_evolution'
     args.exp_dir = 'experiments/p_nonlinear/2022_07_27__12_21_27'
     args.method_name = 'johnson_freeze__theta'
     args.evolution_wrt_seq_length = -1
     args.evolution_wrt_num_samples = -1
-    args.evolution_wrt_dim = 4
+    args.evolution_wrt_dim = -1
 
 
     if args.trained_model:

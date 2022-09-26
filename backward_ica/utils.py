@@ -2,7 +2,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 
 from jax import numpy as jnp, vmap, config, random, jit, scipy as jsp, lax
-from functools import update_wrapper
+from functools import update_wrapper, partial
 from jax.tree_util import register_pytree_node_class, tree_map
 from jax.scipy.linalg import solve_triangular
 import re
@@ -24,7 +24,21 @@ config.update('jax_enable_x64',True)
 
 
 
+@partial(jit, static_argnums=(1,))
+def moving_window(a, size: int):
+    starts = jnp.arange(len(a) - size + 1)
+    return vmap(lambda start: lax.dynamic_slice_in_dim(a, start, size))(starts)
+
+def chol_from_vec(vec, d):
+
+    return jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(vec)
+
+def mat_from_chol_vec(vec, d):
+    w = chol_from_vec(vec,d)
+    return w @ w.T
+
 def get_generative_model(args, key_for_random_params=None):
+
     if args.p_version == 'linear':
         p = hmm.LinearGaussianHMM(args.state_dim, 
                                 args.obs_dim, 
@@ -57,9 +71,9 @@ def get_variational_model(args, p=None, key_for_random_params=None):
         if (p is not None) and (p.transition_kernel.map_type == 'linear'):
             transition_kernel = p.transition_kernel
         else:
-            transition_kernel = hmm.Kernel.linear_gaussian(None, 
+            transition_kernel = hmm.Kernel.linear_gaussian(args.transition_matrix_conditionning, 
                                                         True, 
-                                                        range_params=(0,1))(args.state_dim, args.obs_dim)
+                                                        range_params=args.range_transition_map_params)(args.state_dim, args.obs_dim)
 
         q = hmm.JohnsonBackwardSmoother(transition_kernel=transition_kernel,
                                         obs_dim=args.obs_dim, 
@@ -114,8 +128,8 @@ def get_config(p_version=None,
     args.default_prior_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the prior
 
     ## transition 
-    args.transition_matrix_conditionning = 'diagonal' # constraint on the transition matrix 
-    args.range_transition_map_params = [0.99,1] # range of the components of the transition matrix
+    args.transition_matrix_conditionning = 'sym_def_pos' # constraint on the transition matrix 
+    args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
     args.default_transition_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the transition kernel
     args.transition_bias = False 
     args.default_transition_bias = 0.0
@@ -131,7 +145,7 @@ def get_config(p_version=None,
 
     
     if args.p_version == 'chaotic_rnn':
-        args.default_emission_df = 2 # degrees of freedom for the emission matrix
+        args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
         args.grid_size = 0.001 # discretization parameter for the chaotic rnn
         args.gamma = 2.5 # gamma for the chaotic rnn
@@ -146,7 +160,7 @@ def get_config(p_version=None,
     if 'johnson' in args.q_version:
         ## variational family
         args.explicit_proposal = 'explicit_proposal' in args.q_version # whether to use a Kalman predict step as a first move to update the variational filtering familiy
-        args.update_layers = (16,) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (8,8) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
 
@@ -160,7 +174,7 @@ def get_config(p_version=None,
     args.batch_size = 1
     args.store_every = args.num_epochs // 5 # step to store intermediate parameter values
     args.num_fits = 1 # number of optimization runs starting from multiple seeds
-    args.num_samples = 200  # number of MCMC samples used to compute the ELBO
+
     args.full_mc = 'full_mc' in args.q_version # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
     args.frozen_params  = args.q_version.split('__')[1:] # list of parameter groups which are not learnt
     args.online = 'online' in args.q_version # whether to use the online ELBO or not
@@ -214,6 +228,8 @@ def set_host_device_count(n):
     )
 
 
+def tree_get_strides(stride, tree):
+    return tree_map(partial(moving_window, size=stride), tree)
 
 def tree_prepend(prep, tree):
     preprended = tree_map(
@@ -234,6 +250,7 @@ def tree_droplast(tree):
 def tree_dropfirst(tree):
     '''Drop first index from each leaf'''
     return tree_map(lambda a: a[1:], tree)
+
 
 def tree_get_idx(idx, tree):
     '''Get idx row from each leaf of tuple'''
@@ -558,17 +575,16 @@ class GaussianParams:
     def from_vec(cls, vec, d, diag=True, chol_add=empty_add):
         mean = vec[:d]
 
+        # def diag_chol(vec, d):
+        #     return jnp.diag(vec[d:])
 
-        def diag_chol(vec, d):
-            return jnp.diag(vec[d:])
-
-        def non_diag_chol(vec, d):
-            return jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(vec[d:])
+        # def non_diag_chol(vec, d):
+        #     return chol_from_vec(vec[d:], d)
             
         if diag: 
-            chol = diag_chol(vec, d)
+            chol = jnp.diag(vec[d:])
         else: 
-            chol = non_diag_chol(vec, d)
+            chol = chol_from_vec(vec[d:], d)
             
         # chol = lax.cond(diag, diag_chol, non_diag_chol, vec, d)
 
