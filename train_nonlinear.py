@@ -33,9 +33,7 @@ def main(args, save_dir):
 
     print('Computing evidence...')
 
-    avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, 
-                                                                        theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
-
+    avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
 
     print('Oracle evidence:', avg_evidence)
 
@@ -77,14 +75,15 @@ if __name__ == '__main__':
     import argparse
     import os 
     from datetime import datetime
+
     date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
 
 
-    
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--p_version', type=str, default='chaotic_rnn')
-    parser.add_argument('--q_version',type=str, default='general')
+    parser.add_argument('--q_version', type=str, default='general')
+
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--args_path', type=str, default='')
     parser.add_argument('--dims', type=int, nargs='+', default=(5,5))

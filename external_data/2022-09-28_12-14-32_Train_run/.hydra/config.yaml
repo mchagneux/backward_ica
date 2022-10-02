@@ -1,0 +1,40 @@
+model_training:
+  func_type: Vx_t
+  q_hidden_dims:
+  - 100
+  phi_lr: 0.01
+  phi_iters: 500
+  phi_minibatch_size: 10
+  phi_t_init_method: pred
+  window_size: 1
+  V_batch_size: 250
+  V_lr: 0.01
+  V_minibatch_size: 10
+  V_iters: 25
+  KRR_lambda: 0.01
+  KRR_sigma: 2
+  KRR_train_sigma: true
+  KRR_train_lam: false
+  KRR_init_sigma_median: true
+  KRR_centre_elbo: true
+  approx_decay: 1.0
+  approx_with_filter: true
+  save_models: true
+  plot_diagnostics: false
+  evaluate_elbo: false
+  evaluate_final_elbo: false
+  evaluate_elbo_num_samples: 2500
+data:
+  data_name: CTRNN
+  path_to_data: null
+  dim: 5
+  grid_size: 0.001
+  gamma: 2.5
+  tau: 0.025
+  U_std: 0.1
+  V_scale: 0.1
+  V_df: 2
+  num_data: 500
+name: Train
+device: cpu
+seed: null

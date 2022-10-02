@@ -1007,7 +1007,7 @@ class NonLinearHMM(HMM):
         
         return params, avg_logls
 
-class JohnsonBackwardSmoother(LinearBackwardSmoother):
+class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
     def __init__(self, 
                 transition_kernel, 
@@ -1141,7 +1141,7 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
         print('-- in prior + predict + backward:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
         print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt_update)))
     
-class GeneralBackwardSmoother(BackwardSmoother):
+class NeuralBackwardSmoother(BackwardSmoother):
 
     def __init__(self, 
                 state_dim, 
@@ -1187,15 +1187,17 @@ class GeneralBackwardSmoother(BackwardSmoother):
                                             filt_update=filt_update_params, 
                                             backwd=backwd_params)
 
-    def smooth_seq(self, key, obs_seq, params, num_samples):
+    def smooth_seq(self, key, obs_seq, params, num_samples, lag=None):
 
         formatted_params = self.format_params(params)
 
         filt_state_seq = self.compute_filt_state_seq(obs_seq, formatted_params)
         backwd_state_seq = self.compute_kernel_state_seq(filt_state_seq, formatted_params)
 
-        marginals = self.compute_marginals(key, filt_state_seq, backwd_state_seq, num_samples)
-        
+        if lag is None:
+            marginals = self.compute_marginals(key, filt_state_seq, backwd_state_seq, num_samples)
+        else: 
+            marginals = self.compute_fixed_lag_marginals(key, filt_state_seq, backwd_state_seq, num_samples, lag)
 
         return jnp.mean(marginals, axis=0), jnp.var(marginals, axis=0)
 
@@ -1217,8 +1219,7 @@ class GeneralBackwardSmoother(BackwardSmoother):
 
     def compute_marginals(self, key, filt_state_seq, backwd_state_seq, num_samples):
 
-        @jit
-        def _sample_path(key, last_filt_state:FiltState, backwd_state_seq):
+        def _sample_for_marginals(key, last_filt_state:FiltState, backwd_state_seq):
             
             keys = random.split(key, backwd_state_seq.varying.shape[0]+1)
 
@@ -1234,20 +1235,51 @@ class GeneralBackwardSmoother(BackwardSmoother):
 
             return tree_append(samples, last_sample)
 
-        parallel_sampler = vmap(_sample_path, in_axes=(0,None,None))
+        parallel_sampler = jit(vmap(_sample_for_marginals, in_axes=(0,None,None)))
 
         return parallel_sampler(random.split(key, num_samples), tree_get_idx(-1, filt_state_seq), backwd_state_seq)
 
+    def compute_fixed_lag_marginals(self, key, filt_state_seq, backwd_state_seq, num_samples, lag):
+        
+        def _sample_for_marginals(key, filt_state_seq, backwd_state_seq):
+
+            def _sample_for_marginal(init, x):
+
+                key, lagged_filt_state, strided_backwd_state_subseq = x
+
+                keys = random.split(key, strided_backwd_state_subseq.varying.shape[0]+1)
+
+                last_sample = self.filt_dist.sample(keys[-1], lagged_filt_state.out)
+
+                def _sample_step(next_sample, x):
+                    
+                    key, backwd_state = x
+                    sample = self.backwd_kernel.sample(key, next_sample, backwd_state)
+                    return sample, None
+
+                marginal_sample = lax.scan(_sample_step, 
+                                        init=last_sample, 
+                                        xs=(keys[:-1], strided_backwd_state_subseq), 
+                                        reverse=True)[0]
+
+                return None, marginal_sample
+                
+
+            return lax.scan(_sample_for_marginal, 
+                                init=None, 
+                                xs=(random.split(key, backwd_state_seq.varying.shape[0]-lag+1), tree_get_slice(lag, None, filt_state_seq), tree_get_strides(lag, backwd_state_seq)))[1]
+        
+        parallel_sampler = jit(vmap(_sample_for_marginals, in_axes=(0,None,None)))
+
+        return parallel_sampler(random.split(key, num_samples), filt_state_seq, backwd_state_seq)
+    
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))
         print('Num params:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params)))
         print('-- filt net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.filt_update))))
         print('-- prior state:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior))))
         print('-- backwd net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.backwd))))
-
-
         
-
 
 # class NeuralLinearForwardSmoother(BackwardSmoother):
 

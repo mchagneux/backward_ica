@@ -12,7 +12,6 @@ import json
 import os 
 import pickle 
 import argparse
-from typing import Any
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 from backward_ica import hmm
@@ -22,20 +21,12 @@ from jaxlib.xla_extension import DeviceArray
 # Containers for parameters of various objects 
 config.update('jax_enable_x64',True)
 
-
-
-@partial(jit, static_argnums=(1,))
+# @partial(jit, static_argnums=(1,))
 def moving_window(a, size: int):
     starts = jnp.arange(len(a) - size + 1)
     return vmap(lambda start: lax.dynamic_slice_in_dim(a, start, size))(starts)
 
-def chol_from_vec(vec, d):
-
-    return jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(vec)
-
-def mat_from_chol_vec(vec, d):
-    w = chol_from_vec(vec,d)
-    return w @ w.T
+chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-09-29_17-06-42_Train_run'
 
 def get_generative_model(args, key_for_random_params=None):
 
@@ -59,30 +50,30 @@ def get_generative_model(args, key_for_random_params=None):
 
 def get_variational_model(args, p=None, key_for_random_params=None):
 
-    if 'linear' in args.q_version:
+    if args.q_version == 'linear':
 
         q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
                             obs_dim=args.obs_dim,
-                            transition_matrix_conditionning=None,
-                            range_transition_map_params=(0.99,1),
+                            transition_matrix_conditionning=args.transition_matrix_conditionning,
+                            range_transition_map_params=args.range_transition_map_params,
                             transition_bias=True, 
-                            emission_bias=True)
+                            emission_bias=False)
 
-    elif 'johnson' in args.q_version:
+    elif 'neural_backward_linear' in args.q_version:
         if (p is not None) and (p.transition_kernel.map_type == 'linear'):
             transition_kernel = p.transition_kernel
         else:
-            transition_kernel = hmm.Kernel.linear_gaussian('init_invertible', 
+            transition_kernel = hmm.Kernel.linear_gaussian(args.transition_matrix_conditionning, 
                                                         True, 
-                                                        range_params=(-1,1))(args.state_dim, args.obs_dim)
+                                                        range_params=args.range_transition_map_params)(args.state_dim, args.obs_dim)
 
-        q = hmm.JohnsonBackwardSmoother(transition_kernel=transition_kernel,
+        q = hmm.NeuralLinearBackwardSmoother(transition_kernel=transition_kernel,
                                         obs_dim=args.obs_dim, 
                                         update_layers=args.update_layers,
                                         explicit_proposal=args.explicit_proposal)
 
-    else:
-        q = hmm.GeneralBackwardSmoother(state_dim=args.state_dim, 
+    elif args.q_version == 'neural_backward':
+        q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
                                         obs_dim=args.obs_dim, 
                                         update_layers=args.update_layers,
                                         backwd_layers=args.backwd_map_layers)
@@ -114,12 +105,13 @@ def get_config(p_version=None,
         args.p_version = p_version
         args.q_version = q_version
         args.state_dim, args.obs_dim = dims
+
     args.seq_length = 500 # length of the train sequences
     args.num_seqs = 1 # number of train sequences
     args.single_split_seq = False # whether to draw one long sample of length seq_length * num_seqs and divide it in seq_length // num_seqs sequences
     
     if args.p_version == 'chaotic_rnn': 
-        args.loaded_data = ('params/x_data.npy', 'params/y_data.npy') 
+        args.loaded_data = (os.path.join(chaotic_rnn_base_dir, 'x_data.npy'), os.path.join(chaotic_rnn_base_dir,'y_data.npy'))
     else: args.loaded_data = None
 
 
@@ -130,8 +122,9 @@ def get_config(p_version=None,
     args.default_prior_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the prior
 
     ## transition 
-    args.transition_matrix_conditionning = 'diagonal' # constraint on the transition matrix 
-    args.range_transition_map_params = [0.99,1] # range of the components of the transition matrix
+    args.transition_matrix_conditionning = 'init_invertible' # constraint on the transition matrix 
+    args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
+
     args.default_transition_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the transition kernel
     args.transition_bias = False 
     args.default_transition_bias = 0.0
@@ -152,21 +145,20 @@ def get_config(p_version=None,
         args.grid_size = 0.001 # discretization parameter for the chaotic rnn
         args.gamma = 2.5 # gamma for the chaotic rnn
         args.tau = 0.025 # tau for the chaotic rnn
-        args.default_transition_matrix = 'params/W.npy'
+        args.default_transition_matrix = os.path.join(chaotic_rnn_base_dir, 'W.npy')
+
     if 'nonlinear_emission' in args.p_version:
         args.emission_map_layers = (8,)
         args.slope = 0 # amount of linearity in the emission function
         args.injective = True
 
 
-    if 'johnson' in args.q_version:
+    if 'neural_backward' in args.q_version:
         ## variational family
         args.explicit_proposal = 'explicit_proposal' in args.q_version # whether to use a Kalman predict step as a first move to update the variational filtering familiy
-        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
-        args.backwd_map_layers = (8,8) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
-    else: 
-        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
-        args.backwd_map_layers = (8,8)
+        args.update_layers = (100,) # number of layers in the GRU which updates the variational filtering dist
+        args.backwd_map_layers = (100,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
+
 
 
     ## SMC 
@@ -185,6 +177,8 @@ def get_config(p_version=None,
 
 
     return args
+
+
 
 def enable_x64(use_x64=True):
     """
@@ -205,7 +199,6 @@ def set_platform(platform=None):
     if platform is None:
         platform = os.getenv("JAX_PLATFORM_NAME", "cpu")
     config.update("jax_platform_name", platform)
-
 
 def set_host_device_count(n):
     """
@@ -232,6 +225,7 @@ def set_host_device_count(n):
     )
 
 
+
 def tree_get_strides(stride, tree):
     return tree_map(partial(moving_window, size=stride), tree)
 
@@ -255,7 +249,6 @@ def tree_dropfirst(tree):
     '''Drop first index from each leaf'''
     return tree_map(lambda a: a[1:], tree)
 
-
 def tree_get_idx(idx, tree):
     '''Get idx row from each leaf of tuple'''
     return tree_map(lambda a: a[idx], tree)
@@ -266,6 +259,13 @@ def tree_get_slice(start, stop, tree):
 
 
 
+def chol_from_vec(vec, d):
+
+    return jnp.zeros((d,d)).at[jnp.tril_indices(d)].set(vec)
+
+def mat_from_chol_vec(vec, d):
+    w = chol_from_vec(vec,d)
+    return w @ w.T
 
 def chol_from_prec(prec):
     # This formulation only takes the inverse of a triangular matrix
@@ -350,7 +350,7 @@ def define_frozen_tree(key, frozen_params, q, theta_star):
     #     frozen_theta = theta_star 
 
     if 'prior_phi' in frozen_params:
-        if isinstance(q, hmm.LinearGaussianHMM) or (isinstance(q, hmm.JohnsonBackwardSmoother) and q.explicit_proposal):
+        if isinstance(q, hmm.LinearGaussianHMM) or (isinstance(q, hmm.NeuralLinearBackwardSmoother) and q.explicit_proposal):
             frozen_phi.prior = theta_star.prior
         else:
             if isinstance(frozen_phi, GeneralBackwardSmootherParams):
@@ -359,7 +359,7 @@ def define_frozen_tree(key, frozen_params, q, theta_star):
                 frozen_phi.prior = q.get_init_state()
     
     if 'transition_phi' in frozen_params:
-        if isinstance(q, hmm.GeneralBackwardSmoother):
+        if isinstance(q, hmm.NeuralBackwardSmoother):
             raise NotImplementedError
         else: 
             frozen_phi.transition = theta_star.transition
@@ -386,7 +386,6 @@ def params_to_dict(params):
     else:
         return params_to_dict({k:v for k,v in enumerate(params)})
 
-
 def params_to_flattened_dict(params):
     params_dict = params_to_dict(params)
     return pd.json_normalize(params_dict, sep='/').to_dict(orient='records')[0]
@@ -401,8 +400,6 @@ def set_parametrization(args=None):
     else:
         hmm.HMM.parametrization = args.parametrization 
         GaussianParams.parametrization = args.parametrization
-
-
 
 @register_pytree_node_class
 class Scale:
@@ -514,7 +511,6 @@ class StudentParams:
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
-
 
 @register_pytree_node_class
 @dataclass(init=True)
@@ -1212,7 +1208,6 @@ def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_nam
     # ax4.set_title(f'FFBSi EM')
 
     plt.savefig(os.path.join(save_dir, 'smoothing_visualizations.pdf'), format='pdf')
-
 
 def confidence_ellipse(mean, cov, ax, c, n_std=1.96):
 

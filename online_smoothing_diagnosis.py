@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import backward_ica.hmm as hmm 
 import backward_ica.utils as utils 
 import backward_ica.smc as smc
-from backward_ica.svi import GeneralBackwardELBO, LinearGaussianELBO, OnlineGeneralBackwardELBO
+from backward_ica.svi import GeneralBackwardELBO, LinearGaussianELBO, OnlineGeneralBackwardELBO, OnlineGeneralBackwardELBOSpecialInit
 import seaborn as sns
 import os 
 import pandas as pd
@@ -133,7 +133,6 @@ def get_sampler_and_elbos(key, args, args_p, args_q):
 def main(args, args_p, args_q):
 
     key = jax.random.PRNGKey(0)
-
 
     utils.set_parametrization(args_p)
 
@@ -417,12 +416,12 @@ if __name__ == '__main__':
     args = argparse.Namespace()
     
     args.state_dim = 5
-    args.obs_dim = 5
+    args.obs_dim = 10
     args.num_samples = 100
     args.num_seqs = 100
     args.seq_length = 50
     args.trained_model = False
-    args.range_transition_map_params = (0.5, 1)
+    args.range_transition_map_params = (0.6,1)
     args.save_dir = 'experiments/tests/online/test_evolution'
     args.exp_dir = 'experiments/p_nonlinear/2022_07_27__12_21_27'
     args.method_name = 'johnson_freeze__theta'
@@ -475,7 +474,6 @@ if __name__ == '__main__':
     os.makedirs(args.save_dir, exist_ok=True)
 
     utils.save_args(args, 'args', args.save_dir)
-
 
     main(args, args_p, args_q)
 

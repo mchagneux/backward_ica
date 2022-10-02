@@ -19,12 +19,11 @@ from backward_ica.svi import BackwardLinearELBO
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_09_26__18_32_39'
+exp_dir = 'experiments/p_chaotic_rnn/2022_09_29__18_21_30'
 
-method_names = ['johnson', 
-                'campbell']
+method_names = ['neural_backward_linear', 'campbell']
                 
-pretty_names = ['Johnson', 'Campbell']
+pretty_names = ['Ours', 'Campbell']
 
 train_args = utils.load_args('train_args', os.path.join(exp_dir, method_names[0]))
 utils.set_parametrization(train_args)
@@ -35,10 +34,8 @@ from time import time
 
 # shutil.rmtree(eval_dir)
 
-
-
 key_theta = jax.random.PRNGKey(train_args.seed_theta)
-num_particles = 10000
+num_particles = 1000
 num_smooth_particles = 1000
 num_seqs = 1
 seq_length = train_args.seq_length
@@ -49,7 +46,7 @@ recompute_marginals = False
 profile = False
 filter_rmse = True
 visualize_init = False
-lag = 1
+lag = None
 
 train_args.num_particles = num_particles
 train_args.num_smooth_particles = num_smooth_particles
@@ -104,16 +101,16 @@ else:
 keys_ffbsi = jax.random.split(key_theta, num_seqs)
 if not load: 
     filt_results, smooth_results = [], []
-    # print('Bootstrap filtering...')
-    # means_filt_smc, covs_filt_smc = jax.vmap(p.filt_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
+    print('Bootstrap filtering...')
+    means_filt_smc, covs_filt_smc = jax.vmap(p.filt_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
 
-    # print('Done.')
-    # # print('FFBSi smoothing...')
-    # # means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
-    # # print('Done.')
+    print('Done.')
+    print('FFBSi smoothing...')
+    means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
+    print('Done.')
 
-    # filt_results.append((means_filt_smc, covs_filt_smc))
-    # smooth_results.append((means_smooth_smc, covs_smooth_smc))
+    filt_results.append((means_filt_smc, covs_filt_smc))
+    smooth_results.append((means_smooth_smc, covs_smooth_smc))
 
 
 
@@ -122,12 +119,12 @@ qs = []
 phis = []
 for method_name in method_names:
     if method_name == 'campbell':
-        means_filt_q = jnp.load('external_data/2022-09-07_14-56-16_Train_run/filter_means.npy')[jnp.newaxis,:]
-        covs_filt_q = jnp.load('external_data/2022-09-07_14-56-16_Train_run/filter_covs.npy')[jnp.newaxis,:]
+        means_filt_q = jnp.load(os.path.join(utils.chaotic_rnn_base_dir, 'filter_means.npy'))[jnp.newaxis,:]
+        covs_filt_q = jnp.load(os.path.join(utils.chaotic_rnn_base_dir, 'filter_covs.npy'))[jnp.newaxis,:]
         filt_results.append((means_filt_q, covs_filt_q))
 
-        means_smooth_q = jnp.load('external_data/2022-09-07_14-56-16_Train_run/x_Tm1_means.npy')[jnp.newaxis,:]
-        covs_smooth_q  = jnp.load('external_data/2022-09-07_14-56-16_Train_run/x_Tm1_covs.npy')[jnp.newaxis,:]
+        means_smooth_q = jnp.load(os.path.join(utils.chaotic_rnn_base_dir, 'smoothing_means.npy'))[jnp.newaxis,:]
+        covs_smooth_q  = jnp.load(os.path.join(utils.chaotic_rnn_base_dir, 'smoothing_covs.npy'))[jnp.newaxis,:]
         smooth_results.append((means_smooth_q, covs_smooth_q))
         continue 
 
@@ -155,8 +152,8 @@ for method_name in method_names:
 
     qs.append(q)
     if not load: 
-        if isinstance(q, hmm.GeneralBackwardSmoother) and (not q.backward_help):
-            means_filt_q, means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
+        if isinstance(q, hmm.NeuralBackwardSmoother) and (not q.backward_help):
+            means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
             means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,0, None, None))(keys_smooth_q, obs_seqs, phi, num_particles)
         else:     
             means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
@@ -178,19 +175,21 @@ if not load:
 
 
 if filter_rmse: 
-    # filt_rmse_smc = jnp.mean(jnp.sqrt(jnp.mean((filt_results[0][0] - state_seqs)**2, axis=-1)))
-    # print('Filter RMSE SMC:', filt_rmse_smc)
+    filt_rmse_smc = jnp.mean(jnp.sqrt(jnp.mean((filt_results[0][0] - state_seqs)**2, axis=-1)))
+    print('Filter RMSE SMC:', filt_rmse_smc)
+    smooth_rmse_smc = jnp.mean(jnp.sqrt(jnp.mean((smooth_results[0][0] - state_seqs)**2, axis=-1)))
+    print('Smooth RMSE SMC:', smooth_rmse_smc)
     for method_nb, (method_name, pretty_name) in enumerate(zip(method_names, pretty_names)): 
-        filt_rmse_q = jnp.mean(jnp.sqrt(jnp.mean((filt_results[method_nb][0] - state_seqs)**2, axis=-1)))
+        filt_rmse_q = jnp.mean(jnp.sqrt(jnp.mean((filt_results[method_nb+1][0] - state_seqs)**2, axis=-1)))
         print(f'Filter RMSE {pretty_name}:', filt_rmse_q)
-        smooth_rmse_q = jnp.mean(jnp.sqrt(jnp.mean((smooth_results[method_nb][0] - state_seqs[:,:-lag])**2, axis=-1)))
+        smooth_rmse_q = jnp.mean(jnp.sqrt(jnp.mean((smooth_results[method_nb+1][0] - state_seqs)**2, axis=-1)))
         print(f'Smoothing RMSE {pretty_name}:', smooth_rmse_q)
         print('-----')
     if method_name == 'campbell':
-        filt_rmses_campbell = jnp.load('external_data/2022-09-07_14-56-16_Train_run/filter_RMSEs.npy')[:,-1]
-        smooth_rmses_campbell = jnp.load('external_data/2022-09-07_14-56-16_Train_run/x_Tm1_RMSEs.npy')[:,-1]
+        filt_rmses_campbell = jnp.load(os.path.join(utils.chaotic_rnn_base_dir, 'filter_RMSEs.npy'))[:,-1]
+        # smooth_rmses_campbell = jnp.load('external_data/2022-09-07_14-56-16_Train_run/x_Tm1_RMSEs.npy')[:,-1]
         print(f'Filter RMSE campbell external:', jnp.mean(filt_rmses_campbell))
-        print(f'Smooth RMSE campbell external:', jnp.mean(smooth_rmses_campbell))
+        # print(f'Smooth RMSE campbell external:', jnp.mean(smooth_rmses_campbell))
 
     # with open(os.path.join(eval_dir, 'filter_rmse.pickle'),'wb') as f:
     #     pickle.dump((filt_rmse_smc, filt_rmse_q), f)
@@ -210,27 +209,27 @@ if plot_sequences:
             if len(method_names) > 1: axes = np.atleast_2d(axes)
             name = f'{task_name}_seq_{seq_nb}'
             for dim_nb in range(train_args.state_dim):
-                if len(method_names) > 1:
-                    for method_nb, method_name in enumerate(pretty_names): 
-                        mean_q, cov_q = results[method_nb]
-                        axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
-                        # mean_ffbsi, cov_ffbsi = results[0]
-                        # utils.plot_relative_errors_1D(axes[dim_nb,method_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
-                        # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
-                        utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
-                        # else:
-                        #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
-                        axes[dim_nb, method_nb].legend()
-                else: 
-                    mean_q, cov_q = results[1]
-                    axes[dim_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
+                # if len(method_names) > 1:
+                for method_nb, method_name in enumerate(pretty_names): 
                     mean_ffbsi, cov_ffbsi = results[0]
-                    utils.plot_relative_errors_1D(axes[dim_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
+                    mean_q, cov_q = results[method_nb+1]
+                    axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
+                    utils.plot_relative_errors_1D(axes[dim_nb,method_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
                     # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
-                    utils.plot_relative_errors_1D(axes[dim_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
+                    utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
                     # else:
                     #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
-                    axes[dim_nb].legend()
+                    axes[dim_nb, method_nb].legend()
+                # else: 
+                #     mean_q, cov_q = results[1]
+                #     axes[dim_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
+                #     mean_ffbsi, cov_ffbsi = results[0]
+                #     utils.plot_relative_errors_1D(axes[dim_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
+                #     # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
+                #     utils.plot_relative_errors_1D(axes[dim_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
+                #     # else:
+                #     #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
+                #     axes[dim_nb].legend()
 
 
             plt.savefig(os.path.join(eval_dir, name+'.pdf'), format='pdf')

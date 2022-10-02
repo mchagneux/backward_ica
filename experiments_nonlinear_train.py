@@ -5,17 +5,18 @@ from datetime import datetime
 p_version = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_version}')
 
-q_versions = ['linear', 'johnson', 'general']
+q_versions = ['neural_backward_linear',]
 
-learning_rates = ['0.01', '0.01', '0.01']
-num_epochs_list = ['10000', '10000','10000']
-dims_list = ['5 5', '5 5', '5 5']
+learning_rates = ['0.01']
+num_epochs_list = ['5000']
+dims_list = ['5 5']
 
 os.makedirs(base_dir, exist_ok=True)
 
 logfiles = []
 save_dirs = []
 for q_version in q_versions:
+
     date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
     save_dir = os.path.join(base_dir, date, q_version)
     os.makedirs(save_dir, exist_ok=True)
@@ -26,12 +27,12 @@ for q_version in q_versions:
 
 
 processes = [subprocess.Popen(f'python train_nonlinear.py \
-                            --p_version {p_version} \
-                            --q_version {q_version} \
-                            --save_dir {save_dir} \
-                            --learning_rate {learning_rate} \
-                            --num_epochs {num_epochs} \
-                            --dims {dims}',
+                                --p_version {p_version} \
+                                --q_version {q_version} \
+                                --save_dir {save_dir} \
+                                --learning_rate {learning_rate} \
+                                --num_epochs {num_epochs} \
+                                --dims {dims}',
                         shell=True, stdout=logfile, stderr=logfile) \
                         for (q_version, 
                             learning_rate, 
