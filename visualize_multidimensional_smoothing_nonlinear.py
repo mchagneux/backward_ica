@@ -16,12 +16,13 @@ from pandas.plotting import table
 import math
 import pickle 
 from backward_ica.svi import BackwardLinearELBO
+import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_09_29__18_21_30'
+exp_dir = 'experiments/p_chaotic_rnn/2022_10_02__13_16_40'
 
-method_names = ['neural_backward_linear', 'campbell']
+method_names = ['neural_backward_linear', 'external_campbell']
                 
 pretty_names = ['Ours', 'Campbell']
 
@@ -35,18 +36,20 @@ from time import time
 # shutil.rmtree(eval_dir)
 
 key_theta = jax.random.PRNGKey(train_args.seed_theta)
-num_particles = 1000
-num_smooth_particles = 1000
+num_particles = 2
+num_smooth_particles = 2
 num_seqs = 1
 seq_length = train_args.seq_length
 load = False
-metrics = False
+metrics = True
 plot_sequences = True
 recompute_marginals = False
 profile = False
 filter_rmse = True
 visualize_init = False
 lag = None
+ref_type = 'states'
+
 
 train_args.num_particles = num_particles
 train_args.num_smooth_particles = num_smooth_particles
@@ -113,54 +116,73 @@ if not load:
     smooth_results.append((means_smooth_smc, covs_smooth_smc))
 
 
+class ExternalVariationalFamily():
+
+    def __init__(self, save_dir):
+
+        self.means_filt_q = jnp.load(os.path.join(save_dir, 'filter_means.npy'))[jnp.newaxis,:]
+        self.covs_filt_q = jnp.load(os.path.join(save_dir, 'filter_covs.npy'))[jnp.newaxis,:]
+        with open(os.path.join(save_dir, 'smoothed_stats.pickle'), 'rb') as f: 
+            smoothed_means, smoothed_covs = pickle.load(f)
+        self.means_smooth_q_list = [None] + smoothed_means
+        self.covs_smooth_q_list = [None] + smoothed_covs
+
+
+    def get_filt_means_and_covs(self):
+        return (self.means_filt_q, self.covs_filt_q)
+    
+    def get_smooth_means_and_covs(self):
+        return (self.means_smooth_q_list[-1][jnp.newaxis,:], self.covs_smooth_q_list[-1][jnp.newaxis,:])
+
+    def smooth_seq_at_multiple_timesteps(self, obs_seq, phi, slices):
+
+        smoothed_means = [self.means_smooth_q_list[timestep-1] for timestep in slices]
+        smoothed_covs = [self.covs_smooth_q_list[timestep-1] for timestep in slices]
+
+        return (smoothed_means, smoothed_covs)
 
 
 qs = []
 phis = []
 for method_name in method_names:
-    if method_name == 'campbell':
-        means_filt_q = jnp.load(os.path.join(utils.chaotic_rnn_base_dir, 'filter_means.npy'))[jnp.newaxis,:]
-        covs_filt_q = jnp.load(os.path.join(utils.chaotic_rnn_base_dir, 'filter_covs.npy'))[jnp.newaxis,:]
-        filt_results.append((means_filt_q, covs_filt_q))
+    if 'external' in method_name:
+        q = ExternalVariationalFamily(utils.chaotic_rnn_base_dir)
 
-        means_smooth_q = jnp.load(os.path.join(utils.chaotic_rnn_base_dir, 'smoothing_means.npy'))[jnp.newaxis,:]
-        covs_smooth_q  = jnp.load(os.path.join(utils.chaotic_rnn_base_dir, 'smoothing_covs.npy'))[jnp.newaxis,:]
-        smooth_results.append((means_smooth_q, covs_smooth_q))
-        continue 
+        filt_results.append(q.get_filt_means_and_covs())
+        smooth_results.append(q.get_smooth_means_and_covs())
+    else: 
+        method_dir = os.path.join(exp_dir, method_name)
+        args = utils.load_args('train_args', method_dir)
 
-    method_dir = os.path.join(exp_dir, method_name)
-    args = utils.load_args('train_args', method_dir)
+        key_phi = jax.random.PRNGKey(args.seed_phi)
 
-    key_phi = jax.random.PRNGKey(args.seed_phi)
+        key_phi, key_filt_q, key_smooth_q = jax.random.split(key_phi, 3)
+        keys_smooth_q = jax.random.split(key_smooth_q, num_seqs)
 
-    key_phi, key_filt_q, key_smooth_q = jax.random.split(key_phi, 3)
-    keys_smooth_q = jax.random.split(key_smooth_q, num_seqs)
+        q = utils.get_variational_model(args, p)
 
+        if visualize_init: 
+            phi = q.get_random_params(key_phi, args)
+        else:
+            phi = utils.load_params('phi', method_dir)
 
+        if profile: 
+            state_seqs_profile, obs_seqs_profile = p.sample_multiple_sequences(key_theta, theta_star, 1000, 100)
+            print(f'Computational time {method_name}', profile_q(key_phi, p, q, theta_star, phi, obs_seqs_profile))
 
-    q = utils.get_variational_model(args, p)
+        if not load: 
+            if isinstance(q, hmm.NeuralBackwardSmoother) and (not q.backward_help):
+                means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
+                means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,0, None, None))(keys_smooth_q, obs_seqs, phi, num_particles)
+            else:     
+                means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
+                means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,None,None))(obs_seqs, phi, lag)
 
-    if visualize_init: 
-        phi = q.get_random_params(key_phi, args)
-    else:
-        phi = utils.load_params('phi', method_dir)
-    phis.append(phi)
-
-    if profile: 
-        state_seqs_profile, obs_seqs_profile = p.sample_multiple_sequences(key_theta, theta_star, 1000, 100)
-        print(f'Computational time {method_name}', profile_q(key_phi, p, q, theta_star, phi, obs_seqs_profile))
+            filt_results.append((means_filt_q, covs_filt_q))
+            smooth_results.append((means_smooth_q, covs_smooth_q))
 
     qs.append(q)
-    if not load: 
-        if isinstance(q, hmm.NeuralBackwardSmoother) and (not q.backward_help):
-            means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
-            means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,0, None, None))(keys_smooth_q, obs_seqs, phi, num_particles)
-        else:     
-            means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
-            means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,None,None))(obs_seqs, phi, lag)
-
-        filt_results.append((means_filt_q, covs_filt_q))
-        smooth_results.append((means_smooth_q, covs_smooth_q))
+    phis.append(phi)
 
 if not load: 
     with open(os.path.join(eval_dir, 'sequences.pickle'),'wb') as f:
@@ -211,11 +233,13 @@ if plot_sequences:
             for dim_nb in range(train_args.state_dim):
                 # if len(method_names) > 1:
                 for method_nb, method_name in enumerate(pretty_names): 
-                    mean_ffbsi, cov_ffbsi = results[0]
-                    mean_q, cov_q = results[method_nb+1]
-                    axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
-                    utils.plot_relative_errors_1D(axes[dim_nb,method_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
+                    if ref_type == 'smc':
+                        mean_ffbsi, cov_ffbsi = results[0]
+                        utils.plot_relative_errors_1D(axes[dim_nb,method_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
+                    else: 
+                        axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
                     # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
+                    mean_q, cov_q = results[method_nb+1]
                     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
                     # else:
                     #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
@@ -256,18 +280,18 @@ if plot_sequences:
     #         plt.clf()
 
 
-def eval_smoothing_single_seq(state_seq, obs_seq, slices, method_nb):
+def eval_smoothing_single_seq(state_seq, obs_seq, means_ref, slices, method_nb):
 
-    means_smc = p.smooth_seq_at_multiple_timesteps(key_theta, obs_seq, theta_star, slices)[0]
+
     means_q = qs[method_nb].smooth_seq_at_multiple_timesteps(obs_seq, phis[method_nb], slices)[0]
-
+    
     q_vs_states = jnp.mean(jnp.linalg.norm(means_q[-1] - state_seq, ord=1, axis=1), axis=0)
-    ref_vs_states = jnp.mean(jnp.linalg.norm(means_smc[-1] - state_seq, ord=1, axis=1), axis=0)
-    q_vs_ref_marginals = jnp.linalg.norm((means_q[-1] - means_smc[-1]), ord=1, axis=1)[slices]
+    ref_vs_states = jnp.mean(jnp.linalg.norm(means_ref[-1] - state_seq, ord=1, axis=1), axis=0)
+    q_vs_ref_marginals = jnp.linalg.norm((means_q[-1] - means_ref[-1]), ord=1, axis=1)[slices]
     
     q_vs_ref_additive = []
-    for means_smc_n, means_q_n in zip(means_smc, means_q):
-        q_vs_ref_additive.append(jnp.linalg.norm(jnp.sum(means_smc_n - means_q_n, axis=0),ord=1))
+    for means_ref_n, means_q_n in zip(means_ref, means_q):
+        q_vs_ref_additive.append(jnp.linalg.norm(jnp.sum(means_ref_n - means_q_n, axis=0),ord=1))
     q_vs_ref_additive = jnp.array(q_vs_ref_additive)
 
     return jnp.array([ref_vs_states, q_vs_states, q_vs_ref_additive[-1]]), \
@@ -275,7 +299,7 @@ def eval_smoothing_single_seq(state_seq, obs_seq, slices, method_nb):
                     q_vs_ref_additive
        
 
-eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0,None,None))
+eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0,0, None,None))
 
 
 def recompute_marginals_func(results, method_nb):
@@ -285,12 +309,12 @@ def recompute_marginals_func(results, method_nb):
         return jnp.linalg.norm(means_q - means_smc, ord=1, axis=1)
     return jax.vmap(compute_marginal)(means_smc, means_q)
 
-def compute_ffbsi_stds(smooth_results, state_seqs):
+def compute_ffbsi_stds(means_smc, state_seqs):
     def compute_ref_vs_states(means_smc, state_seq):
         ref_vs_states = jnp.linalg.norm(means_smc[-1] - state_seq, ord=1, axis=1)
         return jnp.var(ref_vs_states, axis=0)
 
-    return jax.vmap(compute_ref_vs_states)(smooth_results[0][0], state_seqs)
+    return jax.vmap(compute_ref_vs_states)(means_smc, state_seqs)
 
 def compute_mae_marginals(results, method_nb):
     means_smc = results[0][0]
@@ -301,20 +325,23 @@ def compute_mae_marginals(results, method_nb):
 
 if metrics: 
 
-    num_slices = 10
+    num_slices = 100
     slice_length = len(obs_seqs[0]) // num_slices
     slices = jnp.array(list(range(0, len(obs_seqs[0])+1, slice_length)))[1:]
     # fig, (ax0, ax1) = plt.subplots(2,1)
     q_vs_ref_marginals_all = []
     q_vs_ref_additive_all = []
     ref_and_q_vs_states_all = []
-
+    if ref_type == 'smc':
+        means_ref = jax.vmap(p.smooth_seq_at_multiple_timesteps, in_axes=(None, 0, None, None))(key_theta, obs_seqs, theta_star, slices)[0]
+    elif ref_type == 'states':
+        means_ref = [state_seqs[:,:timestep] for timestep in slices]
     for method_nb, (method_name, pretty_name) in enumerate(zip(method_names, pretty_names)):
 
         if not load: 
             print(f'Evaluating {method_name}')
 
-            ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(state_seqs, obs_seqs, slices, method_nb)
+            ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(state_seqs, obs_seqs, means_ref, slices, method_nb)
 
             with open(os.path.join(eval_dir, f'eval_{method_name}.pickle'), 'wb') as f:
                 pickle.dump((ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive), f)
@@ -329,7 +356,7 @@ if metrics:
                 print('Recomputing marginals...')
                 q_vs_ref_marginals = recompute_marginals_func(smooth_results, method_nb)
 
-        ref_and_q_vs_states = pd.DataFrame(ref_and_q_vs_states, columns = ['FFBSi', f'{pretty_name}', f'Additive |FFBSi-{pretty_name}|'])
+        ref_and_q_vs_states = pd.DataFrame(ref_and_q_vs_states, columns = ['Ref.', f'{pretty_name}', f'Additive |Ref.-{pretty_name}|'])
         ref_and_q_vs_states_all.append(ref_and_q_vs_states)
 
         q_vs_ref_marginals = pd.DataFrame(data=q_vs_ref_marginals.T / train_args.state_dim).unstack().reset_index(name='value')
@@ -341,16 +368,16 @@ if metrics:
 
     ref_and_q_vs_states = pd.concat(ref_and_q_vs_states_all, axis=1)
     ref_and_q_vs_states = ref_and_q_vs_states.T.drop_duplicates().T
-    ref_and_q_vs_states['FFBSi (std)'] = compute_ffbsi_stds(smooth_results, state_seqs)
-    ref_and_q_vs_states['MAE marginals (Ours)'] = compute_mae_marginals(smooth_results, 0)
-    ref_and_q_vs_states['MAE marginals (Johnson)'] = compute_mae_marginals(smooth_results, 1)
+    ref_and_q_vs_states['Ref. (std)'] = compute_ffbsi_stds(means_ref, state_seqs)
+    ref_and_q_vs_states[f'MAE marginals ({pretty_names[0]})'] = compute_mae_marginals(smooth_results, 0)
+    ref_and_q_vs_states[f'MAE marginals ({pretty_names[1]})'] = compute_mae_marginals(smooth_results, 1)
 
-    end_table = ref_and_q_vs_states[['FFBSi',
-                                    'FFBSi (std)',
-                                    'Additive |FFBSi-Ours|',
-                                    'Additive |FFBSi-Johnson|',
-                                    'MAE marginals (Ours)',
-                                    'MAE marginals (Johnson)']] / train_args.state_dim
+    end_table = ref_and_q_vs_states[['Ref.',
+                                    'Ref. (std)',
+                                    f'Additive |Ref.-{pretty_names[0]}|',
+                                    f'Additive |Ref.-{pretty_names[1]}|',
+                                    f'MAE marginals ({pretty_names[0]})',
+                                    f'MAE marginals ({pretty_names[1]})']] / train_args.state_dim
 
     print(end_table.to_latex(float_format="%.2f" ))
     q_vs_ref_marginals = pd.concat(q_vs_ref_marginals_all, keys=pretty_names)

@@ -26,7 +26,7 @@ def moving_window(a, size: int):
     starts = jnp.arange(len(a) - size + 1)
     return vmap(lambda start: lax.dynamic_slice_in_dim(a, start, size))(starts)
 
-chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-09-29_17-06-42_Train_run'
+chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-10-02_12-22-39_Train_run'
 
 def get_generative_model(args, key_for_random_params=None):
 
@@ -156,13 +156,13 @@ def get_config(p_version=None,
     if 'neural_backward' in args.q_version:
         ## variational family
         args.explicit_proposal = 'explicit_proposal' in args.q_version # whether to use a Kalman predict step as a first move to update the variational filtering familiy
-        args.update_layers = (100,) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (100,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
 
 
     ## SMC 
-    args.num_particles = 2 # number of particles for bootstrap filtering step
+    args.num_particles = 100000 # number of particles for bootstrap filtering step
     args.num_smooth_particles = 1000 # number of particles for the FFBSi ancestral sampling step
 
     ## optimizer

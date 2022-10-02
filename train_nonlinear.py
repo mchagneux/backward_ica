@@ -90,7 +90,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--learning_rate', type=float, default=0.01)
     parser.add_argument('--num_epochs', type=int, default=5000)
-    parser.add_argument('--num_samples', type=int, default=10)
+    parser.add_argument('--num_samples', type=int, default=50)
 
 
     args = parser.parse_args()
