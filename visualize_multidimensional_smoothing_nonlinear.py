@@ -36,8 +36,8 @@ from time import time
 # shutil.rmtree(eval_dir)
 
 key_theta = jax.random.PRNGKey(train_args.seed_theta)
-num_particles = 2
-num_smooth_particles = 2
+num_particles = 10000
+num_smooth_particles = 1000
 num_seqs = 1
 seq_length = train_args.seq_length
 load = False
@@ -191,8 +191,7 @@ if not load:
     with open(os.path.join(eval_dir, 'results.pickle'),'wb') as f:
         pickle.dump((filt_results, smooth_results), f)
 
-# filt_rmse = state_seqs - means_filt_q
-# smooth_rmse = state_seqs - means_smooth_q
+
 
 
 
@@ -209,12 +208,8 @@ if filter_rmse:
         print('-----')
     if method_name == 'campbell':
         filt_rmses_campbell = jnp.load(os.path.join(utils.chaotic_rnn_base_dir, 'filter_RMSEs.npy'))[:,-1]
-        # smooth_rmses_campbell = jnp.load('external_data/2022-09-07_14-56-16_Train_run/x_Tm1_RMSEs.npy')[:,-1]
         print(f'Filter RMSE campbell external:', jnp.mean(filt_rmses_campbell))
-        # print(f'Smooth RMSE campbell external:', jnp.mean(smooth_rmses_campbell))
 
-    # with open(os.path.join(eval_dir, 'filter_rmse.pickle'),'wb') as f:
-    #     pickle.dump((filt_rmse_smc, filt_rmse_q), f)
 #%%
 import numpy as np
 
@@ -222,7 +217,6 @@ if plot_sequences:
     colors = ['blue',
             'red']
     print('Plotting individual sequences...')
-    # for task_name, results in zip(['filtering','smoothing], [filt_results, smooth_results]): 
     for task_name, results in zip(['filtering','smoothing'], [filt_results, smooth_results]): 
         for seq_nb in range(num_seqs):
             fig, axes = plt.subplots(train_args.state_dim, len(method_names), sharey='row', figsize=(30,30))
@@ -231,75 +225,17 @@ if plot_sequences:
             if len(method_names) > 1: axes = np.atleast_2d(axes)
             name = f'{task_name}_seq_{seq_nb}'
             for dim_nb in range(train_args.state_dim):
-                # if len(method_names) > 1:
                 for method_nb, method_name in enumerate(pretty_names): 
                     if ref_type == 'smc':
                         mean_ffbsi, cov_ffbsi = results[0]
                         utils.plot_relative_errors_1D(axes[dim_nb,method_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
                     else: 
                         axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
-                    # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
                     mean_q, cov_q = results[method_nb+1]
                     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
-                    # else:
-                    #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
                     axes[dim_nb, method_nb].legend()
-                # else: 
-                #     mean_q, cov_q = results[1]
-                #     axes[dim_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
-                #     mean_ffbsi, cov_ffbsi = results[0]
-                #     utils.plot_relative_errors_1D(axes[dim_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
-                #     # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
-                #     utils.plot_relative_errors_1D(axes[dim_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
-                #     # else:
-                #     #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
-                #     axes[dim_nb].legend()
-
-
             plt.savefig(os.path.join(eval_dir, name+'.pdf'), format='pdf')
             plt.clf()
-
-
-    # for task_name, results in zip(['smoothing'], [smooth_results]): 
-    #     for seq_nb in range(num_seqs):
-    #         fig, axes = plt.subplots(train_args.state_dim, 1, sharey='row', figsize=(30,30))
-    #         plt.autoscale(True)
-    #         plt.tight_layout()
-    #         name = f'{task_name}_seq_{seq_nb}'
-    #         for dim_nb in range(train_args.state_dim):
-    #             mean_q, cov_q = results[0]
-    #             axes[dim_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
-    #             # if isinstance(qs[method_nb], hmm.LinearBackwardSmoother) or qs[method_nb].backward_help:
-    #             utils.plot_relative_errors_1D(axes[dim_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
-    #             # else:
-    #             #     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb], color=colors[method_nb], alpha=0.1, hatch='/' if method_nb == 0 else None, label=f'{method_name}')
-    #             axes[dim_nb].legend()
-
-
-    #         plt.savefig(os.path.join(eval_dir, name+'.pdf'), format='pdf')
-    #         plt.clf()
-
-
-def eval_smoothing_single_seq(state_seq, obs_seq, means_ref, slices, method_nb):
-
-
-    means_q = qs[method_nb].smooth_seq_at_multiple_timesteps(obs_seq, phis[method_nb], slices)[0]
-    
-    q_vs_states = jnp.mean(jnp.linalg.norm(means_q[-1] - state_seq, ord=1, axis=1), axis=0)
-    ref_vs_states = jnp.mean(jnp.linalg.norm(means_ref[-1] - state_seq, ord=1, axis=1), axis=0)
-    q_vs_ref_marginals = jnp.linalg.norm((means_q[-1] - means_ref[-1]), ord=1, axis=1)[slices]
-    
-    q_vs_ref_additive = []
-    for means_ref_n, means_q_n in zip(means_ref, means_q):
-        q_vs_ref_additive.append(jnp.linalg.norm(jnp.sum(means_ref_n - means_q_n, axis=0),ord=1))
-    q_vs_ref_additive = jnp.array(q_vs_ref_additive)
-
-    return jnp.array([ref_vs_states, q_vs_states, q_vs_ref_additive[-1]]), \
-                    q_vs_ref_marginals, \
-                    q_vs_ref_additive
-       
-
-eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0,0, None,None))
 
 
 def recompute_marginals_func(results, method_nb):
@@ -323,12 +259,33 @@ def compute_mae_marginals(results, method_nb):
         return jnp.mean(jnp.linalg.norm(means_q - means_smc, ord=1, axis=1), axis=0)
     return jax.vmap(compute_marginal_mae)(means_smc, means_q)
 
+
+def eval_smoothing_single_seq(state_seq, obs_seq, means_ref, slices, method_nb):
+
+
+    means_q = qs[method_nb].smooth_seq_at_multiple_timesteps(obs_seq, phis[method_nb], slices)[0]
+    
+    q_vs_states = jnp.mean(jnp.linalg.norm(means_q[-1] - state_seq, ord=1, axis=1), axis=0)
+    ref_vs_states = jnp.mean(jnp.linalg.norm(means_ref[-1] - state_seq, ord=1, axis=1), axis=0)
+    q_vs_ref_marginals = jnp.linalg.norm((means_q[-1] - means_ref[-1]), ord=1, axis=1)[slices]
+    
+    q_vs_ref_additive = []
+    for means_ref_n, means_q_n in zip(means_ref, means_q):
+        q_vs_ref_additive.append(jnp.linalg.norm(jnp.sum(means_ref_n - means_q_n, axis=0),ord=1))
+    q_vs_ref_additive = jnp.array(q_vs_ref_additive)
+
+    return jnp.array([ref_vs_states, q_vs_states, q_vs_ref_additive[-1]]), \
+                    q_vs_ref_marginals, \
+                    q_vs_ref_additive
+       
+
+eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0,0, None,None))
+
 if metrics: 
 
     num_slices = 100
     slice_length = len(obs_seqs[0]) // num_slices
     slices = jnp.array(list(range(0, len(obs_seqs[0])+1, slice_length)))[1:]
-    # fig, (ax0, ax1) = plt.subplots(2,1)
     q_vs_ref_marginals_all = []
     q_vs_ref_additive_all = []
     ref_and_q_vs_states_all = []
@@ -336,6 +293,8 @@ if metrics:
         means_ref = jax.vmap(p.smooth_seq_at_multiple_timesteps, in_axes=(None, 0, None, None))(key_theta, obs_seqs, theta_star, slices)[0]
     elif ref_type == 'states':
         means_ref = [state_seqs[:,:timestep] for timestep in slices]
+
+    
     for method_nb, (method_name, pretty_name) in enumerate(zip(method_names, pretty_names)):
 
         if not load: 

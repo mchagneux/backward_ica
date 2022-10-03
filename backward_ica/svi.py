@@ -322,7 +322,7 @@ class OnlineGeneralBackwardELBOSpecialInit:
 
         return jnp.mean(tau), (tree_prepend(samples, samples_seq), weights_seq, filt_state_seq, backwd_state_seq)
 
-class OnlineGeneralBackwardELBOV2:
+class OnlineGeneralBackwardELBONeo:
 
     def __init__(self, p:HMM, q:BackwardSmoother, normalizer, num_samples=200):
 
