@@ -344,69 +344,79 @@ class OnlineGeneralBackwardELBOV2:
             log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
             return samples, log_probs
 
-        def additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_state):
-            return self.p.transition_kernel.logpdf(new_sample, sample, theta.transition) \
-                    + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission) \
-                    - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) \
-                    + log_prob \
-                    - new_log_prob
+        def additive_functional(log_prob_t, sample_t, log_prob_tp1, sample_tp1, y_tp1, q_t_tp1_params):
+            return self.p.transition_kernel.logpdf(sample_tp1, sample_t, theta.transition) \
+                    + self.p.emission_kernel.logpdf(y_tp1, sample_tp1, theta.emission) \
+                    + log_prob_t \
+                    - self.q.backwd_kernel.logpdf(sample_t, sample_tp1, q_t_tp1_params) \
+                    - log_prob_tp1
 
         def init_functional(sample):
             return self.p.emission_kernel.logpdf(obs_seq[0], sample, theta.emission) \
                     + self.p.prior_dist.logpdf(sample, theta.prior)
 
-        def compute_tau_kp1(carry, x):
 
-            tau_km1, samples_km1, log_probs_km1, q_filt_state_k, q_backwd_state_km1_k, obs_k = carry 
-            key, obs_kp1, q_filt_state_kp1, q_backwd_state_k_kp1 = x 
+        def init(key, y_0, y_1, q_0_params, q_1_params, q_0_1_params):
+            key, subkey = random.split(key, 2)
+            xi_0, 
+            xi_1, q_1_xi_1 = q_filt_samples_and_log_probs(key, q_0_params)
 
-            samples_kp1, log_probs_kp1 = q_filt_samples_and_log_probs(key, q_filt_state_kp1)
-
-            def tau_kp1_component(key, sample_kp1, log_prob_kp1):
-
-                samples_k_kp1 = backwd_sampler(random.split(key, self.num_backwd_samples), sample_kp1, q_backwd_state_k_kp1)
-                log_probs_k_kp1 = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples_k_kp1, q_filt_state_k)
-
-                def tau_k_kp1_component(sample_k_kp1, log_prob_k_kp1):
-                    def sum_component(sample_km1, log_prob_km1, tau_component_km1):
-                        log_weight = self.q.backwd_kernel.logpdf(sample_km1, sample_k_kp1, q_backwd_state_km1_k) - log_prob_km1
-                        tau_component_k_kp1 = tau_component_km1 + additive_functional(obs_k, 
-                                                                    log_prob_km1, 
-                                                                    sample_km1, 
-                                                                    log_prob_k_kp1, 
-                                                                    sample_k_kp1, 
-                                                                    q_backwd_state_km1_k)
-                        return log_weight, tau_component_k_kp1
-                    log_weights, sum_components = vmap(sum_component)(samples_km1, log_probs_km1, tau_km1)
-
-                    normalized_weights = self.normalizer(log_weights)
-                    return jnp.sum(normalized_weights * sum_components)
-            
-                tau_k_kp1 = vmap(tau_k_kp1_component)(samples_k_kp1, log_probs_k_kp1) 
-
-                def tau_kp1_sum_component(sample_k_kp1, log_prob_k_kp1):
-                    return tau_k_kp1_component(sample_k_kp1, log_prob_k_kp1) + additive_functional(obs_kp1, 
-                                                                log_prob_k_kp1, 
-                                                                sample_k_kp1, 
-                                                                log_prob_kp1, 
-                                                                sample_kp1, 
-                                                                q_backwd_state_k_kp1)
-
-                return jnp.mean(vmap(tau_kp1_sum_component)(samples_k_kp1, log_probs_k_kp1, tau_k_kp1))
-
-            tau_kp1 = vmap(tau_kp1_component)(random.split(key, self.num_samples), samples_kp1, log_probs_kp1)
-                               
+            def T_1(key, xi_1_i, q_1_xi_1_i): 
+                xi_0_1_i = backwd_sampler(random.split(key, self.num_backwd_samples), xi_1_i, q_0_1_params)
 
 
-            return (tau_kp1, samples_kp1, log_probs_kp1, q_filt_state_kp1, q_backwd_state_k_kp1), None
+        def step(carry, x):
+
+            tau_t, tilde_T_t, q_t_params, xi_t, q_t_xi_t = carry 
+            key, y_tp1, q_tp1_params, q_t_tp1_params = x 
+
+            xi_tp1, q_tp1_xi_tp1 = q_filt_samples_and_log_probs(key, q_tp1_params)
+
+            def T_tp1(key, xi_tp1_i, q_tp1_xi_tp1_i):
+
+                xi_t_tp1_i = backwd_sampler(random.split(key, self.num_backwd_samples), xi_tp1_i, q_t_tp1_params)
+                q_t_xi_t_tp1_i = vmap(self.filt_dist.logpdf, in_axes=(0,None))(xi_t_tp1_i, q_t_params)
+
+                def T_tp1_sum_component(xi_t_tp1_ij, q_t_xi_t_tp1_ij):
+                    return tilde_T_t(xi_t_tp1_ij, q_t_xi_t_tp1_ij) + additive_functional(q_t_xi_t_tp1_ij, 
+                                                                                        xi_t_tp1_ij,
+                                                                                        q_tp1_xi_tp1_i,
+                                                                                        xi_tp1_i,
+                                                                                        y_tp1,
+                                                                                        q_t_tp1_params)
+
+                return jnp.mean(vmap(T_tp1_sum_component)(xi_t_tp1_i, q_t_xi_t_tp1_i))
+
+            tau_tp1 = vmap(T_tp1)(random.split(key, self.num_samples), xi_tp1, q_tp1_xi_tp1)
+                   
+
+            def tilde_T_p1(x_tp1, q_tp1_x_tp1):
+                def tilde_T_p1_sum_component(xi_t_j, q_t_xi_t_j, tau_t_j):
+                    importance_log_weight = self.q.backwd_kernel.logpdf(xi_t_j, x_tp1, q_t_tp1_params) - q_t_xi_t_j
+                    tau_component_t_tp1 = tau_t_j + additive_functional(q_t_xi_t_j, 
+                                                                xi_t_j, 
+                                                                q_tp1_x_tp1, 
+                                                                x_tp1, 
+                                                                y_tp1, 
+                                                                q_t_tp1_params)
+                    return importance_log_weight, tau_component_t_tp1
+                log_weights, sum_components = vmap(tilde_T_p1_sum_component)(xi_t, q_t_xi_t, tau_t)
+
+                return jnp.sum(self.normalizer(log_weights) * sum_components)
+        
+
+            return (tau_tp1, jax.tree_util.Partial(tilde_T_p1), q_tp1_params, xi_tp1, q_tp1_xi_tp1), None
 
         key, subkey = random.split(key, 2)
 
-        samples, log_probs = q_filt_samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
+        xi_0, q_0_xi_0 = q_filt_samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
+
+
+        tau_0 = jnp.zeros((self.num_samples,))
 
         tau = vmap(init_functional)(samples)                            
 
-        (tau, _ , _), (samples_seq, weights_seq) = lax.scan(update_tau, 
+        (tau, _ , _), (samples_seq, weights_seq) = lax.scan(step, 
                                                             init=(tau, samples, log_probs), 
                                                             xs=(random.split(key, len(obs_seq)-1), 
                                                                 obs_seq[1:],
