@@ -322,13 +322,14 @@ class OnlineGeneralBackwardELBOSpecialInit:
 
         return jnp.mean(tau), (tree_prepend(samples, samples_seq), weights_seq, filt_state_seq, backwd_state_seq)
 
-class OnlineGeneralBackwardELBONeo:
+class OnlineGeneralBackwardELBOV2:
 
     def __init__(self, p:HMM, q:BackwardSmoother, normalizer, num_samples=200):
 
         self.p = p
         self.q = q
         self.num_samples = num_samples
+        self.num_backwd_samples = num_samples // 10
         self.normalizer = normalizer
 
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
@@ -354,7 +355,7 @@ class OnlineGeneralBackwardELBONeo:
             return self.p.emission_kernel.logpdf(obs_seq[0], sample, theta.emission) \
                     + self.p.prior_dist.logpdf(sample, theta.prior)
 
-        def update_tau(carry, x):
+        def compute_tau_kp1(carry, x):
 
             tau_km1, samples_km1, log_probs_km1, q_filt_state_k, q_backwd_state_km1_k, obs_k = carry 
             key, obs_kp1, q_filt_state_kp1, q_backwd_state_k_kp1 = x 
@@ -383,8 +384,8 @@ class OnlineGeneralBackwardELBONeo:
             
                 tau_k_kp1 = vmap(tau_k_kp1_component)(samples_k_kp1, log_probs_k_kp1) 
 
-                def tau_kp1_sum_component(sample_k_kp1, log_prob_k_kp1, tau_component_k_kp1):
-                    return tau_component_k_kp1 + additive_functional(obs_kp1, 
+                def tau_kp1_sum_component(sample_k_kp1, log_prob_k_kp1):
+                    return tau_k_kp1_component(sample_k_kp1, log_prob_k_kp1) + additive_functional(obs_kp1, 
                                                                 log_prob_k_kp1, 
                                                                 sample_k_kp1, 
                                                                 log_prob_kp1, 

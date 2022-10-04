@@ -20,7 +20,7 @@ import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_10_02__13_16_40'
+exp_dir = 'experiments/p_chaotic_rnn/2022_10_03__17_02_22'
 
 method_names = ['neural_backward_linear', 'external_campbell']
                 
@@ -36,7 +36,7 @@ from time import time
 # shutil.rmtree(eval_dir)
 
 key_theta = jax.random.PRNGKey(train_args.seed_theta)
-num_particles = 10000
+num_particles = 1000
 num_smooth_particles = 1000
 num_seqs = 1
 seq_length = train_args.seq_length
@@ -104,16 +104,22 @@ else:
 keys_ffbsi = jax.random.split(key_theta, num_seqs)
 if not load: 
     filt_results, smooth_results = [], []
-    print('Bootstrap filtering...')
-    means_filt_smc, covs_filt_smc = jax.vmap(p.filt_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
 
-    print('Done.')
-    print('FFBSi smoothing...')
-    means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
-    print('Done.')
+    if ref_type == 'smc':
+        print('Bootstrap filtering...')
 
-    filt_results.append((means_filt_smc, covs_filt_smc))
-    smooth_results.append((means_smooth_smc, covs_smooth_smc))
+        means_filt_smc, covs_filt_smc = jax.vmap(p.filt_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
+
+        print('Done.')
+        print('FFBSi smoothing...')
+        means_smooth_smc, covs_smooth_smc = jax.vmap(p.smooth_seq_to_mean_cov, in_axes=(0,0,None))(keys_ffbsi, obs_seqs, theta_star)
+        print('Done.')
+
+        filt_results.append((means_filt_smc, covs_filt_smc))
+        smooth_results.append((means_smooth_smc, covs_smooth_smc))
+    else: 
+        filt_results.append(None)
+        smooth_results.append(None)
 
 
 class ExternalVariationalFamily():
@@ -124,9 +130,8 @@ class ExternalVariationalFamily():
         self.covs_filt_q = jnp.load(os.path.join(save_dir, 'filter_covs.npy'))[jnp.newaxis,:]
         with open(os.path.join(save_dir, 'smoothed_stats.pickle'), 'rb') as f: 
             smoothed_means, smoothed_covs = pickle.load(f)
-        self.means_smooth_q_list = [None] + smoothed_means
-        self.covs_smooth_q_list = [None] + smoothed_covs
-
+        self.means_smooth_q_list = smoothed_means
+        self.covs_smooth_q_list = smoothed_covs
 
     def get_filt_means_and_covs(self):
         return (self.means_filt_q, self.covs_filt_q)
@@ -150,6 +155,8 @@ for method_name in method_names:
 
         filt_results.append(q.get_filt_means_and_covs())
         smooth_results.append(q.get_smooth_means_and_covs())
+
+        phi = None
     else: 
         method_dir = os.path.join(exp_dir, method_name)
         args = utils.load_args('train_args', method_dir)
@@ -196,10 +203,11 @@ if not load:
 
 
 if filter_rmse: 
-    filt_rmse_smc = jnp.mean(jnp.sqrt(jnp.mean((filt_results[0][0] - state_seqs)**2, axis=-1)))
-    print('Filter RMSE SMC:', filt_rmse_smc)
-    smooth_rmse_smc = jnp.mean(jnp.sqrt(jnp.mean((smooth_results[0][0] - state_seqs)**2, axis=-1)))
-    print('Smooth RMSE SMC:', smooth_rmse_smc)
+    if ref_type == 'smc':
+        filt_rmse_smc = jnp.mean(jnp.sqrt(jnp.mean((filt_results[0][0] - state_seqs)**2, axis=-1)))
+        print('Filter RMSE SMC:', filt_rmse_smc)
+        smooth_rmse_smc = jnp.mean(jnp.sqrt(jnp.mean((smooth_results[0][0] - state_seqs)**2, axis=-1)))
+        print('Smooth RMSE SMC:', smooth_rmse_smc)
     for method_nb, (method_name, pretty_name) in enumerate(zip(method_names, pretty_names)): 
         filt_rmse_q = jnp.mean(jnp.sqrt(jnp.mean((filt_results[method_nb+1][0] - state_seqs)**2, axis=-1)))
         print(f'Filter RMSE {pretty_name}:', filt_rmse_q)
@@ -229,13 +237,12 @@ if plot_sequences:
                     if ref_type == 'smc':
                         mean_ffbsi, cov_ffbsi = results[0]
                         utils.plot_relative_errors_1D(axes[dim_nb,method_nb], mean_ffbsi[seq_nb,:,dim_nb], cov_ffbsi[seq_nb,:,dim_nb], color='black', alpha=0.1, label='FFBSi', hatch='//')
-                    else: 
-                        axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
+                    axes[dim_nb,method_nb].plot(range(len(state_seqs[seq_nb])), state_seqs[seq_nb,:,dim_nb], color='green', linestyle='dashed', label='True state')
                     mean_q, cov_q = results[method_nb+1]
                     utils.plot_relative_errors_1D(axes[dim_nb, method_nb], mean_q[seq_nb,:,dim_nb], cov_q[seq_nb,:,dim_nb,dim_nb], color='red', alpha=0.2, label=f'{method_name}')
                     axes[dim_nb, method_nb].legend()
-            plt.savefig(os.path.join(eval_dir, name+'.pdf'), format='pdf')
-            plt.clf()
+            plt.savefig(os.path.join(eval_dir, name))
+            plt.close()
 
 
 def recompute_marginals_func(results, method_nb):
@@ -252,19 +259,19 @@ def compute_ffbsi_stds(means_smc, state_seqs):
 
     return jax.vmap(compute_ref_vs_states)(means_smc, state_seqs)
 
-def compute_mae_marginals(results, method_nb):
-    means_smc = results[0][0]
+def compute_mae_marginals(means_ref, results, method_nb):
     means_q = results[method_nb+1][0]
     def compute_marginal_mae(means_smc, means_q):
         return jnp.mean(jnp.linalg.norm(means_q - means_smc, ord=1, axis=1), axis=0)
-    return jax.vmap(compute_marginal_mae)(means_smc, means_q)
+    return jax.vmap(compute_marginal_mae)(means_ref, means_q)
 
 
 def eval_smoothing_single_seq(state_seq, obs_seq, means_ref, slices, method_nb):
 
 
     means_q = qs[method_nb].smooth_seq_at_multiple_timesteps(obs_seq, phis[method_nb], slices)[0]
-    
+    # if method_nb == 0: 
+    #     means_q[-1] = smooth_results[1][0][0]
     q_vs_states = jnp.mean(jnp.linalg.norm(means_q[-1] - state_seq, ord=1, axis=1), axis=0)
     ref_vs_states = jnp.mean(jnp.linalg.norm(means_ref[-1] - state_seq, ord=1, axis=1), axis=0)
     q_vs_ref_marginals = jnp.linalg.norm((means_q[-1] - means_ref[-1]), ord=1, axis=1)[slices]
@@ -283,13 +290,14 @@ eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0,0, None,None))
 
 if metrics: 
 
-    num_slices = 100
+    num_slices = 250
     slice_length = len(obs_seqs[0]) // num_slices
     slices = jnp.array(list(range(0, len(obs_seqs[0])+1, slice_length)))[1:]
     q_vs_ref_marginals_all = []
     q_vs_ref_additive_all = []
     ref_and_q_vs_states_all = []
     if ref_type == 'smc':
+        print('Computing SMC smoothing at multiple timesteps...')
         means_ref = jax.vmap(p.smooth_seq_at_multiple_timesteps, in_axes=(None, 0, None, None))(key_theta, obs_seqs, theta_star, slices)[0]
     elif ref_type == 'states':
         means_ref = [state_seqs[:,:timestep] for timestep in slices]
@@ -328,8 +336,8 @@ if metrics:
     ref_and_q_vs_states = pd.concat(ref_and_q_vs_states_all, axis=1)
     ref_and_q_vs_states = ref_and_q_vs_states.T.drop_duplicates().T
     ref_and_q_vs_states['Ref. (std)'] = compute_ffbsi_stds(means_ref, state_seqs)
-    ref_and_q_vs_states[f'MAE marginals ({pretty_names[0]})'] = compute_mae_marginals(smooth_results, 0)
-    ref_and_q_vs_states[f'MAE marginals ({pretty_names[1]})'] = compute_mae_marginals(smooth_results, 1)
+    ref_and_q_vs_states[f'MAE marginals ({pretty_names[0]})'] = compute_mae_marginals(means_ref[-1], smooth_results, 0)
+    ref_and_q_vs_states[f'MAE marginals ({pretty_names[1]})'] = compute_mae_marginals(means_ref[-1], smooth_results, 1)
 
     end_table = ref_and_q_vs_states[['Ref.',
                                     'Ref. (std)',
@@ -338,7 +346,9 @@ if metrics:
                                     f'MAE marginals ({pretty_names[0]})',
                                     f'MAE marginals ({pretty_names[1]})']] / train_args.state_dim
 
-    print(end_table.to_latex(float_format="%.2f" ))
+    # print(end_table.to_latex(float_format="%.2f" ))
+    # print(end_table.to_markdown())
+    print(end_table)
     q_vs_ref_marginals = pd.concat(q_vs_ref_marginals_all, keys=pretty_names)
     q_vs_ref_marginals.columns = ['Sequence', 'n', 'Value']
     q_vs_ref_marginals = q_vs_ref_marginals.reset_index(level=0).reset_index(drop=True)
@@ -353,8 +363,8 @@ if metrics:
     import numpy as np
     sns.lineplot(data=q_vs_ref_marginals, x='n', y='Value', hue='Method', style='Sequence')
     # plt.title('Marginal 1-norm error against FFBSi')
-    plt.savefig(os.path.join(eval_dir, f'marginal_errors.pdf'),format='pdf')
-    plt.clf()
+    plt.savefig(os.path.join(eval_dir, f'marginal_errors'))
+    plt.close()
 
     sns.lineplot(data=q_vs_ref_additive, x='n', y='Value',hue='Method')
     sns.lineplot(data=q_vs_ref_additive, x='n', y='Value',hue='Method',style='Sequence',alpha=0.3, legend=False)
@@ -363,8 +373,8 @@ if metrics:
     # sns.lineplot(data=q_vs_ref_additive, x='Timestep', y='Value',hue='Method', ax=ax)
     # plt.title('Additive 1-norm error against FFBSi')
 
-    plt.savefig(os.path.join(eval_dir, f'additive_errors.pdf'),format='pdf')
-    plt.clf()
+    plt.savefig(os.path.join(eval_dir, f'additive_errors'))
+    plt.close()
 
 # ax0.set_title('Marginal 1-norm error against FFBSi')
 # ax0.set_xlabel('t')

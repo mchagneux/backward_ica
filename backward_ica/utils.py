@@ -26,7 +26,7 @@ def moving_window(a, size: int):
     starts = jnp.arange(len(a) - size + 1)
     return vmap(lambda start: lax.dynamic_slice_in_dim(a, start, size))(starts)
 
-chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-10-02_12-22-39_Train_run'
+chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-10-04_12-06-23_Train_run'
 
 def get_generative_model(args, key_for_random_params=None):
 
