@@ -56,8 +56,8 @@ def get_variational_model(args, p=None, key_for_random_params=None):
                             obs_dim=args.obs_dim,
                             transition_matrix_conditionning=args.transition_matrix_conditionning,
                             range_transition_map_params=args.range_transition_map_params,
-                            transition_bias=True, 
-                            emission_bias=False)
+                            transition_bias=args.transition_bias, 
+                            emission_bias=args.emission_bias)
 
     elif 'neural_backward_linear' in args.q_version:
         if (p is not None) and (p.transition_kernel.map_type == 'linear'):
@@ -177,8 +177,6 @@ def get_config(p_version=None,
 
 
     return args
-
-
 
 def enable_x64(use_x64=True):
     """
