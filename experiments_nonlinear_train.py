@@ -7,7 +7,7 @@ base_dir = os.path.join('experiments', f'p_{p_version}')
 
 q_versions = ['neural_backward_linear']
 
-learning_rates = ['0.001']
+learning_rates = ['0.01']
 num_epochs_list = ['100']
 dims_list = ['5 5']
 

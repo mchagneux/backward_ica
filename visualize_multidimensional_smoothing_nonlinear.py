@@ -20,13 +20,22 @@ import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_10_03__17_02_22'
+exp_dir = 'experiments/p_chaotic_rnn/2022_10_10__11_49_01'
 
-method_names = ['neural_backward_linear', 'external_campbell']
+method_names = ['neural_backward_linear', 
+                'external_campbell']
                 
-pretty_names = ['Ours', 'Campbell']
+pretty_names = ['Ours', 
+                'Campbell']
 
 train_args = utils.load_args('train_args', os.path.join(exp_dir, method_names[0]))
+if method_names[1] == 'external_campbell':
+
+    train_args.loaded_data = (os.path.join(utils.chaotic_rnn_base_dir, 'x_data.npy'), 
+                            os.path.join(utils.chaotic_rnn_base_dir,'y_data.npy'))
+    train_args.num_seqs = 1
+    train_args.seq_length = 500
+    
 utils.set_parametrization(train_args)
 
 eval_dir = os.path.join(exp_dir, 'eval')

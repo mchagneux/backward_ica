@@ -221,109 +221,6 @@ class OnlineGeneralBackwardELBO:
 
         return jnp.mean(tau), (samples_seq, weights_seq, filt_state_seq, backwd_state_seq)
 
-class OnlineGeneralBackwardELBOSpecialInit:
-
-    def __init__(self, p:HMM, q:BackwardSmoother, normalizer, num_samples=200):
-
-        self.p = p
-        self.q = q
-        self.num_samples = num_samples
-        self.normalizer = normalizer
-
-    def __call__(self, key, obs_seq, theta:HMMParams, phi):
-
-        def q_filt_samples_and_log_probs(key, q_filt_state):
-            samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_state.out)
-            log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
-            return samples, log_probs
-
-
-        def init_functional(obs, log_prob, sample, new_obs, new_log_prob, new_sample, q_backwd_state):
-            return self.p.transition_kernel.logpdf(new_sample, sample, theta.transition) \
-                    + self.p.prior_dist.logpdf(sample, theta.prior) \
-                    + self.p.emission_kernel.logpdf(new_obs, new_sample, theta.emission) \
-                    + self.p.emission_kernel.logpdf(obs, sample, theta.emission) \
-                    - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) \
-                    + log_prob \
-                    - new_log_prob
-
-
-        def additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_state):
-            return self.p.transition_kernel.logpdf(new_sample, sample, theta.transition) \
-                    + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission) \
-                    - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) \
-                    + log_prob \
-                    - new_log_prob
-
-
-        def init_tau(key, q_filt_states, q_backwd_state):
-
-            key_filt, key_backwd = jax.random.split(key, 2)
-            q_filt_state = tree_get_idx(0, q_filt_states)
-            new_q_filt_state = tree_get_idx(1, q_filt_states)
-
-            new_samples, new_log_probs = q_filt_samples_and_log_probs(key_filt, new_q_filt_state)
-
-            backwd_sampler = vmap(self.q.backwd_kernel.sample, in_axes=(0,None,None))
-
-            def init_component_tau(key, new_sample, new_log_prob):
-
-                samples = backwd_sampler(jax.random.split(key, self.num_samples), new_sample, q_backwd_state)
-                log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
-
-                def sum_component(sample, log_prob):
-                    return init_functional(obs_seq[0], log_prob, sample, obs_seq[1], new_log_prob, new_sample, q_backwd_state)
-
-                return jnp.mean(vmap(sum_component)(samples, log_probs))
-
-            tau = vmap(init_component_tau)(jax.random.split(key_backwd, self.num_samples), new_samples, new_log_probs)
-
-            return tau, new_samples, new_log_probs
-
-        def update_tau(carry, x):
-
-            tau, samples, log_probs = carry 
-            key, obs, q_filt_state, q_backwd_state = x 
-            new_samples, new_log_probs = q_filt_samples_and_log_probs(key, q_filt_state)
-
-            def update_component_tau(new_sample, new_log_prob):
-                def sum_component(sample, log_prob, tau_component):
-                    log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) - log_prob
-                    component = tau_component + additive_functional(obs, 
-                                                                log_prob, 
-                                                                sample, 
-                                                                new_log_prob, 
-                                                                new_sample, 
-                                                                q_backwd_state)
-                    return log_weight, component
-                log_weights, components = vmap(sum_component)(samples, log_probs, tau)
-
-                normalized_weights = self.normalizer(log_weights)
-                return normalized_weights, jnp.sum(normalized_weights * components)
-            
-            weights, new_tau = vmap(update_component_tau)(new_samples, new_log_probs) 
-
-            return (new_tau, new_samples, new_log_probs), (new_samples, weights)
-
-        key, subkey = random.split(key, 2)
-
-        filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
-        backwd_state_seq = self.q.compute_kernel_state_seq(filt_state_seq, phi)
-
-        tau, samples, log_probs = init_tau(subkey, 
-                                        tree_get_slice(0, 2, filt_state_seq), 
-                                        tree_get_idx(0, backwd_state_seq))           
-
-        (tau, _ , _), (samples_seq, weights_seq) = lax.scan(f=update_tau, 
-                                                            init=(tau, samples, log_probs), 
-                                                            xs=(random.split(key, len(obs_seq)-2), 
-                                                                obs_seq[2:],
-                                                                tree_get_slice(2, None, filt_state_seq),
-                                                                tree_get_slice(1, None, backwd_state_seq)))
-
-
-        return jnp.mean(tau), (tree_prepend(samples, samples_seq), weights_seq, filt_state_seq, backwd_state_seq)
-
 class OnlineGeneralBackwardELBOV2:
 
     def __init__(self, p:HMM, q:BackwardSmoother, normalizer, num_samples=100):
@@ -458,6 +355,84 @@ class OnlineGeneralBackwardELBOV2:
 
 
         return jnp.mean(tau_T), (0,0,0,0)
+
+
+class OnlineGeneralBackwardELBOV3:
+
+    def __init__(self, p:HMM, q:BackwardSmoother, normalizer, num_samples=200):
+
+        self.p = p
+        self.q = q
+        self.num_samples = num_samples
+        self.normalizer = normalizer
+
+    def __call__(self, key, obs_seq, theta:HMMParams, phi):
+
+        filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
+        backwd_state_seq = self.q.compute_kernel_state_seq(filt_state_seq, phi)
+
+        def sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq):
+
+            def samples_and_log_probs(key, q_filt_state):
+                samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_state.out)
+                log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
+                return samples, log_probs
+
+            def additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_state):
+                return self.p.transition_kernel.logpdf(new_sample, sample, theta.transition) \
+                        + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission) \
+                        - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) \
+                        + log_prob \
+                        - new_log_prob
+
+            def init_functional(sample):
+                return self.p.emission_kernel.logpdf(obs_seq[0], sample, theta.emission) \
+                        + self.p.prior_dist.logpdf(sample, theta.prior)
+
+            def update_tau(carry, x):
+
+                tau, samples, log_probs = carry 
+                key, obs, q_filt_state, q_backwd_state = x 
+                new_samples, new_log_probs = samples_and_log_probs(key, q_filt_state)
+
+                def update_component_tau(new_sample, new_log_prob):
+                    def sum_component(sample, log_prob, tau_component):
+                        log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) - log_prob
+                        component = tau_component + additive_functional(obs, 
+                                                                    log_prob, 
+                                                                    sample, 
+                                                                    new_log_prob, 
+                                                                    new_sample, 
+                                                                    q_backwd_state)
+                        return log_weight, component
+                    log_weights, components = vmap(sum_component)(samples, log_probs, tau)
+
+                    normalized_weights = self.normalizer(log_weights)
+                    return normalized_weights, jnp.sum(normalized_weights * components)
+                
+                weights, new_tau = vmap(update_component_tau)(new_samples, new_log_probs) 
+
+                return (new_tau, new_samples, new_log_probs), (new_samples, weights)
+
+            key, subkey = random.split(key, 2)
+
+            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
+
+            tau = vmap(init_functional)(samples)                            
+
+            (tau, _ , _), (samples_seq, weights_seq) = lax.scan(update_tau, 
+                                                                init=(tau, samples, log_probs), 
+                                                                xs=(random.split(key, len(obs_seq)-1), 
+                                                                    obs_seq[1:],
+                                                                    tree_dropfirst(q_filt_state_seq),
+                                                                    q_backwd_state_seq))
+
+            return tau, tree_prepend(samples, samples_seq), weights_seq
+
+        tau, samples_seq, weights_seq = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
+
+        return jnp.mean(tau), (samples_seq, weights_seq, filt_state_seq, backwd_state_seq)
+
 
 class OnlineBackwardLinearELBO:
 
@@ -642,6 +617,7 @@ class LinearGaussianELBO:
         return expect_quadratic_term_under_gaussian(result, q_last_filt_state.out) \
                     - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
                     + 0.5*self.p.state_dim
+
 
 
 def winsorize_grads():

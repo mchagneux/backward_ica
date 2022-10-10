@@ -106,8 +106,8 @@ def get_config(p_version=None,
         args.q_version = q_version
         args.state_dim, args.obs_dim = dims
 
-    args.seq_length = 500 # length of the train sequences
-    args.num_seqs = 500 # number of train sequences
+    args.seq_length = 50 # length of the train sequences
+    args.num_seqs = 5000 # number of train sequences
     args.single_split_seq = False # whether to draw one long sample of length seq_length * num_seqs and divide it in seq_length // num_seqs sequences
     
     # if args.p_version == 'chaotic_rnn': 
