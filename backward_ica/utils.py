@@ -26,7 +26,7 @@ def moving_window(a, size: int):
     starts = jnp.arange(len(a) - size + 1)
     return vmap(lambda start: lax.dynamic_slice_in_dim(a, start, size))(starts)
 
-chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-10-04_12-06-23_Train_run'
+chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-10-03_17-00-46_Train_run'
 
 def get_generative_model(args, key_for_random_params=None):
 
@@ -107,13 +107,13 @@ def get_config(p_version=None,
         args.state_dim, args.obs_dim = dims
 
     args.seq_length = 500 # length of the train sequences
-    args.num_seqs = 1 # number of train sequences
+    args.num_seqs = 500 # number of train sequences
     args.single_split_seq = False # whether to draw one long sample of length seq_length * num_seqs and divide it in seq_length // num_seqs sequences
     
-    if args.p_version == 'chaotic_rnn': 
-        args.loaded_data = (os.path.join(chaotic_rnn_base_dir, 'x_data.npy'), os.path.join(chaotic_rnn_base_dir,'y_data.npy'))
-    else: args.loaded_data = None
-
+    # if args.p_version == 'chaotic_rnn': 
+    #     args.loaded_data = (os.path.join(chaotic_rnn_base_dir, 'x_data.npy'), os.path.join(chaotic_rnn_base_dir,'y_data.npy'))
+    # else: args.loaded_data = None
+    args.loaded_data = None
 
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
 
@@ -162,12 +162,11 @@ def get_config(p_version=None,
 
 
     ## SMC 
-    args.num_particles = 100000 # number of particles for bootstrap filtering step
+    args.num_particles = 10000 # number of particles for bootstrap filtering step
     args.num_smooth_particles = 1000 # number of particles for the FFBSi ancestral sampling step
 
     ## optimizer
     args.optimizer = 'adamw' 
-    args.batch_size = 1
     args.store_every = args.num_epochs // 5 # step to store intermediate parameter values
     args.num_fits = 1 # number of optimization runs starting from multiple seeds
 

@@ -31,11 +31,12 @@ def main(args, save_dir):
 
     evidence_keys = jax.random.split(key_smc, args.num_seqs)
 
-    print('Computing evidence...')
+    if args.compute_oracle_evidence:
+        print('Computing evidence...')
 
-    avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
+        avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
 
-    print('Oracle evidence:', avg_evidence)
+        print('Oracle evidence:', avg_evidence)
 
     q = utils.get_variational_model(args, p=p)
 
@@ -87,10 +88,11 @@ if __name__ == '__main__':
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--args_path', type=str, default='')
     parser.add_argument('--dims', type=int, nargs='+', default=(5,5))
-
+    parser.add_argument('--batch_size', type=int, default=20)
     parser.add_argument('--learning_rate', type=float, default=0.01)
     parser.add_argument('--num_epochs', type=int, default=5000)
     parser.add_argument('--num_samples', type=int, default=50)
+    parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
 
 
     args = parser.parse_args()
