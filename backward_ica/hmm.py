@@ -459,19 +459,14 @@ class HMM:
 class BackwardSmoother(metaclass=ABCMeta):
 
     @staticmethod
-    def filt_update_forward(obs, prev_state, layers, state_dim):
+    def gru_update(obs, prev_state, layers):
 
-        d = state_dim 
 
-        out_dim = d + (d*(d+1)) // 2
         gru = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in (*layers,)])
-        projection = hk.Linear(out_dim, 
-                    w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-                    b_init=hk.initializers.RandomNormal(),)
-        out, new_state = gru(obs, prev_state)
-        out = projection(out)
 
-        return GaussianParams.from_vec(out, d, diag=False, chol_add=empty_add), new_state
+        out, new_state = gru(obs, prev_state)
+
+        return out, new_state
 
 
     @staticmethod
@@ -1009,30 +1004,62 @@ class NonLinearHMM(HMM):
 
 class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
+    @staticmethod
+    def gaussian_filt_params_update(filt_state, d):
+
+        out_dim = d + (d * (d + 1)) // 2
+        projection = hk.Linear(out_dim, 
+            w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+            b_init=hk.initializers.RandomNormal(),)
+    
+        
+        
+    @staticmethod
+    def linear_gaussian_backwd_params_update(filt_state, d):
+
+        A_back_dim = d * d 
+        a_back_dim = d
+        Sigma_back_dim = (d * (d + 1)) // 2
+
+        net = hk.Linear(A_back_dim + a_back_dim + Sigma_back_dim, 
+                    w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                    b_init=hk.initializers.RandomNormal(),)
+
+        out = net(filt_state)
+
+        A_back = out[:A_back_dim].reshape((d,d))
+        a_back = out[A_back_dim:A_back_dim+a_back_dim]
+        Sigma_back_vec = out[A_back_dim+a_back_dim:]
+
+        return KernelParams(map=LinearMapParams(w=A_back, b=a_back), noise=GaussianNoiseParams.from_vec(Sigma_back_vec, d))
+
     def __init__(self, 
                 transition_kernel, 
+                state_dim,
                 obs_dim, 
                 update_layers, 
                 explicit_proposal,
                 prior_dist=Gaussian, 
                 filt_dist=Gaussian):
         
-        super().__init__(transition_kernel.in_dim, filt_dist)
 
-        self.state_dim = transition_kernel.in_dim
+        super().__init__(state_dim, filt_dist)
+
+        self.state_dim = state_dim
         self.obs_dim = obs_dim
         self.explicit_proposal = explicit_proposal
         self.prior_dist:Gaussian = prior_dist
-        self.transition_kernel:Kernel =  transition_kernel
+        if transition_kernel is not None:
+            self.transition_kernel:Kernel =  transition_kernel
 
         self.update_layers = update_layers
         d = self.state_dim 
         self.filt_state_shape = d + (d *(d+1)) // 2
 
         if explicit_proposal:
-            self._format_params = lambda params: JohnsonBackwardSmootherParams(prior=self.prior_dist.format_params(params.prior), 
+            self._format_params = lambda params: NeuralLinearBackwardSmootherParams(prior=self.prior_dist.format_params(params.prior), 
                                                 filt_update=params.filt_update, 
-                                                transition=self.transition_kernel.format_params(params.transition))
+                                                backwd=self.transition_kernel.format_params(params.transition))
 
             self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.johnson_update_forward, 
                                                                                 layers=update_layers, 
@@ -1049,9 +1076,21 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
                 return self.filt_update_apply(params.filt_update, obs, pred_state)
         
         else:
-            self._format_params = lambda params: JohnsonBackwardSmootherParams(prior=params.prior, 
-                                                filt_update=params.filt_update, 
-                                                transition=self.transition_kernel.format_params(params.transition))
+            if transition_kernel is None:
+                self._format_params = lambda params: NeuralLinearBackwardSmootherParams(prior=params.prior, 
+                                                    filt_update=params.filt_update, 
+                                                    backwd=self.transition_kernel.format_params(params.transition))
+                _new_backwd_state = super().new_backwd_state
+            else: 
+                self.backwd_update_init_params, self.backwd_update_apply = hk.without_apply_rng(hk.transform(partial(self.linear_backwd_params_update, 
+                                                                                                                    d=self.state_dim)))
+                self._format_params = lambda params: NeuralLinearBackwardSmootherParams(prior=params.prior, 
+                                                                    filt_update=params.filt_update, 
+                                                                    backwd=params.backwd)
+                def _new_backwd_state(filt_state, params):
+                    return self.backwd_update_apply(params.backwd, filt_state.hidden)
+
+
 
             self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.filt_update_forward, 
                                                                                         layers=update_layers, 
@@ -1097,7 +1136,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
 
 
-        params =  JohnsonBackwardSmootherParams(prior_params, 
+        params =  NeuralLinearBackwardSmootherParams(prior_params, 
                                             transition_params, 
                                             filt_update_params)
         
@@ -1126,6 +1165,10 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
     def new_filt_state(self, obs, filt_state, params):
 
         return self._new_filt_state(obs, filt_state, params)
+
+    def new_backwd_state(self, filt_state, params):
+        return self._new_backwd_state(filt_state, params)
+
     
     def format_params(self, params):
         return self._format_params(params)

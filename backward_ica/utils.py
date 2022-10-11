@@ -1,6 +1,7 @@
 from collections import namedtuple
 from dataclasses import dataclass
 
+from typing import Any
 from jax import numpy as jnp, vmap, config, random, jit, scipy as jsp, lax
 from functools import update_wrapper, partial
 from jax.tree_util import register_pytree_node_class, tree_map
@@ -523,11 +524,25 @@ class StudentNoiseParams:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
+
+def empty_add(d):
+    return jnp.zeros((d,d))
+
+
 @register_pytree_node_class
 @dataclass(init=True)
 class GaussianNoiseParams:
     
     scale: Scale
+
+
+    @classmethod
+    def from_vec(cls, vec, d, chol_add=empty_add):
+
+        chol = chol_from_vec(vec, d)
+            
+        scale_kwargs = {cls.parametrization:chol + chol_add(d)}
+        return cls(scale=Scale(**scale_kwargs))
 
     def tree_flatten(self):
         return ((self.scale,), None)
@@ -537,8 +552,6 @@ class GaussianNoiseParams:
         return cls(*children)
 
 
-def empty_add(d):
-    return jnp.zeros((d,d))
 
 @register_pytree_node_class
 class GaussianParams: 
@@ -673,18 +686,18 @@ class HMMParams:
 
 @register_pytree_node_class
 @dataclass(init=True)
-class JohnsonBackwardSmootherParams:
+class NeuralLinearBackwardSmootherParams:
 
     prior: GaussianParams 
-    transition:KernelParams
-    filt_update:KernelParams
+    backwd:Any
+    filt_update:Any
 
     def compute_covs(self):
         self.prior.scale.cov
-        self.transition.noise.scale.cov
+        self.backwd.noise.scale.cov
 
     def tree_flatten(self):
-        return ((self.prior, self.transition, self.filt_update), None)
+        return ((self.prior, self.backwd, self.filt_update), None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):

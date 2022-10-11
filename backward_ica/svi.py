@@ -356,7 +356,6 @@ class OnlineGeneralBackwardELBOV2:
 
         return jnp.mean(tau_T), (0,0,0,0)
 
-
 class OnlineGeneralBackwardELBOV3:
 
     def __init__(self, p:HMM, q:BackwardSmoother, normalizer, num_samples=200):
@@ -432,7 +431,6 @@ class OnlineGeneralBackwardELBOV3:
         tau, samples_seq, weights_seq = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
 
         return jnp.mean(tau), (samples_seq, weights_seq, filt_state_seq, backwd_state_seq)
-
 
 class OnlineBackwardLinearELBO:
 
