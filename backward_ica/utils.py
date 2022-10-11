@@ -106,8 +106,6 @@ def get_config(p_version=None,
         args.q_version = q_version
         args.state_dim, args.obs_dim = dims
 
-    args.seq_length = 50 # length of the train sequences
-    args.num_seqs = 5000 # number of train sequences
     args.single_split_seq = False # whether to draw one long sample of length seq_length * num_seqs and divide it in seq_length // num_seqs sequences
     
     # if args.p_version == 'chaotic_rnn': 
@@ -156,7 +154,7 @@ def get_config(p_version=None,
     if 'neural_backward' in args.q_version:
         ## variational family
         args.explicit_proposal = 'explicit_proposal' in args.q_version # whether to use a Kalman predict step as a first move to update the variational filtering familiy
-        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (16,16) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (100,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
 

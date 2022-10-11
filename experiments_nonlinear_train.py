@@ -8,7 +8,7 @@ base_dir = os.path.join('experiments', f'p_{p_version}')
 q_versions = ['neural_backward_linear']
 
 learning_rates = ['0.01']
-num_epochs_list = ['100']
+num_epochs_list = ['500']
 dims_list = ['5 5']
 
 os.makedirs(base_dir, exist_ok=True)
@@ -48,8 +48,8 @@ processes = [subprocess.Popen(f'python train_nonlinear.py \
 
 # print(date)
 
-tensorboard_process = subprocess.Popen(f'tensorboard --logdir {base_dir}/{date}', shell=True)
-tensorboard_process.wait()
+# tensorboard_process = subprocess.Popen(f'tensorboard --logdir {base_dir}/{date}', shell=True)
+# tensorboard_process.wait()
 
 for process in processes: 
     process.wait()

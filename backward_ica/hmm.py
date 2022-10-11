@@ -1023,7 +1023,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         self.obs_dim = obs_dim
         self.explicit_proposal = explicit_proposal
         self.prior_dist:Gaussian = prior_dist
-        self.transition_kernel:Kernel =  transition_kernel
+        self.transition_kernel:Kernel = transition_kernel
 
         self.update_layers = update_layers
         d = self.state_dim 
