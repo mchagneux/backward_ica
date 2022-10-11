@@ -57,7 +57,7 @@ class SMC:
         return exp_and_normalize(log_probs), logsumexp(log_probs)
 
 
-    def compute_filt_state_seq(self, key, obs_seq, params):
+    def compute_filt_params_seq(self, key, obs_seq, params):
 
 
         prior_key, proposal_key, resampling_key = random.split(key,3)

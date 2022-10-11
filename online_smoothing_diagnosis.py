@@ -27,7 +27,7 @@ def plot():
     for seq_nb in range(num_seqs):
 
         samples_seq = samples_seqs[seq_nb]
-        backwd_state_seq = utils.tree_get_idx(seq_nb, backwd_state_seqs)
+        backwd_params_seq = utils.tree_get_idx(seq_nb, backwd_params_seqs)
 
         for time_idx in range(0, seq_length, seq_length // 5):
             fig, axes = plt.subplots(state_dim, 1, figsize=(20,30))
@@ -54,7 +54,7 @@ def plot():
                 new_sample_i = samples_new[random_idx]
                 # weights = weights_seq[time_idx][random_idx]
 
-                backwd_params = q.backwd_kernel.map(new_sample_i, utils.tree_get_idx(time_idx, backwd_state_seq))
+                backwd_params = q.backwd_kernel.map(new_sample_i, utils.tree_get_idx(time_idx, backwd_params_seq))
 
                 for dim_nb in range(state_dim):
                     samples_x = samples_old[:,dim_nb]
@@ -81,13 +81,13 @@ def plot():
             plt.savefig(os.path.join(save_dir, f'seq_{seq_nb}_time_{time_idx}'))
             plt.close()
 
-def compute_distances_filt_and_backwd(q:hmm.BackwardSmoother, samples_seq, filt_state_seq, backwd_state_seq):
+def compute_distances_filt_and_backwd(q:hmm.BackwardSmoother, samples_seq, filt_params_seq, backwd_params_seq):
     samples_seq = utils.tree_dropfirst(samples_seq)
-    filt_state_seq = utils.tree_droplast(filt_state_seq)
+    filt_params_seq = utils.tree_droplast(filt_params_seq)
     def compute_distance_at_t(x_tp1, q_t_params, q_t_tp1_params):
         q_t_tp1_xi_tp1_params = q.backwd_kernel.map(x_tp1, q_t_tp1_params)
         return gaussian_distance(q_t_tp1_xi_tp1_params, q_t_params.out)
-    return jax.vmap(jax.vmap(compute_distance_at_t, in_axes=(0,None,None)))(samples_seq, filt_state_seq, backwd_state_seq)
+    return jax.vmap(jax.vmap(compute_distance_at_t, in_axes=(0,None,None)))(samples_seq, filt_params_seq, backwd_params_seq)
 
 
 
@@ -125,8 +125,8 @@ def get_sampler_and_elbos(key, args, args_p, args_q):
                                                                                                                     q.format_params(phi)))
     def mc_elbos(obs_seqs, num_samples):
         offline_value = offline_mc_elbo(keys, obs_seqs, num_samples)
-        online_value, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = online_mc_elbo(keys, obs_seqs, num_samples)
-        return offline_value / len(obs_seqs[0]), online_value / len(obs_seqs[0]), (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs)
+        online_value, (samples_seqs, weights_seqs, filt_params_seqs, backwd_params_seqs) = online_mc_elbo(keys, obs_seqs, num_samples)
+        return offline_value / len(obs_seqs[0]), online_value / len(obs_seqs[0]), (samples_seqs, weights_seqs, filt_params_seqs, backwd_params_seqs)
 
     def true_elbo(obs_seqs):
         return closed_form_elbo(obs_seqs) / len(obs_seqs[0])
@@ -227,7 +227,7 @@ def main(args, args_p, args_q):
 
 
       true_values = true_elbo(obs_seqs)
-      offline_values, online_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = mc_elbos_jit(obs_seqs)
+      offline_values, online_values, (samples_seqs, weights_seqs, filt_params_seqs, backwd_params_seqs) = mc_elbos_jit(obs_seqs)
 
       true_values_list[args.seq_length] = true_values
       offline_values_list[args.seq_length] = offline_values
@@ -280,7 +280,7 @@ def main(args, args_p, args_q):
           offline_values_list[n_samples] = offline_values
           online_values_list[n_samples] = online_values
 
-      offline_values, online_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = mc_elbos(obs_seqs, args.num_samples)
+      offline_values, online_values, (samples_seqs, weights_seqs, filt_params_seqs, backwd_params_seqs) = mc_elbos(obs_seqs, args.num_samples)
 
       offline_values_list[args.num_samples] = offline_values
       online_values_list[args.num_samples] = online_values
@@ -335,7 +335,7 @@ def main(args, args_p, args_q):
 
 
       true_values = true_elbo(obs_seqs)
-      offline_values, online_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = mc_elbos(obs_seqs, args.num_samples)
+      offline_values, online_values, (samples_seqs, weights_seqs, filt_params_seqs, backwd_params_seqs) = mc_elbos(obs_seqs, args.num_samples)
 
       true_values_list[args.state_dim] = true_values
       offline_values_list[args.state_dim] = offline_values
@@ -389,7 +389,7 @@ def main(args, args_p, args_q):
       offline_values = offline_mc_elbo(jax.random.split(subkeys[1], args.num_seqs), obs_seqs, args.num_samples)
       print('Computing naive online Monte Carlo ELBO...')
 
-      online_values_v1, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = online_mc_elbo_v1(jax.random.split(subkeys[1], args.num_seqs), obs_seqs, args.num_samples)
+      online_values_v1, (samples_seqs, weights_seqs, filt_params_seqs, backwd_params_seqs) = online_mc_elbo_v1(jax.random.split(subkeys[1], args.num_seqs), obs_seqs, args.num_samples)
       
       print('Computing online Monte Carlo ELBO v2...')
       online_values_v2, _ = online_mc_elbo_v2(jax.random.split(subkeys[1], args.num_seqs), obs_seqs, args.num_samples)
@@ -446,7 +446,7 @@ def main(args, args_p, args_q):
       state_seqs, obs_seqs = sampler(subkeys[1])
 
       true_values = true_elbo(obs_seqs)
-      offline_values, online_values, (samples_seqs, weights_seqs, filt_state_seqs, backwd_state_seqs) = mc_elbos(obs_seqs, args.num_samples)
+      offline_values, online_values, (samples_seqs, weights_seqs, filt_params_seqs, backwd_params_seqs) = mc_elbos(obs_seqs, args.num_samples)
 
       errors_online = jnp.abs(true_values - online_values)
       errors_offline = jnp.abs(true_values - offline_values)
@@ -475,7 +475,7 @@ def main(args, args_p, args_q):
 
   if not args.offline_version_only:
    print('Computing KL divergences...')
-   kl_divergences = jax.vmap(compute_distances_filt_and_backwd,in_axes=(None, 0,0,0))(q, samples_seqs, filt_state_seqs, backwd_state_seqs)
+   kl_divergences = jax.vmap(compute_distances_filt_and_backwd,in_axes=(None, 0,0,0))(q, samples_seqs, filt_params_seqs, backwd_params_seqs)
 
    seq_nbs, timesteps, sample_nbs = jnp.meshgrid(jnp.arange(kl_divergences.shape[0]),
                                                jnp.arange(kl_divergences.shape[1]),

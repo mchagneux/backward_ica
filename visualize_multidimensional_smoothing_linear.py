@@ -36,7 +36,7 @@ from time import time
 def check_kl_divergences(state_seq, obs_seq, p:hmm.LinearGaussianHMM, q:hmm.LinearGaussianHMM, theta:utils.HMMParams, phi:utils.HMMParams, h = lambda x:x):
     filt_seq = q.filt_seq(obs_seq, phi)
     formatted_phi = q.format_params(phi)
-    backwd_seq = q.compute_kernel_state_seq(q.compute_filt_state_seq(obs_seq, formatted_phi), formatted_phi)
+    backwd_seq = q.compute_backwd_params_seq(q.compute_filt_params_seq(obs_seq, formatted_phi), formatted_phi)
 
     def marginalize(mean, cov, linear_kernel_params):
         A = linear_kernel_params.map.w

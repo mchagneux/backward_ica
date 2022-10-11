@@ -70,19 +70,19 @@ check_general_elbo(mc_key, p, num_seqs, seq_length, num_samples)
 # phi = q.format_params(q.get_random_params(key))
 
 
-# filt_state = q.init_filt_state(obs_seq[0], phi)
+# filt_params = q.init_filt_params(obs_seq[0], phi)
 
-# print('First filt state:', filt_state)
-# backwd_state = q.new_backwd_state(filt_state, phi)
-# # print('First backwd state:', backwd_state)
+# print('First filt state:', filt_params)
+# backwd_params = q.new_backwd_params(filt_params, phi)
+# # print('First backwd state:', backwd_params)
 
-# filt_state = q.new_filt_state(obs_seq[1], filt_state, phi)
-# print('Second filt state:', filt_state)
+# filt_params = q.new_filt_params(obs_seq[1], filt_params, phi)
+# print('Second filt state:', filt_params)
 
 
-# print('Output of first backwd kernel map:', q.backwd_kernel.map(state_seq[1], backwd_state))
+# print('Output of first backwd kernel map:', q.backwd_kernel.map(state_seq[1], backwd_params))
 # print('State to be mapped:', state_seq[1])
-# print(q.backwd_kernel.sample(key, state_seq[1], backwd_state))
+# print(q.backwd_kernel.sample(key, state_seq[1], backwd_params))
 
 
 

@@ -57,7 +57,8 @@ def main(args, save_dir):
                         num_samples=args.num_samples,
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
-                        online=args.online)
+                        online=args.online,
+                        sweep_sequence=True)
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
@@ -83,7 +84,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--p_version', type=str, default='chaotic_rnn')
-    parser.add_argument('--q_version', type=str, default='general')
+    parser.add_argument('--q_version', type=str, default='linear')
 
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--args_path', type=str, default='')
@@ -93,8 +94,9 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=5000)
     parser.add_argument('--num_samples', type=int, default=1)
     parser.add_argument('--num_seqs', type=int, default=1000)
-    parser.add_argument('--seq_length',type=int, default=500)
+    parser.add_argument('--seq_length',type=int, default=50)
     parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
+    parser.add_argument('--load_sequences',type=bool, default=True)
 
     args = parser.parse_args()
 

@@ -29,6 +29,9 @@ def moving_window(a, size: int):
 
 chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-10-03_17-00-46_Train_run'
 
+
+## config routines and model selection
+
 def get_generative_model(args, key_for_random_params=None):
 
     if args.p_version == 'linear':
@@ -109,10 +112,12 @@ def get_config(p_version=None,
 
     args.single_split_seq = False # whether to draw one long sample of length seq_length * num_seqs and divide it in seq_length // num_seqs sequences
     
-    # if args.p_version == 'chaotic_rnn': 
-    #     args.loaded_data = (os.path.join(chaotic_rnn_base_dir, 'x_data.npy'), os.path.join(chaotic_rnn_base_dir,'y_data.npy'))
-    # else: args.loaded_data = None
-    args.loaded_data = None
+    if args.p_version == 'chaotic_rnn': 
+        if args.load_sequences:
+            args.num_seqs = 1
+            args.batch_size = 1
+            args.loaded_data = (os.path.join(chaotic_rnn_base_dir, 'x_data.npy'), os.path.join(chaotic_rnn_base_dir,'y_data.npy'))
+        else: args.loaded_data = None
 
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
 
@@ -221,6 +226,7 @@ def set_host_device_count(n):
     )
 
 
+## misc. JAX indexing tools
 
 def tree_get_strides(stride, tree):
     return tree_map(partial(moving_window, size=stride), tree)
@@ -254,6 +260,117 @@ def tree_get_slice(start, stop, tree):
     return tree_map(lambda a: a[start:stop], tree)
 
 
+## quadratic forms and Gaussian subroutines 
+
+
+
+@dataclass(init=True)
+@register_pytree_node_class
+class QuadTerm:
+
+    W: jnp.ndarray
+    v: jnp.ndarray
+    c: jnp.ndarray
+
+    def __iter__(self):
+        return iter((self.W, self.v, self.c))
+
+    def __add__(self, other):
+        return QuadTerm(W = self.W + other.W, 
+                        v = self.v + other.v, 
+                        c = self.c + other.c)
+
+    def __rmul__(self, other):
+        return QuadTerm(W=other*self.W, 
+                        v=other*self.v, 
+                        c=other*self.c) 
+    
+    def evaluate(self, x):
+        return x.T @ self.W @ x + self.v.T @ x + self.c
+
+    def tree_flatten(self):
+        return ((self.W, self.v, self.c), None) 
+
+    @staticmethod
+    def from_A_b_Omega(A, b, Omega):
+        return QuadTerm(W = A.T @ Omega @ A, 
+                        v = A.T @ (Omega + Omega.T) @ b, 
+                        c = b.T @ Omega @ b)
+    @staticmethod 
+    def evaluate_from_A_b_Omega(A, b, Omega, x):
+        common_term = A @ x + b 
+        return common_term.T @ Omega @ common_term
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+def constant_terms_from_log_gaussian(dim:int, log_det:float)->float:
+    """Utility function to compute the log of the term that is against the exponential for a multivariate Normal
+
+    Args:
+        dim (int): the dimension of the support of the multivariate Normal
+        det (float): the precomputed determinant of the covariance matrix 
+
+    Returns:
+        float: the value of the requested factor  
+    """
+
+    return -0.5*(dim * jnp.log(2*jnp.pi) + log_det)
+
+def transition_term_integrated_under_backward(q_backwd_params, transition_params):
+    # expectation of the quadratic form that appears in the log of the state transition density
+
+    A = transition_params.map.w @ q_backwd_params.map.w - jnp.eye(transition_params.noise.scale.cov.shape[0])
+    b = transition_params.map.w @ q_backwd_params.map.b + transition_params.map.b
+    Omega = transition_params.noise.scale.prec
+    
+    result = -0.5 * QuadTerm.from_A_b_Omega(A, b, Omega)
+    result.c += -0.5 * jnp.trace(transition_params.noise.scale.prec @ transition_params.map.w @ q_backwd_params.noise.scale.cov @ transition_params.map.w.T) \
+                + constant_terms_from_log_gaussian(transition_params.noise.scale.cov.shape[0], transition_params.noise.scale.log_det)
+    return result 
+
+def expect_quadratic_term_under_backward(quad_form:QuadTerm, backwd_params):
+    # the result is still a quadratic forms with new parameters, following the formula for expected values of quadratic forms  
+
+    W = backwd_params.map.w.T @ quad_form.W @ backwd_params.map.w
+    v = backwd_params.map.w.T @ (quad_form.v + (quad_form.W + quad_form.W.T) @ backwd_params.map.b)
+    c = quad_form.c + jnp.trace(quad_form.W @ backwd_params.noise.scale.cov) \
+                    + backwd_params.map.b.T @ quad_form.W @ backwd_params.map.b  \
+                    + quad_form.v.T @ backwd_params.map.b 
+
+    return QuadTerm(W=W, v=v, c=c)
+
+def expect_quadratic_term_under_gaussian(quad_form:QuadTerm, gaussian_params):
+    return jnp.trace(quad_form.W @ gaussian_params.scale.cov) + quad_form.evaluate(gaussian_params.mean)
+
+def quadratic_term_from_log_gaussian(gaussian_params):
+
+    result = - 0.5 * QuadTerm(W=gaussian_params.scale.prec, 
+                    v=-(gaussian_params.scale.prec + gaussian_params.scale.prec.T) @ gaussian_params.mean, 
+                    c=gaussian_params.mean.T @ gaussian_params.scale.prec @ gaussian_params.mean)
+
+    result.c += constant_terms_from_log_gaussian(gaussian_params.mean.shape[0], gaussian_params.scale.log_det)
+
+    return result
+
+def get_tractable_emission_term(obs, emission_params):
+    A = emission_params.map.w
+    b = emission_params.map.b - obs
+    Omega = emission_params.noise.scale.prec
+    emission_term = -0.5*QuadTerm.from_A_b_Omega(A, b, Omega)
+    emission_term.c += constant_terms_from_log_gaussian(emission_params.noise.scale.cov.shape[0], emission_params.noise.scale.log_det)
+    return emission_term
+
+def get_tractable_emission_term_from_natparams(emission_natparams):
+    eta1, eta2 = emission_natparams
+    const = -0.25 * eta1.T @ jnp.linalg.solve(eta2, eta1) - 0.5 * jnp.log(jnp.linalg.det(-2*eta2)) - eta1.shape[0] * jnp.log(jnp.pi)
+    return QuadTerm(W=eta2, 
+                    v=eta1, 
+                    c=const)
+
+
+## covariance matrices tools 
 
 def chol_from_vec(vec, d):
 
@@ -302,9 +419,9 @@ def inv_of_chol(mat):
 def inv_of_chol_from_chol(mat_chol):
     return solve_triangular(a=mat_chol, b=jnp.eye(mat_chol.shape[0]), lower=True)
 
-# def scale_params_from_chol(chol):
-#     return chol, cov_from_chol(chol), prec_from_chol(chol), log_det_from_chol(chol)
 
+
+## user-defined types
 class lazy_property(object):
     r"""
     Used as a decorator for lazy loading of class attributes. This uses a
@@ -330,9 +447,8 @@ class lazy_property(object):
 
 
 KernelParams = namedtuple('KernelParams', ['map','noise'])
-FiltState = namedtuple('FiltState', ['out','hidden'])
-BackwardState = namedtuple('BackwardState', ['inner', 'varying'])
-GeneralBackwardSmootherParams = namedtuple('GeneralBackwardSmootherParams',['prior', 'filt_update','backwd'])
+State = namedtuple('State', ['out','hidden'])
+GeneralBackwdState = namedtuple('BackwardState', ['inner', 'varying'])
 
 def define_frozen_tree(key, frozen_params, q, theta_star):
 
@@ -366,7 +482,6 @@ def define_frozen_tree(key, frozen_params, q, theta_star):
     # frozen_params = (frozen_theta, frozen_phi)
 
     return frozen_phi
-
 
 def params_to_dict(params):
     if isinstance(params, np.ndarray) or isinstance(params, DeviceArray):
@@ -701,46 +816,6 @@ class NeuralLinearBackwardSmootherParams:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
-@dataclass(init=True)
-@register_pytree_node_class
-class QuadTerm:
-
-    W: jnp.ndarray
-    v: jnp.ndarray
-    c: jnp.ndarray
-
-    def __iter__(self):
-        return iter((self.W, self.v, self.c))
-
-    def __add__(self, other):
-        return QuadTerm(W = self.W + other.W, 
-                        v = self.v + other.v, 
-                        c = self.c + other.c)
-
-    def __rmul__(self, other):
-        return QuadTerm(W=other*self.W, 
-                        v=other*self.v, 
-                        c=other*self.c) 
-    
-    def evaluate(self, x):
-        return x.T @ self.W @ x + self.v.T @ x + self.c
-
-    def tree_flatten(self):
-        return ((self.W, self.v, self.c), None) 
-
-    @staticmethod
-    def from_A_b_Omega(A, b, Omega):
-        return QuadTerm(W = A.T @ Omega @ A, 
-                        v = A.T @ (Omega + Omega.T) @ b, 
-                        c = b.T @ Omega @ b)
-    @staticmethod 
-    def evaluate_from_A_b_Omega(A, b, Omega, x):
-        common_term = A @ x + b 
-        return common_term.T @ Omega @ common_term
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
 
 def plot_relative_errors_1D(ax, pred_means, pred_covs, color='black', alpha=0.2, hatch=None, label=''):
     # up_to = 64
@@ -752,7 +827,6 @@ def plot_relative_errors_1D(ax, pred_means, pred_covs, color='black', alpha=0.2,
 
     ax.plot(time_axis, pred_means, linestyle='dashed', c=color, label=label)
     ax.fill_between(time_axis, lower, upper, alpha=alpha, color=color, hatch=hatch)
-    # ax.errorbar(x=time_axis, y=pred_means, yerr=1.96 * jnp.sqrt(pred_covs), c='blue', label='Smoothed z, $1.96\\sigma$', linestyle='dashed')
 
 def plot_relative_errors_2D(ax, true_sequence, pred_means, pred_covs, limit=False):
     # up_to = 64
@@ -766,6 +840,9 @@ def plot_relative_errors_2D(ax, true_sequence, pred_means, pred_covs, limit=Fals
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     ax.legend()
+
+
+## serializations 
 
 def save_args(args, name, save_dir):
     with open(os.path.join(save_dir, f'{name}.json'), 'w') as f:
@@ -804,6 +881,26 @@ def load_train_logs(save_dir):
         train_logs = pickle.load(f)
     return train_logs
         
+
+def plot_to_image(figure):
+    """Converts the matplotlib plot specified by 'figure' to a PNG image and
+    returns it. The supplied figure is closed and inaccessible after this call."""
+    # Save the plot to a PNG in memory.
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    # Closing the figure prevents it from being displayed directly inside
+    # the notebook.
+    plt.close(figure)
+    buf.seek(0)
+    # Convert PNG buffer to TF image
+    image = tf.image.decode_png(buf.getvalue(), channels=4)
+    # Add the batch dimension
+    image = tf.expand_dims(image, 0)
+    return image
+
+
+
+## OLD 
 def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, save_dir, plot_only, best_epochs_only):
     plt.rcParams.update({'font.size': 10.35})
 
@@ -863,11 +960,11 @@ def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb,
 def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref_params, approx_params, seq_length, step, ref_smoother_name, approx_smoother_name):
     timesteps = range(2, seq_length, step)
 
-    compute_ref_filt_seq = lambda obs_seq: ref_smoother.compute_filt_state_seq(obs_seq, ref_params)
-    compute_ref_backwd_seq = lambda filt_seq: ref_smoother.compute_kernel_state_seq(filt_seq, ref_params)
+    compute_ref_filt_seq = lambda obs_seq: ref_smoother.compute_filt_params_seq(obs_seq, ref_params)
+    compute_ref_backwd_seq = lambda filt_seq: ref_smoother.compute_backwd_params_seq(filt_seq, ref_params)
 
-    compute_approx_filt_seq = lambda obs_seq: approx_smoother.compute_filt_state_seq(obs_seq, approx_params)
-    compute_approx_backwd_seq = lambda filt_seq: approx_smoother.compute_kernel_state_seq(filt_seq, approx_params)
+    compute_approx_filt_seq = lambda obs_seq: approx_smoother.compute_filt_params_seq(obs_seq, approx_params)
+    compute_approx_backwd_seq = lambda filt_seq: approx_smoother.compute_backwd_params_seq(filt_seq, approx_params)
     
     ref_compute_marginals = ref_smoother.compute_marginals
     approx_compute_marginals = approx_smoother.compute_marginals
@@ -939,13 +1036,13 @@ def multiple_length_ffbsi_smoothing(key, obs_seqs, smoother, params, timesteps):
     
     params = smoother.format_params(params)
     params.compute_covs()
-    compute_filt_state_seq = jit(lambda key, obs_seq: smoother.compute_filt_state_seq(key, obs_seq, params))
+    compute_filt_params_seq = jit(lambda key, obs_seq: smoother.compute_filt_params_seq(key, obs_seq, params))
     compute_marginals = lambda key, filt_seq: smoother.compute_marginals(key, filt_seq, params)
 
 
     def results_for_single_seq(key_filt, key_back, obs_seq):
 
-        filt_seq = compute_filt_state_seq(key_filt, obs_seq)
+        filt_seq = compute_filt_params_seq(key_filt, obs_seq)
 
         results = []
         
@@ -972,14 +1069,14 @@ def multiple_length_ffbsi_smoothing(key, obs_seqs, smoother, params, timesteps):
 def multiple_length_linear_backward_smoothing(obs_seqs, smoother, params, timesteps):
     
     params = smoother.format_params(params)
-    compute_filt_state_seq = lambda obs_seq: smoother.compute_filt_state_seq(obs_seq, params)
-    compute_kernel_state_seq = lambda filt_seq: smoother.compute_kernel_state_seq(filt_seq, params)
+    compute_filt_params_seq = lambda obs_seq: smoother.compute_filt_params_seq(obs_seq, params)
+    compute_backwd_params_seq = lambda filt_seq: smoother.compute_backwd_params_seq(filt_seq, params)
     compute_marginals = smoother.compute_marginals
 
     def results_for_single_seq(obs_seq):
 
-        filt_seq = compute_filt_state_seq(obs_seq)
-        backwd_seq = compute_kernel_state_seq(filt_seq)
+        filt_seq = compute_filt_params_seq(obs_seq)
+        backwd_seq = compute_backwd_params_seq(filt_seq)
 
         results = []
         

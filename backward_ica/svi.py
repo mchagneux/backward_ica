@@ -18,86 +18,6 @@ def get_keys(key, num_seqs, num_epochs):
 def get_dummy_keys(key, num_seqs, num_epochs): 
     return jnp.empty((num_epochs, num_seqs, 1))
 
-def plot_to_image(figure):
-    """Converts the matplotlib plot specified by 'figure' to a PNG image and
-    returns it. The supplied figure is closed and inaccessible after this call."""
-    # Save the plot to a PNG in memory.
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    # Closing the figure prevents it from being displayed directly inside
-    # the notebook.
-    plt.close(figure)
-    buf.seek(0)
-    # Convert PNG buffer to TF image
-    image = tf.image.decode_png(buf.getvalue(), channels=4)
-    # Add the batch dimension
-    image = tf.expand_dims(image, 0)
-    return image
-
-def constant_terms_from_log_gaussian(dim:int, log_det:float)->float:
-    """Utility function to compute the log of the term that is against the exponential for a multivariate Normal
-
-    Args:
-        dim (int): the dimension of the support of the multivariate Normal
-        det (float): the precomputed determinant of the covariance matrix 
-
-    Returns:
-        float: the value of the requested factor  
-    """
-
-    return -0.5*(dim * jnp.log(2*jnp.pi) + log_det)
-
-def transition_term_integrated_under_backward(q_backwd_state, transition_params):
-    # expectation of the quadratic form that appears in the log of the state transition density
-
-    A = transition_params.map.w @ q_backwd_state.map.w - jnp.eye(transition_params.noise.scale.cov.shape[0])
-    b = transition_params.map.w @ q_backwd_state.map.b + transition_params.map.b
-    Omega = transition_params.noise.scale.prec
-    
-    result = -0.5 * QuadTerm.from_A_b_Omega(A, b, Omega)
-    result.c += -0.5 * jnp.trace(transition_params.noise.scale.prec @ transition_params.map.w @ q_backwd_state.noise.scale.cov @ transition_params.map.w.T) \
-                + constant_terms_from_log_gaussian(transition_params.noise.scale.cov.shape[0], transition_params.noise.scale.log_det)
-    return result 
-
-def expect_quadratic_term_under_backward(quad_form:QuadTerm, backwd_state):
-    # the result is still a quadratic forms with new parameters, following the formula for expected values of quadratic forms  
-
-    W = backwd_state.map.w.T @ quad_form.W @ backwd_state.map.w
-    v = backwd_state.map.w.T @ (quad_form.v + (quad_form.W + quad_form.W.T) @ backwd_state.map.b)
-    c = quad_form.c + jnp.trace(quad_form.W @ backwd_state.noise.scale.cov) \
-                    + backwd_state.map.b.T @ quad_form.W @ backwd_state.map.b  \
-                    + quad_form.v.T @ backwd_state.map.b 
-
-    return QuadTerm(W=W, v=v, c=c)
-
-def expect_quadratic_term_under_gaussian(quad_form:QuadTerm, gaussian_params):
-    return jnp.trace(quad_form.W @ gaussian_params.scale.cov) + quad_form.evaluate(gaussian_params.mean)
-
-def quadratic_term_from_log_gaussian(gaussian_params):
-
-    result = - 0.5 * QuadTerm(W=gaussian_params.scale.prec, 
-                    v=-(gaussian_params.scale.prec + gaussian_params.scale.prec.T) @ gaussian_params.mean, 
-                    c=gaussian_params.mean.T @ gaussian_params.scale.prec @ gaussian_params.mean)
-
-    result.c += constant_terms_from_log_gaussian(gaussian_params.mean.shape[0], gaussian_params.scale.log_det)
-
-    return result
-
-def get_tractable_emission_term(obs, emission_params):
-    A = emission_params.map.w
-    b = emission_params.map.b - obs
-    Omega = emission_params.noise.scale.prec
-    emission_term = -0.5*QuadTerm.from_A_b_Omega(A, b, Omega)
-    emission_term.c += constant_terms_from_log_gaussian(emission_params.noise.scale.cov.shape[0], emission_params.noise.scale.log_det)
-    return emission_term
-
-def get_tractable_emission_term_from_natparams(emission_natparams):
-    eta1, eta2 = emission_natparams
-    const = -0.25 * eta1.T @ jnp.linalg.solve(eta2, eta1) - 0.5 * jnp.log(jnp.linalg.det(-2*eta2)) - eta1.shape[0] * jnp.log(jnp.pi)
-    return QuadTerm(W=eta2, 
-                    v=eta1, 
-                    c=const)
-
 
 class GeneralBackwardELBO:
 
@@ -109,40 +29,40 @@ class GeneralBackwardELBO:
 
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
-        filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
-        backwd_state_seq = self.q.compute_kernel_state_seq(filt_state_seq, phi)
+        filt_params_seq = self.q.compute_filt_params_seq(obs_seq, phi)
+        backwd_params_seq = self.q.compute_backwd_params_seq(filt_params_seq, phi)
 
-        def _monte_carlo_sample(key, obs_seq, last_filt_state:FiltState, backwd_state_seq):
+        def _monte_carlo_sample(key, obs_seq, last_filt_params:FiltState, backwd_params_seq):
 
             keys = jax.random.split(key, obs_seq.shape[0])
-            last_sample = self.q.filt_dist.sample(keys[-1], last_filt_state.out)
+            last_sample = self.q.filt_dist.sample(keys[-1], last_filt_params.out)
 
-            last_term = -self.q.filt_dist.logpdf(last_sample, last_filt_state.out) \
+            last_term = -self.q.filt_dist.logpdf(last_sample, last_filt_params.out) \
                     + self.p.emission_kernel.logpdf(obs_seq[-1], last_sample, theta.emission)
 
             def _sample_step(next_sample, x):
                 
-                key, obs, backwd_state = x
+                key, obs, backwd_params = x
 
-                sample = self.q.backwd_kernel.sample(key, next_sample, backwd_state)
+                sample = self.q.backwd_kernel.sample(key, next_sample, backwd_params)
 
                 emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
 
                 transition_term_p = self.p.transition_kernel.logpdf(next_sample, sample, theta.transition)
 
-                backwd_term_q = -self.q.backwd_kernel.logpdf(sample, next_sample, backwd_state)
+                backwd_term_q = -self.q.backwd_kernel.logpdf(sample, next_sample, backwd_params)
 
                 return sample, backwd_term_q + emission_term_p + transition_term_p
             
-            init_sample, terms = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], obs_seq[:-1], backwd_state_seq), reverse=True)
+            init_sample, terms = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], obs_seq[:-1], backwd_params_seq), reverse=True)
 
             return self.p.prior_dist.logpdf(init_sample, theta.prior) + jnp.sum(terms) + last_term
 
         parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
 
         keys = jax.random.split(key, self.num_samples)
-        last_filt_state =  tree_get_idx(-1, filt_state_seq)
-        mc_samples = parallel_sampler(keys, obs_seq, last_filt_state, backwd_state_seq)
+        last_filt_params =  tree_get_idx(-1, filt_params_seq)
+        mc_samples = parallel_sampler(keys, obs_seq, last_filt_params, backwd_params_seq)
         return jnp.mean(mc_samples)
 
 class OnlineGeneralBackwardELBO:
@@ -156,20 +76,20 @@ class OnlineGeneralBackwardELBO:
 
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
-        filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
-        backwd_state_seq = self.q.compute_kernel_state_seq(filt_state_seq, phi)
+        filt_params_seq = self.q.compute_filt_params_seq(obs_seq, phi)
+        backwd_params_seq = self.q.compute_backwd_params_seq(filt_params_seq, phi)
 
-        def sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq):
+        def sample_online(key, obs_seq, q_filt_params_seq, q_backwd_params_seq):
 
-            def samples_and_log_probs(key, q_filt_state):
-                samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_state.out)
-                log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
+            def samples_and_log_probs(key, q_filt_params):
+                samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_params.out)
+                log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_params.out)
                 return samples, log_probs
 
-            def additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_state):
+            def additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_params):
                 return self.p.transition_kernel.logpdf(new_sample, sample, theta.transition) \
                         + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission) \
-                        - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) \
+                        - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_params) \
                         + log_prob \
                         - new_log_prob
 
@@ -180,18 +100,18 @@ class OnlineGeneralBackwardELBO:
             def update_tau(carry, x):
 
                 tau, samples, log_probs = carry 
-                key, obs, q_filt_state, q_backwd_state = x 
-                new_samples, new_log_probs = samples_and_log_probs(key, q_filt_state)
+                key, obs, q_filt_params, q_backwd_params = x 
+                new_samples, new_log_probs = samples_and_log_probs(key, q_filt_params)
 
                 def update_component_tau(new_sample, new_log_prob):
                     def sum_component(sample, log_prob, tau_component):
-                        log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) - log_prob
+                        log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_params) - log_prob
                         component = tau_component + additive_functional(obs, 
                                                                     log_prob, 
                                                                     sample, 
                                                                     new_log_prob, 
                                                                     new_sample, 
-                                                                    q_backwd_state)
+                                                                    q_backwd_params)
                         return log_weight, component
                     log_weights, components = vmap(sum_component)(samples, log_probs, tau)
 
@@ -204,7 +124,7 @@ class OnlineGeneralBackwardELBO:
 
             key, subkey = random.split(key, 2)
 
-            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
+            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_params_seq))
 
             tau = vmap(init_functional)(samples)                            
 
@@ -212,14 +132,14 @@ class OnlineGeneralBackwardELBO:
                                                                 init=(tau, samples, log_probs), 
                                                                 xs=(random.split(key, len(obs_seq)-1), 
                                                                     obs_seq[1:],
-                                                                    tree_dropfirst(q_filt_state_seq),
-                                                                    q_backwd_state_seq))
+                                                                    tree_dropfirst(q_filt_params_seq),
+                                                                    q_backwd_params_seq))
 
             return tau, tree_prepend(samples, samples_seq), weights_seq
 
-        tau, samples_seq, weights_seq = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
+        tau, samples_seq, weights_seq = sample_online(key, obs_seq, filt_params_seq, backwd_params_seq)
 
-        return jnp.mean(tau), (samples_seq, weights_seq, filt_state_seq, backwd_state_seq)
+        return jnp.mean(tau), (samples_seq, weights_seq, filt_params_seq, backwd_params_seq)
 
 class OnlineGeneralBackwardELBOV2:
 
@@ -234,17 +154,17 @@ class OnlineGeneralBackwardELBOV2:
 
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
-        q_filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
-        q_backwd_state_seq = self.q.compute_kernel_state_seq(q_filt_state_seq, phi)
+        q_filt_params_seq = self.q.compute_filt_params_seq(obs_seq, phi)
+        q_backwd_params_seq = self.q.compute_backwd_params_seq(q_filt_params_seq, phi)
 
         backwd_sampler = vmap(self.q.backwd_kernel.sample, in_axes=(0,None,None))
 
-        def q_filt_log_probs(samples, q_filt_state):
-            return vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
+        def q_filt_log_probs(samples, q_filt_params):
+            return vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_params.out)
 
-        def q_filt_samples_and_log_probs(key, q_filt_state):
-            samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_state.out)
-            log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
+        def q_filt_samples_and_log_probs(key, q_filt_params):
+            samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_params.out)
+            log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_params.out)
             return samples, log_probs
 
         def additive_functional(q_t_x_t, x_t, q_tp1_x_tp1, x_tp1, y_tp1, q_t_tp1_params):
@@ -345,13 +265,13 @@ class OnlineGeneralBackwardELBOV2:
                         init=init(subkey, 
                                 obs_seq[0], 
                                 obs_seq[1], 
-                                tree_get_idx(0, q_filt_state_seq), 
-                                tree_get_idx(1, q_filt_state_seq),
-                                tree_get_idx(0, q_backwd_state_seq)),
+                                tree_get_idx(0, q_filt_params_seq), 
+                                tree_get_idx(1, q_filt_params_seq),
+                                tree_get_idx(0, q_backwd_params_seq)),
                         xs=(random.split(key, len(obs_seq)-2), 
                             obs_seq[2:],
-                            tree_get_slice(2, None, q_filt_state_seq),
-                            tree_get_slice(1, None, q_backwd_state_seq)))[0][0]
+                            tree_get_slice(2, None, q_filt_params_seq),
+                            tree_get_slice(1, None, q_backwd_params_seq)))[0][0]
 
 
         return jnp.mean(tau_T), (0,0,0,0)
@@ -367,20 +287,20 @@ class OnlineGeneralBackwardELBOV3:
 
     def __call__(self, key, obs_seq, theta:HMMParams, phi):
 
-        filt_state_seq = self.q.compute_filt_state_seq(obs_seq, phi)
-        backwd_state_seq = self.q.compute_kernel_state_seq(filt_state_seq, phi)
+        filt_params_seq = self.q.compute_filt_params_seq(obs_seq, phi)
+        backwd_params_seq = self.q.compute_backwd_params_seq(filt_params_seq, phi)
 
-        def sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq):
+        def sample_online(key, obs_seq, q_filt_params_seq, q_backwd_params_seq):
 
-            def samples_and_log_probs(key, q_filt_state):
-                samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_state.out)
-                log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
+            def samples_and_log_probs(key, q_filt_params):
+                samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_params.out)
+                log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_params.out)
                 return samples, log_probs
 
-            def additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_state):
+            def additive_functional(obs, log_prob, sample, new_log_prob, new_sample, q_backwd_params):
                 return self.p.transition_kernel.logpdf(new_sample, sample, theta.transition) \
                         + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission) \
-                        - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) \
+                        - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_params) \
                         + log_prob \
                         - new_log_prob
 
@@ -391,18 +311,18 @@ class OnlineGeneralBackwardELBOV3:
             def update_tau(carry, x):
 
                 tau, samples, log_probs = carry 
-                key, obs, q_filt_state, q_backwd_state = x 
-                new_samples, new_log_probs = samples_and_log_probs(key, q_filt_state)
+                key, obs, q_filt_params, q_backwd_params = x 
+                new_samples, new_log_probs = samples_and_log_probs(key, q_filt_params)
 
                 def update_component_tau(new_sample, new_log_prob):
                     def sum_component(sample, log_prob, tau_component):
-                        log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) - log_prob
+                        log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_params) - log_prob
                         component = tau_component + additive_functional(obs, 
                                                                     log_prob, 
                                                                     sample, 
                                                                     new_log_prob, 
                                                                     new_sample, 
-                                                                    q_backwd_state)
+                                                                    q_backwd_params)
                         return log_weight, component
                     log_weights, components = vmap(sum_component)(samples, log_probs, tau)
 
@@ -415,7 +335,7 @@ class OnlineGeneralBackwardELBOV3:
 
             key, subkey = random.split(key, 2)
 
-            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
+            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_params_seq))
 
             tau = vmap(init_functional)(samples)                            
 
@@ -423,14 +343,14 @@ class OnlineGeneralBackwardELBOV3:
                                                                 init=(tau, samples, log_probs), 
                                                                 xs=(random.split(key, len(obs_seq)-1), 
                                                                     obs_seq[1:],
-                                                                    tree_dropfirst(q_filt_state_seq),
-                                                                    q_backwd_state_seq))
+                                                                    tree_dropfirst(q_filt_params_seq),
+                                                                    q_backwd_params_seq))
 
             return tau, tree_prepend(samples, samples_seq), weights_seq
 
-        tau, samples_seq, weights_seq = sample_online(key, obs_seq, filt_state_seq, backwd_state_seq)
+        tau, samples_seq, weights_seq = sample_online(key, obs_seq, filt_params_seq, backwd_params_seq)
 
-        return jnp.mean(tau), (samples_seq, weights_seq, filt_state_seq, backwd_state_seq)
+        return jnp.mean(tau), (samples_seq, weights_seq, filt_params_seq, backwd_params_seq)
 
 class OnlineBackwardLinearELBO:
 
@@ -446,56 +366,56 @@ class OnlineBackwardLinearELBO:
         
         kl_term = quadratic_term_from_log_gaussian(theta.prior) #+ get_tractable_emission_term(obs_seq[0], theta.emission)
 
-        q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
+        q_filt_params = self.q.init_filt_params(obs_seq[0], phi)
 
         def V_step(carry, x):
 
-            q_filt_state, kl_term = carry
+            q_filt_params, kl_term = carry
             obs = x
 
-            q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
+            q_backwd_params = self.q.new_backwd_params(q_filt_params, phi)
 
-            kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
-                    + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
+            kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_params) \
+                    + transition_term_integrated_under_backward(q_backwd_params, theta.transition)
 
-            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.noise.scale.log_det) +  0.5 * self.p.state_dim
-            q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
+            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_params.noise.scale.log_det) +  0.5 * self.p.state_dim
+            q_filt_params = self.q.new_filt_params(obs, q_filt_params, phi)
 
 
-            return (q_filt_state, kl_term), (q_filt_state, q_backwd_state)
+            return (q_filt_params, kl_term), (q_filt_params, q_backwd_params)
     
-        (q_last_filt_state, kl_term), (q_filt_state_seq, q_backwd_state_seq) = lax.scan(V_step, 
-                                                init=(q_filt_state, kl_term), 
+        (q_last_filt_params, kl_term), (q_filt_params_seq, q_backwd_params_seq) = lax.scan(V_step, 
+                                                init=(q_filt_params, kl_term), 
                                                 xs=obs_seq[1:])
 
-        q_filt_state_seq = tree_prepend(q_filt_state, q_filt_state_seq)
+        q_filt_params_seq = tree_prepend(q_filt_params, q_filt_params_seq)
 
 
-        kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state.out) \
-                - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
+        kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_params.out) \
+                - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_params.out.scale.log_det) \
                 + 0.5*self.p.state_dim
 
-        def sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq):
+        def sample_online(key, obs_seq, q_filt_params_seq, q_backwd_params_seq):
 
-            def samples_and_log_probs(key, q_filt_state):
-                samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_state.out)
-                log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_state.out)
+            def samples_and_log_probs(key, q_filt_params):
+                samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_params.out)
+                log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_params.out)
                 return samples, log_probs
 
             key, subkey = random.split(key, 2)
 
-            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_state_seq))
+            samples, log_probs = samples_and_log_probs(subkey, tree_get_idx(0, q_filt_params_seq))
             tau = vmap(self.p.emission_kernel.logpdf, in_axes=(None, 0, None))(obs_seq[0], samples, theta.emission)
             # tau = jnp.zeros(self.num_samples)
             def update_tau(carry, x):
 
                 tau, samples, log_probs = carry 
-                key, obs, q_filt_state, q_backwd_state = x 
-                new_samples, new_log_probs = samples_and_log_probs(key, q_filt_state)
+                key, obs, q_filt_params, q_backwd_params = x 
+                new_samples, new_log_probs = samples_and_log_probs(key, q_filt_params)
 
                 def update_component_tau(new_sample):
                     def sum_component(sample, log_prob, tau_component):
-                        log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_state) - log_prob
+                        log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_params) - log_prob
                         component = tau_component + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission)
                         return log_weight, component
                     log_weights, components = vmap(sum_component)(samples, log_probs, tau)
@@ -510,10 +430,10 @@ class OnlineBackwardLinearELBO:
                             init=(tau, samples, log_probs), 
                             xs=(random.split(key, len(obs_seq)-1), 
                                 obs_seq[1:],
-                                tree_dropfirst(q_filt_state_seq),
-                                q_backwd_state_seq))
+                                tree_dropfirst(q_filt_params_seq),
+                                q_backwd_params_seq))
 
-        (tau, _, _), log_weights = sample_online(key, obs_seq, q_filt_state_seq, q_backwd_state_seq)
+        (tau, _, _), log_weights = sample_online(key, obs_seq, q_filt_params_seq, q_backwd_params_seq)
 
         return kl_term + jnp.mean(tau), log_weights
 
@@ -530,35 +450,35 @@ class BackwardLinearELBO:
         
         kl_term = quadratic_term_from_log_gaussian(theta.prior) #+ get_tractable_emission_term(obs_seq[0], theta.emission)
 
-        q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
+        q_filt_params = self.q.init_filt_params(obs_seq[0], phi)
 
         def V_step(carry, x):
 
-            q_filt_state, kl_term = carry
+            q_filt_params, kl_term = carry
             obs = x
 
-            q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
+            q_backwd_params = self.q.new_backwd_params(q_filt_params, phi)
 
-            kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
-                    + transition_term_integrated_under_backward(q_backwd_state, theta.transition)
+            kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_params) \
+                    + transition_term_integrated_under_backward(q_backwd_params, theta.transition)
 
-            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.noise.scale.log_det) +  0.5 * self.p.state_dim
-            q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
+            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_params.noise.scale.log_det) +  0.5 * self.p.state_dim
+            q_filt_params = self.q.new_filt_params(obs, q_filt_params, phi)
 
 
-            return (q_filt_state, kl_term), q_backwd_state
+            return (q_filt_params, kl_term), q_backwd_params
     
-        (q_last_filt_state, kl_term), q_backwd_state_seq = lax.scan(V_step, 
-                                                init=(q_filt_state, kl_term), 
+        (q_last_filt_params, kl_term), q_backwd_params_seq = lax.scan(V_step, 
+                                                init=(q_filt_params, kl_term), 
                                                 xs=obs_seq[1:])
 
 
-        kl_term =  expect_quadratic_term_under_gaussian(kl_term, q_last_filt_state.out) \
-                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
+        kl_term =  expect_quadratic_term_under_gaussian(kl_term, q_last_filt_params.out) \
+                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_params.out.scale.log_det) \
                     + 0.5*self.p.state_dim
 
 
-        marginals = self.q.compute_marginals(q_last_filt_state, q_backwd_state_seq)
+        marginals = self.q.compute_marginals(q_last_filt_params, q_backwd_params_seq)
 
         def sample_one_path(key, obs_seq, marginal_params_seq):
 
@@ -590,30 +510,30 @@ class LinearGaussianELBO:
         result = quadratic_term_from_log_gaussian(theta.prior) + get_tractable_emission_term(obs_seq[0], theta.emission)
 
 
-        q_filt_state = self.q.init_filt_state(obs_seq[0], phi)
+        q_filt_params = self.q.init_filt_params(obs_seq[0], phi)
 
         def V_step(state, obs):
 
-            q_filt_state, kl_term = state
-            q_backwd_state = self.q.new_backwd_state(q_filt_state, phi)
+            q_filt_params, kl_term = state
+            q_backwd_params = self.q.new_backwd_params(q_filt_params, phi)
 
-            kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_state) \
-                    + transition_term_integrated_under_backward(q_backwd_state, theta.transition) \
+            kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_params) \
+                    + transition_term_integrated_under_backward(q_backwd_params, theta.transition) \
                     + get_tractable_emission_term(obs, theta.emission)
 
 
-            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_state.noise.scale.log_det) +  0.5 * self.p.state_dim
-            q_filt_state = self.q.new_filt_state(obs, q_filt_state, phi)
+            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_params.noise.scale.log_det) +  0.5 * self.p.state_dim
+            q_filt_params = self.q.new_filt_params(obs, q_filt_params, phi)
 
-            return (q_filt_state, kl_term), q_backwd_state
+            return (q_filt_params, kl_term), q_backwd_params
     
-        (q_last_filt_state, result) = lax.scan(V_step, 
-                                                init=(q_filt_state, result), 
+        (q_last_filt_params, result) = lax.scan(V_step, 
+                                                init=(q_filt_params, result), 
                                                 xs=obs_seq[1:])[0]
 
 
-        return expect_quadratic_term_under_gaussian(result, q_last_filt_state.out) \
-                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_state.out.scale.log_det) \
+        return expect_quadratic_term_under_gaussian(result, q_last_filt_params.out) \
+                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_params.out.scale.log_det) \
                     + 0.5*self.p.state_dim
 
 
@@ -639,7 +559,8 @@ class SVITrainer:
                 num_samples=1, 
                 force_full_mc=False,
                 frozen_params=None,
-                online=False):
+                online=False,
+                sweep_sequence=False):
 
         self.num_epochs = num_epochs
         self.batch_size = batch_size
@@ -660,7 +581,7 @@ class SVITrainer:
         zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
 
         self.optimizer = optax.chain(zero_grads_optimizer, base_optimizer)
-        self.sweep_sequence = False 
+        self.sweep_sequence = sweep_sequence
         # format_params = lambda params: self.q.format_params(params)
 
 
@@ -704,34 +625,32 @@ class SVITrainer:
         subkeys = self.get_montecarlo_keys(key_montecarlo, num_seqs, self.num_epochs)
 
         if self.sweep_sequence: 
-            def batch_step(carry, x):
+            # timesteps = jnp.arange(0, seq_length)
+            def step(carry, x):
 
-                def step(params, opt_state, batch, keys):
-                    # neg_elbo_values = jax.vmap(self.loss, in_axes=(0,0,None))(keys, batch, params)
-                    def timestep_step(carry, x):
-                        params, opt_state, batch, keys = carry 
-                        timestep = x
-                        neg_elbo_values, grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2), in_axes=(0,0,None))(keys, batch, params)
+                def batch_step(params, opt_state, batch, keys):
+                    avg_elbo_batch_timesteps = jnp.empty((seq_length-1,))
+                    for i, timestep in enumerate(range(2,seq_length+1)):
+                        batch_up_to_timestep = jax.lax.dynamic_slice_in_dim(batch, 0, timestep, axis=1)
+                        neg_elbo_values, grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2), in_axes=(0,0,None))(keys, batch_up_to_timestep, params)
                         avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
-                        
                         updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
                         params = optax.apply_updates(params, updates)
-                        return (params, opt_state, batch, keys), -jnp.mean(neg_elbo_values / seq_length)
+                        avg_elbo_batch_timesteps = avg_elbo_batch_timesteps.at[i].set(-jnp.mean(neg_elbo_values / batch_up_to_timestep.shape[1]))
 
-                    params, opt_state, avg_elbo_batch_timesteps = lax.scan(timestep_step)
+                    return params, opt_state, jnp.mean(avg_elbo_batch_timesteps)
+
                 data, params, opt_state, subkeys_epoch = carry
                 batch_start = x
                 batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
                 batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
 
-                params, opt_state, avg_elbo_batch = step(params, opt_state, batch_obs_seq, batch_keys)
+                params, opt_state, avg_elbo_batch = batch_step(params, opt_state, batch_obs_seq, batch_keys)
 
                 return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
         else: 
-            def batch_step(carry, x):
-
-                def step(params, opt_state, batch, keys):
-                    # neg_elbo_values = jax.vmap(self.loss, in_axes=(0,0,None))(keys, batch, params)
+            def step(carry, x):
+                def batch_step(params, opt_state, batch, keys):
 
                     neg_elbo_values, grads = jax.vmap(jax.value_and_grad(self.loss, argnums=2), in_axes=(0,0,None))(keys, batch, params)
                     avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
@@ -746,7 +665,7 @@ class SVITrainer:
                 batch_start = x
                 batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
                 batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
-                params, opt_state, avg_elbo_batch = step(params, opt_state, batch_obs_seq, batch_keys)
+                params, opt_state, avg_elbo_batch = batch_step(params, opt_state, batch_obs_seq, batch_keys)
                 return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
 
 
@@ -763,10 +682,9 @@ class SVITrainer:
             data = jax.random.permutation(subkey_batcher, data)
         
 
-            # print(self.loss(key_batcher, data[0], params))
-            (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(batch_step,  
-                                                                init=(data, params, opt_state, subkeys_epoch), 
-                                                                xs = batch_start_indices)
+            (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(f=step,  
+                                                                        init=(data, params, opt_state, subkeys_epoch), 
+                                                                        xs = batch_start_indices)
 
 
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
