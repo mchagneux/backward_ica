@@ -20,7 +20,7 @@ import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_10_10__11_49_01'
+exp_dir = 'experiments/p_chaotic_rnn/2022_10_10__16_40_43'
 
 method_names = ['neural_backward_linear', 
                 'external_campbell']

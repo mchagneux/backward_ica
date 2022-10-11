@@ -88,10 +88,12 @@ if __name__ == '__main__':
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--args_path', type=str, default='')
     parser.add_argument('--dims', type=int, nargs='+', default=(5,5))
-    parser.add_argument('--batch_size', type=int, default=100)
+    parser.add_argument('--batch_size', type=int, default=20)
     parser.add_argument('--learning_rate', type=float, default=0.01)
     parser.add_argument('--num_epochs', type=int, default=5000)
     parser.add_argument('--num_samples', type=int, default=1)
+    parser.add_argument('--num_seqs', type=int, default=1000)
+    parser.add_argument('--seq_length',type=int, default=500)
     parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
 
     args = parser.parse_args()
