@@ -15,7 +15,7 @@ import pandas as pd
 from pandas.plotting import table
 import math
 import pickle 
-from backward_ica.svi import BackwardLinearELBO
+from backward_ica.elbos import BackwardLinearELBO
 import pickle
 
 utils.enable_x64(True)

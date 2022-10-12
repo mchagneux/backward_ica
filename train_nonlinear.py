@@ -1,10 +1,10 @@
 import jax 
 import jax.numpy as jnp
-import math
 
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
-from backward_ica.svi import SVITrainer
+from backward_ica.trainers import SVITrainer
+
 utils.enable_x64(True)
 # jax.config.update('jax_disable_jit', True)
 
@@ -58,7 +58,7 @@ def main(args, save_dir):
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
                         online=args.online,
-                        sweep_sequence=True)
+                        sweep_sequence=False)
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)

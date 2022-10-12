@@ -15,7 +15,7 @@ import pandas as pd
 from pandas.plotting import table
 import math
 import pickle 
-from backward_ica.svi import BackwardLinearELBO
+from backward_ica.elbos import BackwardLinearELBO
 
 
 exp_dir = 'experiments/p_linear/2022_08_02__15_26_01'

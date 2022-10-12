@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax import config
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
-from backward_ica.svi import SVITrainer, check_linear_gaussian_elbo
+from backward_ica.trainers import SVITrainer, check_linear_gaussian_elbo
 config.update('jax_enable_x64',True)
 
 def main(args, save_dir):

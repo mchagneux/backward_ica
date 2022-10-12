@@ -65,17 +65,11 @@ def get_variational_model(args, p=None, key_for_random_params=None):
 
     elif 'neural_backward_linear' in args.q_version:
         if (p is not None) and (p.transition_kernel.map_type == 'linear'):
-            transition_kernel = p.transition_kernel
+            q = hmm.NeuralLinearBackwardSmoother.with_transition_from_p(p, args.update_layers)
+
         else:
-            transition_kernel = hmm.Kernel.linear_gaussian(args.transition_matrix_conditionning, 
-                                                        True, 
-                                                        range_params=args.range_transition_map_params)(args.state_dim, args.obs_dim)
-
-        q = hmm.NeuralLinearBackwardSmoother(transition_kernel=transition_kernel,
-                                        obs_dim=args.obs_dim, 
-                                        update_layers=args.update_layers,
-                                        explicit_proposal=args.explicit_proposal)
-
+            q = hmm.NeuralLinearBackwardSmoother.with_linear_gaussian_transition_kernel(p, args.update_layers)
+        
     elif args.q_version == 'neural_backward':
         q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
                                         obs_dim=args.obs_dim, 
@@ -418,6 +412,14 @@ def inv_of_chol(mat):
 
 def inv_of_chol_from_chol(mat_chol):
     return solve_triangular(a=mat_chol, b=jnp.eye(mat_chol.shape[0]), lower=True)
+
+
+## normalizers 
+
+def exp_and_normalize(x):
+
+    x = jnp.exp(x - x.max())
+    return x / x.sum()
 
 
 
@@ -791,26 +793,6 @@ class HMMParams:
 
     def tree_flatten(self):
         return ((self.prior, self.transition, self.emission), None)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-
-
-@register_pytree_node_class
-@dataclass(init=True)
-class NeuralLinearBackwardSmootherParams:
-
-    prior: GaussianParams 
-    backwd:Any
-    filt_update:Any
-
-    def compute_covs(self):
-        self.prior.scale.cov
-        self.backwd.noise.scale.cov
-
-    def tree_flatten(self):
-        return ((self.prior, self.backwd, self.filt_update), None)
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):

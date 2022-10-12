@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 import backward_ica.smc as smc
-from backward_ica.svi import GeneralBackwardELBO, LinearGaussianELBO, OnlineGeneralBackwardELBO, OnlineGeneralBackwardELBOSpecialInit, OnlineGeneralBackwardELBOV2
+from backward_ica.elbos import GeneralBackwardELBO, LinearGaussianELBO, OnlineGeneralBackwardELBO, OnlineGeneralBackwardELBOSpecialInit, OnlineGeneralBackwardELBOV2
 import seaborn as sns
 import os
 import pandas as pd

@@ -1,5 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from random import gauss
+from turtle import back
 from jax import numpy as jnp, random, value_and_grad, tree_util, grad, config
 from jax.tree_util import tree_leaves
 from backward_ica.kalman import Kalman
@@ -98,23 +99,21 @@ class Maps:
 class NeuralInference: 
 
     @staticmethod
-    def gru_update(obs, prev_state, layers):
+    def gru_net(obs, prev_state, layers):
 
         gru = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in (*layers,)])
 
-        out, new_state = gru(obs, prev_state)
-
-        return out, new_state
+        return gru(obs, prev_state.hidden)
 
     @staticmethod
-    def gaussian_filt_params_update(rnn_state, d):
+    def gaussian_filt_net(state, d):
 
         out_dim = d + (d * (d + 1)) // 2
         net = hk.Linear(out_dim, 
             w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
             b_init=hk.initializers.RandomNormal(),)
     
-        out = net(rnn_state.out)
+        out = net(state.out)
         
         return GaussianParams.from_vec(out, d, diag=False)
 
@@ -158,7 +157,7 @@ class NeuralInference:
         return filt_params
 
     @staticmethod
-    def linear_gaussian_backwd_neural_update(rnn_state, d):
+    def linear_gaussian_backwd_net(state, d):
 
         A_back_dim = d * d 
         a_back_dim = d
@@ -168,7 +167,7 @@ class NeuralInference:
                     w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                     b_init=hk.initializers.RandomNormal(),)
 
-        out = net(rnn_state.out)
+        out = net(state.out)
 
         A_back = out[:A_back_dim].reshape((d,d))
         a_back = out[A_back_dim:A_back_dim+a_back_dim]
@@ -176,6 +175,8 @@ class NeuralInference:
 
         return KernelParams(map=LinearMapParams(w=A_back, b=a_back), 
                             noise=GaussianNoiseParams.from_vec(Sigma_back_vec, d))
+
+
 
 
 class Gaussian: 
@@ -283,7 +284,7 @@ class Kernel:
                         'map_info' : {'conditionning': matrix_conditonning, 
                                     'bias': bias,
                                     'range_params':range_params}}
-        return lambda state_dim, obs_dim: Kernel(state_dim, obs_dim, transition_kernel_def)
+        return lambda in_dim, out_dim: Kernel(in_dim, out_dim, transition_kernel_def)
                                                                  
     def __init__(self,
                 in_dim, 
@@ -377,6 +378,8 @@ class Kernel:
     def format_params(self, params):
         return KernelParams(self._format_map_params(params.map), 
                             self.noise_dist.format_noise_params(params.noise))
+
+
 
 class HMM: 
 
@@ -480,8 +483,6 @@ class HMM:
                 if (type(v) == str): new_params.transition.map['linear']['w'] = jnp.load(v).astype(jnp.float64)
         return new_params
 
-
-
     
 class BackwardSmoother(metaclass=ABCMeta):
 
@@ -546,7 +547,6 @@ class BackwardSmoother(metaclass=ABCMeta):
     def compute_backwd_params_seq(self, state_seq, formatted_params):
         return vmap(self.backwd_params_from_state, in_axes=(0,None))(tree_droplast(state_seq), formatted_params)
 
-
 class LinearBackwardSmoother(BackwardSmoother):
 
     @staticmethod
@@ -565,6 +565,7 @@ class LinearBackwardSmoother(BackwardSmoother):
 
         return KernelParams(LinearMapParams(A_back, a_back), GaussianNoiseParams(Scale(cov=cov_back)))
 
+    @staticmethod 
     def __init__(self, state_dim):
 
         backwd_kernel_def = {'map_type':'linear',
@@ -572,7 +573,7 @@ class LinearBackwardSmoother(BackwardSmoother):
                                         'bias': True,
                                         'range_params':(0,1)}}
 
-        super().__init__(filt_dist=Gaussian, kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
+        super().__init__(filt_dist=Gaussian, backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
         
     def compute_marginals(self, last_filt_params, backwd_params_seq):
         last_filt_params_mean, last_filt_params_cov = last_filt_params.mean, last_filt_params.scale.cov
@@ -691,7 +692,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
     def init_state(self, obs, params):
 
-        mean, cov =  Kalman.init(obs, params.prior, params.emission)
+        mean, cov = Kalman.init(obs, params.prior, params.emission)
 
         return State(out=(mean, cov), hidden=None)
     
@@ -708,7 +709,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         return self.linear_gaussian_backwd_params_from_transition_and_filt(state.out[0], state.out[1], params)
 
     def filt_params_from_state(self, state, params):
-        return GaussianParams(mean=state.out[0], cov=state.out[1])
+        return GaussianParams(mean=state.out[0], scale=Scale(cov=state.out[1]))
 
     def likelihood_seq(self, obs_seq, params):
 
@@ -1001,45 +1002,104 @@ class NonLinearHMM(HMM):
         
         return params, avg_logls
 
+
+@register_pytree_node_class
+@dataclass(init=True)
+class NeuralLinearBackwardSmootherParams:
+
+    prior:Any 
+    state:Any 
+    backwd:Any
+    filt:Any
+
+    def compute_covs(self):
+        self.prior.scale.cov
+        self.backwd.noise.scale.cov
+
+    def tree_flatten(self):
+        return ((self.prior, self.state, self.backwd, self.filt), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
 class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
+    @staticmethod
+    def with_transition_from_p(p:HMM, layers=(8,8)):
+        return NeuralLinearBackwardSmoother(p.state_dim, p.obs_dim, p.transition_kernel, layers)
+    
+    @staticmethod
+    def with_linear_gaussian_transition_kernel(p:HMM, layers):
+
+        transition_kernel = hmm.Kernel.linear_gaussian(matrix_conditonning='init_invertible', 
+                                                        bias=True, 
+                                                        range_params=(-1,1))(p.state_dim, p.state_dim)
+                                                        
+        return NeuralLinearBackwardSmoother(p.state_dim, p.obs_dim, transition_kernel, layers)
+
+
     def __init__(self, 
-                transition_kernel, 
                 state_dim,
                 obs_dim, 
-                update_layers):
+                transition_kernel=None,
+                update_layers=(8,8)):
         
 
         super().__init__(state_dim, Gaussian)
 
         self.state_dim = state_dim
         self.obs_dim = obs_dim
+
         self.transition_kernel:Kernel = transition_kernel
         self.update_layers = update_layers
-        d = self.state_dim 
-        self.filt_params_shape = d + (d *(d+1)) // 2
+        d = self.state_dim
         
-        if self.transition_kernel is not None:
-            pass
-            
-                                
+        self._state_net = hk.without_apply_rng(hk.transform(partial(NeuralInference.gru_net, 
+                                                                    layers=self.update_layers)))
+        self._filt_net = hk.without_apply_rng(hk.transform(partial(NeuralInference.gaussian_filt_net, d=d)))
+
+
+        if self.transition_kernel is None:
+            self._backwd_net = hk.without_apply_rng(hk.transform(partial(NeuralInference.linear_gaussian_backwd_net, d=d)))
+            self._backwd_params_from_state = lambda state, params: self._backwd_net.apply(params.backwd, state)
+
+        else: 
+            def backwd_params_from_state(state, params):
+                filt_params = self.filt_params_from_state(state, params)
+                return NeuralLinearBackwardSmoother.linear_gaussian_backwd_params_from_transition_and_filt(filt_params.mean, 
+                                                                                                        filt_params.scale.cov, 
+                                                                                                        params.backwd)
+
+            self._backwd_params_from_state = backwd_params_from_state
+             
     def get_random_params(self, key, params_to_set=None):
 
-        key_prior, key_transition, key_filt = random.split(key, 3)
+        key_prior, key_state, key_filt, key_backwd = random.split(key, 4)
 
         dummy_obs = jnp.empty((self.obs_dim,))
 
-        if self.transition_kernel is not None:
-            transition_params = self.transition_kernel.get_random_params(key_transition)
 
-        hidden_state_sizes = (*self.update_layers, self.filt_params_shape)
-        key_priors = random.split(key_prior, len(hidden_state_sizes))
-        prior_params = tuple([random.normal(key, shape=[size]) for key, size in zip(key_priors, hidden_state_sizes)])
-        filt_update_params = self.filt_update_init_params(key_filt, dummy_obs, prior_params)
+        prior_params = tuple([random.normal(key, shape=[size]) for key, size in zip(random.split(key_prior, len(self.update_layers)), 
+                                                                                    self.update_layers)])
+        dummy_prior_state = State(out=None, hidden=prior_params)
+
+        state_params = self._state_net.init(key_state, dummy_obs, dummy_prior_state)
+
+        dummy_state = self._state_net.apply(state_params, dummy_obs, dummy_prior_state)
+        
+        filt_params = self._filt_net.init(key_filt, dummy_state)
+
+        if self.transition_kernel is None:
+            backwd_params = self.transition_kernel.get_random_params(key_backwd)
+        else: 
+            backwd_params = self._backwd_net.init(key_backwd, dummy_state)
+
 
         params =  NeuralLinearBackwardSmootherParams(prior_params, 
-                                            transition_params, 
-                                            filt_update_params)
+                                                    state_params, 
+                                                    backwd_params,
+                                                    filt_params)
         
         if params_to_set is not None:
             params = self.set_params(params, params_to_set)
@@ -1048,172 +1108,181 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
     def set_params(self, params, args):
         new_params = copy.deepcopy(params)
         for k,v in vars(args).items():         
-            if k == 'default_prior_mean' and self.explicit_proposal:
-                new_params.prior.mean = v * jnp.ones_like(params.prior.mean)
-            elif k == 'default_prior_base_scale' and self.explicit_proposal:
-                new_params.prior.scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
-            elif k == 'default_transition_base_scale': 
-                new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
-            # elif (k == 'default_transition_matrix') and (self.transition_kernel.map_type != 'linear'):
-            #     if (type(v) == str): new_params.transition.map['linear']['w'] = jnp.load(v).astype(jnp.float64)                
-
+            if k == 'default_transition_base_scale': 
+                new_params.backwd.noise.scale = Scale.set_default(params.backwd.noise.scale, v, HMM.parametrization)
+       
         return new_params
 
+    def format_params(self, params):
+
+        if self.transition_kernel is not None: 
+            formatted_backwd_params = self.transition_kernel.format_params(params.backwd)
+
+        return NeuralLinearBackwardSmootherParams(params.prior, 
+                                                params.state, 
+                                                formatted_backwd_params, 
+                                                params.filt)
+
+    def init_state(self, obs, params):
+        out, init_state = self._state_net.apply(params.state, obs, params.prior)
+        return State(out=out, hidden=init_state)
+
+    def new_state(self, obs, prev_state, params):
+        out, new_state = self._state_net.apply(params.state, obs, prev_state.hidden)
+        return State(out=out, hidden=new_state)
+
     def filt_params_from_state(self, state, params):
-        return super().filt_params_from_state(state, params)
+        return self._filt_net.apply(params.filt, state)
 
     def backwd_params_from_state(self, state, params):
-        return super().backwd_params_from_state(state, params)
-
-    def compute_filt_params_seq(self, obs_seq, formatted_params):
-        if self.explicit_proposal:
-            formatted_params.compute_covs()
-        return super().compute_filt_params_seq(obs_seq, formatted_params)
+        return self._backwd_params_from_state(state, params)
 
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))
         print('Num params:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params)))
-        print('-- in prior + predict + backward:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
-        print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt_update)))
+        print('-- in prior:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior,))))
+        print('-- in state:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.state,))))
+        print('-- in backwd:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.backwd,))))
+        print('-- in filt:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt)))
     
-class NeuralBackwardSmoother(BackwardSmoother):
+# class NeuralBackwardSmoother(BackwardSmoother):
 
-    def __init__(self, 
-                state_dim, 
-                obs_dim,
-                update_layers,
-                backwd_layers,
-                filt_dist=Gaussian):
+#     def __init__(self, 
+#                 state_dim, 
+#                 obs_dim,
+#                 update_layers,
+#                 backwd_layers,
+#                 filt_dist=Gaussian):
 
-        self.state_dim = state_dim 
-        self.obs_dim = obs_dim 
+#         self.state_dim = state_dim 
+#         self.obs_dim = obs_dim 
 
-        self.update_layers = update_layers
+#         self.update_layers = update_layers
 
-        self.filt_params_shape = jnp.sum(jnp.array(update_layers))
+#         self.filt_params_shape = jnp.sum(jnp.array(update_layers))
 
-        self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.filt_update_forward, 
-                                                                layers=update_layers, 
-                                                                state_dim=state_dim)))
+#         self.filt_update_init_params, self.filt_update_apply = hk.without_apply_rng(hk.transform(partial(self.filt_update_forward, 
+#                                                                 layers=update_layers, 
+#                                                                 state_dim=state_dim)))
         
 
-        backwd_kernel_map_def = {'map_type':'nonlinear',
-                                'map_info' : {'homogeneous': False, 'varying_params_shape':self.filt_params_shape},
-                                'map': partial(self.backwd_update_forward, layers=backwd_layers)}
+#         backwd_kernel_map_def = {'map_type':'nonlinear',
+#                                 'map_info' : {'homogeneous': False, 'varying_params_shape':self.filt_params_shape},
+#                                 'map': partial(self.backwd_update_forward, layers=backwd_layers)}
                 
 
-        super().__init__(filt_dist, 
-                        Kernel(state_dim, state_dim, backwd_kernel_map_def, Gaussian))
+#         super().__init__(filt_dist, 
+#                         Kernel(state_dim, state_dim, backwd_kernel_map_def, Gaussian))
 
-    def get_random_params(self, key, args=None):
+#     def get_random_params(self, key, args=None):
         
-        key_prior, key_filt, key_back = random.split(key, 3)
+#         key_prior, key_filt, key_back = random.split(key, 3)
     
-        dummy_obs = jnp.ones((self.obs_dim,))
+#         dummy_obs = jnp.ones((self.obs_dim,))
 
 
-        key_priors = random.split(key_prior, len(self.update_layers))
-        prior_params = tuple([random.normal(key, shape=[size]) for key, size in zip(key_priors, self.update_layers)])
-        filt_update_params = self.filt_update_init_params(key_filt, dummy_obs, prior_params)
+#         key_priors = random.split(key_prior, len(self.update_layers))
+#         prior_params = tuple([random.normal(key, shape=[size]) for key, size in zip(key_priors, self.update_layers)])
+#         filt_update_params = self.filt_update_init_params(key_filt, dummy_obs, prior_params)
 
-        backwd_params = self.backwd_kernel.get_random_params(key_back)
+#         backwd_params = self.backwd_kernel.get_random_params(key_back)
 
-        return GeneralBackwardSmootherParams(prior=prior_params,
-                                            filt_update=filt_update_params, 
-                                            backwd=backwd_params)
+#         return GeneralBackwardSmootherParams(prior=prior_params,
+#                                             filt_update=filt_update_params, 
+#                                             backwd=backwd_params)
 
-    def smooth_seq(self, key, obs_seq, params, num_samples, lag=None):
+#     def smooth_seq(self, key, obs_seq, params, num_samples, lag=None):
 
-        formatted_params = self.format_params(params)
+#         formatted_params = self.format_params(params)
 
-        filt_params_seq = self.compute_filt_params_seq(obs_seq, formatted_params)
-        backwd_params_seq = self.compute_backwd_params_seq(filt_params_seq, formatted_params)
+#         filt_params_seq = self.compute_filt_params_seq(obs_seq, formatted_params)
+#         backwd_params_seq = self.compute_backwd_params_seq(filt_params_seq, formatted_params)
 
-        if lag is None:
-            marginals = self.compute_marginals(key, filt_params_seq, backwd_params_seq, num_samples)
-        else: 
-            marginals = self.compute_fixed_lag_marginals(key, filt_params_seq, backwd_params_seq, num_samples, lag)
+#         if lag is None:
+#             marginals = self.compute_marginals(key, filt_params_seq, backwd_params_seq, num_samples)
+#         else: 
+#             marginals = self.compute_fixed_lag_marginals(key, filt_params_seq, backwd_params_seq, num_samples, lag)
 
-        return jnp.mean(marginals, axis=0), jnp.var(marginals, axis=0)
+#         return jnp.mean(marginals, axis=0), jnp.var(marginals, axis=0)
 
-    def format_params(self, params):
-        return params
+#     def format_params(self, params):
+#         return params
 
-    def init_filt_params(self, obs, params):
-        return FiltState(*self.filt_update_apply(params.filt_update, obs, params.prior))
+#     def init_filt_params(self, obs, params):
+#         return FiltState(*self.filt_update_apply(params.filt_update, obs, params.prior))
 
-    def new_filt_params(self, obs, filt_params:FiltState, params):
-        return FiltState(*self.filt_update_apply(params.filt_update, obs, filt_params.hidden))
+#     def new_filt_params(self, obs, filt_params:FiltState, params):
+#         return FiltState(*self.filt_update_apply(params.filt_update, obs, filt_params.hidden))
 
-    def get_init_state(self):
-        return tuple([jnp.zeros(shape=[size]) for size in self.update_layers])
+#     def get_init_state(self):
+#         return tuple([jnp.zeros(shape=[size]) for size in self.update_layers])
 
-    def new_backwd_params(self, filt_params:FiltState, params):
+#     def new_backwd_params(self, filt_params:FiltState, params):
 
-        return BackwardState(params.backwd, jnp.concatenate(filt_params.hidden))
+#         return BackwardState(params.backwd, jnp.concatenate(filt_params.hidden))
 
-    def compute_marginals(self, key, filt_params_seq, backwd_params_seq, num_samples):
+#     def compute_marginals(self, key, filt_params_seq, backwd_params_seq, num_samples):
 
-        def _sample_for_marginals(key, last_filt_params:FiltState, backwd_params_seq):
+#         def _sample_for_marginals(key, last_filt_params:FiltState, backwd_params_seq):
             
-            keys = random.split(key, backwd_params_seq.varying.shape[0]+1)
+#             keys = random.split(key, backwd_params_seq.varying.shape[0]+1)
 
-            last_sample = self.filt_dist.sample(keys[-1], last_filt_params.out)
+#             last_sample = self.filt_dist.sample(keys[-1], last_filt_params.out)
 
-            def _sample_step(next_sample, x):
+#             def _sample_step(next_sample, x):
                 
-                key, backwd_params = x
-                sample = self.backwd_kernel.sample(key, next_sample, backwd_params)
-                return sample, sample
+#                 key, backwd_params = x
+#                 sample = self.backwd_kernel.sample(key, next_sample, backwd_params)
+#                 return sample, sample
             
-            samples = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], backwd_params_seq), reverse=True)[1]
+#             samples = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], backwd_params_seq), reverse=True)[1]
 
-            return tree_append(samples, last_sample)
+#             return tree_append(samples, last_sample)
 
-        parallel_sampler = jit(vmap(_sample_for_marginals, in_axes=(0,None,None)))
+#         parallel_sampler = jit(vmap(_sample_for_marginals, in_axes=(0,None,None)))
 
-        return parallel_sampler(random.split(key, num_samples), tree_get_idx(-1, filt_params_seq), backwd_params_seq)
+#         return parallel_sampler(random.split(key, num_samples), tree_get_idx(-1, filt_params_seq), backwd_params_seq)
 
-    def compute_fixed_lag_marginals(self, key, filt_params_seq, backwd_params_seq, num_samples, lag):
+#     def compute_fixed_lag_marginals(self, key, filt_params_seq, backwd_params_seq, num_samples, lag):
         
-        def _sample_for_marginals(key, filt_params_seq, backwd_params_seq):
+#         def _sample_for_marginals(key, filt_params_seq, backwd_params_seq):
 
-            def _sample_for_marginal(init, x):
+#             def _sample_for_marginal(init, x):
 
-                key, lagged_filt_params, strided_backwd_params_subseq = x
+#                 key, lagged_filt_params, strided_backwd_params_subseq = x
 
-                keys = random.split(key, strided_backwd_params_subseq.varying.shape[0]+1)
+#                 keys = random.split(key, strided_backwd_params_subseq.varying.shape[0]+1)
 
-                last_sample = self.filt_dist.sample(keys[-1], lagged_filt_params.out)
+#                 last_sample = self.filt_dist.sample(keys[-1], lagged_filt_params.out)
 
-                def _sample_step(next_sample, x):
+#                 def _sample_step(next_sample, x):
                     
-                    key, backwd_params = x
-                    sample = self.backwd_kernel.sample(key, next_sample, backwd_params)
-                    return sample, None
+#                     key, backwd_params = x
+#                     sample = self.backwd_kernel.sample(key, next_sample, backwd_params)
+#                     return sample, None
 
-                marginal_sample = lax.scan(_sample_step, 
-                                        init=last_sample, 
-                                        xs=(keys[:-1], strided_backwd_params_subseq), 
-                                        reverse=True)[0]
+#                 marginal_sample = lax.scan(_sample_step, 
+#                                         init=last_sample, 
+#                                         xs=(keys[:-1], strided_backwd_params_subseq), 
+#                                         reverse=True)[0]
 
-                return None, marginal_sample
+#                 return None, marginal_sample
                 
 
-            return lax.scan(_sample_for_marginal, 
-                                init=None, 
-                                xs=(random.split(key, backwd_params_seq.varying.shape[0]-lag+1), tree_get_slice(lag, None, filt_params_seq), tree_get_strides(lag, backwd_params_seq)))[1]
+#             return lax.scan(_sample_for_marginal, 
+#                                 init=None, 
+#                                 xs=(random.split(key, backwd_params_seq.varying.shape[0]-lag+1), tree_get_slice(lag, None, filt_params_seq), tree_get_strides(lag, backwd_params_seq)))[1]
         
-        parallel_sampler = jit(vmap(_sample_for_marginals, in_axes=(0,None,None)))
+#         parallel_sampler = jit(vmap(_sample_for_marginals, in_axes=(0,None,None)))
 
-        return parallel_sampler(random.split(key, num_samples), filt_params_seq, backwd_params_seq)
+#         return parallel_sampler(random.split(key, num_samples), filt_params_seq, backwd_params_seq)
     
-    def print_num_params(self):
-        params = self.get_random_params(random.PRNGKey(0))
-        print('Num params:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params)))
-        print('-- filt net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.filt_update))))
-        print('-- prior state:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior))))
-        print('-- backwd net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.backwd))))
+#     def print_num_params(self):
+#         params = self.get_random_params(random.PRNGKey(0))
+#         print('Num params:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params)))
+#         print('-- filt net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.filt_update))))
+#         print('-- prior state:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior))))
+#         print('-- backwd net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.backwd))))
         
 
 

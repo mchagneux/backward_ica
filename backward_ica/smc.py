@@ -4,16 +4,10 @@ from jax import vmap, jit, lax, random
 from jax import lax, config
 config.update('jax_enable_x64',True)
 
-from backward_ica.utils import tree_prepend
-
-def exp_and_normalize(x):
-
-    x = jnp.exp(x - x.max())
-    return x / x.sum()
+from backward_ica.utils import tree_prepend, exp_and_normalize
 
 def compute_pred_likel(probs):
     return 
-
 
 
 class SMC:
