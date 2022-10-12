@@ -20,7 +20,7 @@ class GeneralBackwardELBO:
         self.q = q
         self.num_samples = num_samples
 
-    def __call__(self, key, obs_seq, theta:HMMParams, phi):
+    def __call__(self, key, obs_seq, theta:HMM.Params, phi):
 
         def _monte_carlo_sample(key, obs_seq, terminal_law_params, backwd_params_seq):
 
@@ -71,7 +71,7 @@ class OnlineGeneralBackwardELBO:
         self.num_samples = num_samples
         self.normalizer = normalizer
 
-    def __call__(self, key, obs_seq, theta:HMMParams, phi):
+    def __call__(self, key, obs_seq, theta:HMM.Params, phi):
 
         filt_params_seq = self.q.compute_filt_params_seq(obs_seq, phi)
         backwd_params_seq = self.q.compute_backwd_params_seq(filt_params_seq, phi)
@@ -149,7 +149,7 @@ class OnlineGeneralBackwardELBOV2:
 
         self.normalizer = normalizer
 
-    def __call__(self, key, obs_seq, theta:HMMParams, phi):
+    def __call__(self, key, obs_seq, theta:HMM.Params, phi):
 
         q_filt_params_seq = self.q.compute_filt_params_seq(obs_seq, phi)
         q_backwd_params_seq = self.q.compute_backwd_params_seq(q_filt_params_seq, phi)
@@ -282,7 +282,7 @@ class OnlineGeneralBackwardELBOV3:
         self.num_samples = num_samples
         self.normalizer = normalizer
 
-    def __call__(self, key, obs_seq, theta:HMMParams, phi):
+    def __call__(self, key, obs_seq, theta:HMM.Params, phi):
 
         filt_params_seq = self.q.compute_filt_params_seq(obs_seq, phi)
         backwd_params_seq = self.q.compute_backwd_params_seq(filt_params_seq, phi)
@@ -360,7 +360,7 @@ class OnlineBackwardLinearELBO:
         self.num_samples = num_samples
         self.normalizer = normalizer
             
-    def __call__(self, key, obs_seq, theta:HMMParams, phi):
+    def __call__(self, key, obs_seq, theta:HMM.Params, phi):
 
         
         kl_term = quadratic_term_from_log_gaussian(theta.prior) #+ get_tractable_emission_term(obs_seq[0], theta.emission)
@@ -446,7 +446,7 @@ class BackwardLinearELBO:
         self.q = q
         self.num_samples = num_samples
             
-    def __call__(self, key, obs_seq, theta:HMMParams, phi):
+    def __call__(self, key, obs_seq, theta:HMM.Params, phi):
 
         
         kl_term = quadratic_term_from_log_gaussian(theta.prior) #+ get_tractable_emission_term(obs_seq[0], theta.emission)
@@ -506,7 +506,7 @@ class LinearGaussianELBO:
         self.p = p
         self.q = q
         
-    def __call__(self, obs_seq, theta:HMMParams, phi:HMMParams):
+    def __call__(self, obs_seq, theta:HMM.Params, phi:HMM.Params):
 
         result = quadratic_term_from_log_gaussian(theta.prior) + get_tractable_emission_term(obs_seq[0], theta.emission)
 

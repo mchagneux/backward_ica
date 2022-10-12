@@ -1,6 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from random import gauss
-from turtle import back
+
 from jax import numpy as jnp, random, value_and_grad, tree_util, grad, config
 from jax.tree_util import tree_leaves
 from backward_ica.kalman import Kalman
@@ -26,6 +25,30 @@ def xtanh(slope):
 
 
 class Maps:
+
+    @register_pytree_node_class
+    class LinearMapParams:
+        def __init__(self, w, b=None):
+            self.w = w 
+            if b is not None: 
+                self.b = b
+            
+        def tree_flatten(self):
+            attrs = vars(self)
+            children = attrs.values()
+            aux_data = attrs.keys()
+            return (children, aux_data)
+
+        @classmethod
+        def tree_unflatten(cls, aux_data, params):
+            obj = cls.__new__(cls)
+            for k,v in zip(aux_data, params):
+                setattr(obj, k, v)
+            return obj
+
+        def __repr__(self):
+            return str(vars(self))
+
 
     @staticmethod
     def neural_map(input, layers, slope, out_dim):
@@ -61,8 +84,8 @@ class Maps:
         return out + jnp.broadcast_to(map_params.b, out.shape)
 
 
-    @staticmethod
-    def linear_map_init_params(key, dummy_in, out_dim, conditionning, bias, range_params):
+    @classmethod
+    def linear_map_init_params(cls, key, dummy_in, out_dim, conditionning, bias, range_params):
 
         key_w, key_b = random.split(key, 2)
 
@@ -80,12 +103,12 @@ class Maps:
             
         if bias: 
             b = random.uniform(key_b, (out_dim,))
-            return LinearMapParams(w=w, b=b)
+            return cls.LinearMapParams(w=w, b=b)
         else: 
-            return LinearMapParams(w=w)
+            return cls.LinearMapParams(w=w)
 
-    @staticmethod
-    def linear_map_format_params(params, conditionning_func, d):
+    @classmethod
+    def linear_map_format_params(cls, params, conditionning_func, d):
 
         w = conditionning_func(params.w, d)
         
@@ -94,7 +117,7 @@ class Maps:
         else: 
             b = params.b
 
-        return LinearMapParams(w,b)
+        return cls.LinearMapParams(w,b)
 
 class NeuralInference: 
 
@@ -103,7 +126,7 @@ class NeuralInference:
 
         gru = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in (*layers,)])
 
-        return gru(obs, prev_state.hidden)
+        return gru(obs, prev_state)
 
     @staticmethod
     def gaussian_filt_net(state, d):
@@ -115,7 +138,7 @@ class NeuralInference:
     
         out = net(state.out)
         
-        return GaussianParams.from_vec(out, d, diag=False)
+        return Gaussian.Params.from_vec(out, d, diag=False)
 
     @staticmethod
     def backwd_update_forward(varying_params, next_state, layers, state_dim):
@@ -131,12 +154,12 @@ class NeuralInference:
         
         out = net(jnp.concatenate((varying_params, next_state)))
 
-        out = GaussianParams.from_vec(out, d, diag=False)
+        out = Gaussian.Params.from_vec(out, d, diag=False)
 
         return out.mean, out.scale
 
     @staticmethod
-    def johnson_update_forward(obs, pred_state:GaussianParams, layers, state_dim):
+    def johnson_update_forward(obs, pred_state, layers, state_dim):
 
         d = state_dim 
         rec_net = hk.nets.MLP((*layers, 2*d),
@@ -151,7 +174,7 @@ class NeuralInference:
 
         eta2 = - 0.5 * jnp.diag(nn.softplus(log_prec_diag))
 
-        filt_params = GaussianParams(eta1 = eta1 + pred_state.eta1, 
+        filt_params = Gaussian.Params(eta1 = eta1 + pred_state.eta1, 
                                     eta2 = eta2 + pred_state.eta2)
 
         return filt_params
@@ -173,13 +196,130 @@ class NeuralInference:
         a_back = out[A_back_dim:A_back_dim+a_back_dim]
         Sigma_back_vec = out[A_back_dim+a_back_dim:]
 
-        return KernelParams(map=LinearMapParams(w=A_back, b=a_back), 
-                            noise=GaussianNoiseParams.from_vec(Sigma_back_vec, d))
+        return Kernel.Params(map=Maps.LinearMapParams(w=A_back, b=a_back), 
+                            noise=Gaussian.NoiseParams.from_vec(Sigma_back_vec, d))
+
+def set_parametrization(args=None):
+        
+    if args is None: 
+        hmm.HMM.parametrization = 'cov_chol' 
+        Gaussian.Params.parametrization = 'cov_chol'
 
 
-
+    else:
+        hmm.HMM.parametrization = args.parametrization 
+        Gaussian.Params.parametrization = args.parametrization
 
 class Gaussian: 
+
+
+    @register_pytree_node_class
+    class Params: 
+
+        parametrization = 'cov_chol'
+        
+        def __init__(self, mean=None, scale=None, eta1=None, eta2=None):
+
+            if (mean is not None) and (scale is not None):
+                self.mean = mean 
+                self.scale = scale
+            elif (eta1 is not None) and (eta2 is not None):
+                self.eta1 = eta1 
+                self.eta2 = eta2
+
+        @classmethod
+        def from_mean_scale(cls, mean, scale):
+            obj = cls.__new__(cls)
+            obj.mean = mean 
+            obj.scale = scale
+            return obj
+
+        @classmethod
+        def from_nat_params(cls, eta1, eta2):
+            obj = cls.__new__(cls)
+            obj.eta1 = eta1
+            obj.eta2 = eta2 
+            return obj
+
+        @classmethod
+        def from_vec(cls, vec, d, diag=True, chol_add=empty_add):
+            mean = vec[:d]
+
+            # def diag_chol(vec, d):
+            #     return jnp.diag(vec[d:])
+
+            # def non_diag_chol(vec, d):
+            #     return chol_from_vec(vec[d:], d)
+                
+            if diag: 
+                chol = jnp.diag(vec[d:])
+            else: 
+                chol = chol_from_vec(vec[d:], d)
+                
+            # chol = lax.cond(diag, diag_chol, non_diag_chol, vec, d)
+
+            scale_kwargs = {cls.parametrization:chol + chol_add(d)}
+            return cls(mean=mean, scale=Scale(**scale_kwargs))
+        
+        @property
+        def vec(self):
+            d = self.mean.shape[0]
+            return jnp.concatenate((self.mean, self.scale.chol[jnp.tril_indices(d)]))
+
+        @lazy_property
+        def mean(self):
+            return self.scale.cov @ self.eta1
+
+        @lazy_property
+        def scale(self):
+            return Scale(prec=-2*self.eta2)
+        
+        @lazy_property
+        def eta1(self):
+            return self.scale.prec @ self.mean 
+            
+        @lazy_property
+        def eta2(self):
+            return -0.5 * self.scale.prec 
+            
+        def tree_flatten(self):
+            attrs = vars(self)
+            children = attrs.values()
+            aux_data = attrs.keys()
+            return (children, aux_data)
+            
+        @classmethod
+        def tree_unflatten(cls, aux_data, params):
+            obj = cls.__new__(cls)
+            for k,v in zip(aux_data, params):
+                setattr(obj, k, v)
+            return obj
+
+        def __repr__(self):
+            return str(vars(self))
+
+    @register_pytree_node_class
+    @dataclass(init=True)
+    class NoiseParams:
+        
+        scale: Scale
+
+
+        @classmethod
+        def from_vec(cls, vec, d, chol_add=empty_add):
+
+            chol = chol_from_vec(vec, d)
+                
+            scale_kwargs = {cls.parametrization:chol + chol_add(d)}
+            return cls(scale=Scale(**scale_kwargs))
+
+        def tree_flatten(self):
+            return ((self.scale,), None)
+
+        @classmethod
+        def tree_unflatten(cls, aux_data, children):
+            return cls(*children)
+
 
     @staticmethod
     def sample(key, params):
@@ -193,25 +333,25 @@ class Gaussian:
     def pdf(x, params):
         return gaussian_pdf(x, params.mean, params.scale.cov)
 
-    @staticmethod
-    def get_random_params(key, dim):
+    @classmethod
+    def get_random_params(cls, key, dim):
         
         subkeys = random.split(key,2)
 
         mean = random.uniform(subkeys[0], shape=(dim,), minval=-1, maxval=1)
-        return GaussianParams(mean, Scale.get_random(key, dim, HMM.parametrization))
+        return cls.Params(mean, Scale.get_random(key, dim, HMM.parametrization))
 
-    @staticmethod
-    def format_params(params):
-        return GaussianParams(mean=params.mean, scale=Scale.format(params.scale))
+    @classmethod
+    def format_params(cls, params):
+        return cls.Params(mean=params.mean, scale=Scale.format(params.scale))
 
-    @staticmethod
-    def get_random_noise_params(key, dim):
-        return GaussianNoiseParams(Scale.get_random(key, dim, HMM.parametrization))
+    @classmethod
+    def get_random_noise_params(cls, key, dim):
+        return cls.NoiseParams(Scale.get_random(key, dim, HMM.parametrization))
 
-    @staticmethod
-    def format_noise_params(noise_params):
-        return GaussianNoiseParams(Scale.format(noise_params.scale))
+    @classmethod
+    def format_noise_params(cls, noise_params):
+        return cls.NoiseParams(Scale.format(noise_params.scale))
 
     @staticmethod
     def KL(params_0, params_1):
@@ -234,6 +374,38 @@ class Gaussian:
 
 class Student: 
 
+
+    @register_pytree_node_class
+    @dataclass(init=True)
+    class Params:
+        
+        mean: jnp.ndarray
+        df: int
+        scale: Scale
+
+
+        def tree_flatten(self):
+            return ((self.mean, self.df, self.scale), None)
+
+        @classmethod
+        def tree_unflatten(cls, aux_data, children):
+            return cls(*children)
+
+    @register_pytree_node_class
+    @dataclass(init=True)
+    class NoiseParams:
+        
+        df: int
+        scale: Scale
+
+        def tree_flatten(self):
+            return ((self.df, self.scale), None)
+
+        @classmethod
+        def tree_unflatten(cls, aux_data, children):
+            return cls(*children)
+
+
     def sample(key, params):
         return params.mean + params.scale.cov_chol @ random.t(key, params.df, shape=(params.mean.shape[0],))
 
@@ -248,8 +420,8 @@ class Student:
         return vmap(student_pdf, in_axes=(0, None, 0, 0))(x, params.df, params.mean, jnp.diag(params.scale.cov_chol)).prod()
 
 
-    @staticmethod
-    def get_random_params(key, dim):
+    @classmethod
+    def get_random_params(cls, key, dim):
         
         subkeys = random.split(key,3)
 
@@ -257,26 +429,28 @@ class Student:
         mean = random.uniform(subkeys[0], shape=(dim,), minval=-1, maxval=1)
         df = random.randint(subkeys[1], shape=(1,), minval=1, maxval=10)
         scale = Scale.get_random(subkeys[3], dim, HMM.parametrization)
-        return StudentParams(mean=mean, 
+        return cls.Params(mean=mean, 
                             df=df, 
                             scale=scale)
 
-    @staticmethod
-    def format_params(params):
-        return StudentParams(mean=params.mean, df=params.df, scale=Scale.format(params.scale))
+    @classmethod
+    def format_params(cls, params):
+        return cls.Params(mean=params.mean, df=params.df, scale=Scale.format(params.scale))
 
-    @staticmethod
-    def get_random_noise_params(key, dim):
+    @classmethod
+    def get_random_noise_params(cls, key, dim):
         subkeys = random.split(key, 2)
         df = random.randint(subkeys[1], shape=(1,), minval=1, maxval=10)
         scale = Scale.get_random(subkeys[1], dim, HMM.parametrization)
-        return StudentNoiseParams(df, scale)
+        return cls.NoiseParams(df, scale)
 
-    @staticmethod 
-    def format_noise_params(noise_params):
-        return StudentNoiseParams(noise_params.df, Scale.format(noise_params.scale))
+    @classmethod 
+    def format_noise_params(cls, noise_params):
+        return cls.NoiseParams(noise_params.df, Scale.format(noise_params.scale))
 
 class Kernel:
+
+    Params = namedtuple('KernelParams', ['map','noise'])
 
     @staticmethod
     def linear_gaussian(matrix_conditonning, bias, range_params):
@@ -302,12 +476,12 @@ class Kernel:
 
 
         if noise_dist == Gaussian:
-            self.format_output = lambda mean, noise, params: GaussianParams(mean, noise.scale)
-            self.params_type = GaussianNoiseParams
+            self.format_output = lambda mean, noise, params: Gaussian.Params(mean, noise.scale)
+            self.params_type = Gaussian.NoiseParams
             
         elif noise_dist == Student:
-            self.format_output = lambda mean, noise, params: StudentParams(mean=mean, df=noise.df, scale=noise.scale)
-            self.params_type = StudentNoiseParams
+            self.format_output = lambda mean, noise, params: Student.Params(mean=mean, df=noise.df, scale=noise.scale)
+            self.params_type = Student.NoiseParams
 
         if self.map_type == 'linear':
 
@@ -343,7 +517,7 @@ class Kernel:
                 
                 def apply_map(params, input):
                     mean, scale = nonlinear_apply_map(params.inner.map, params.varying, input)
-                    return (mean, GaussianNoiseParams(scale))
+                    return (mean, Gaussian.NoiseParams(scale))
 
                 get_random_map_params = lambda key: init_map_params(key, 
                                                                     jnp.empty((map_def['map_info']['varying_params_shape'],)), 
@@ -373,15 +547,33 @@ class Kernel:
 
     def get_random_params(self, key):
         key, subkey = random.split(key, 2)
-        return KernelParams(self._get_random_map_params(key), self._get_random_noise_params(subkey))
+        return self.Params(self._get_random_map_params(key), self._get_random_noise_params(subkey))
 
     def format_params(self, params):
-        return KernelParams(self._format_map_params(params.map), 
+        return self.Params(self._format_map_params(params.map), 
                             self.noise_dist.format_noise_params(params.noise))
 
-
-
 class HMM: 
+
+    @register_pytree_node_class
+    @dataclass(init=True)
+    class Params:
+        
+        prior: Gaussian.NoiseParams 
+        transition: Kernel.Params
+        emission: Kernel.Params
+
+        def compute_covs(self):
+            self.prior.scale.cov
+            self.transition.noise.scale.cov
+            self.emission.noise.scale.cov
+
+        def tree_flatten(self):
+            return ((self.prior, self.transition, self.emission), None)
+
+        @classmethod
+        def tree_unflatten(cls, aux_data, children):
+            return cls(*children)
 
     parametrization = 'cov_chol'
 
@@ -423,7 +615,7 @@ class HMM:
 
         transition_params = self.transition_kernel.get_random_params(key_transition)
         emission_params = self.emission_kernel.get_random_params(key_emission)
-        params = HMMParams(prior_params, 
+        params = self.Params(prior_params, 
                         transition_params, 
                         emission_params)
         if params_to_set is not None: 
@@ -432,7 +624,7 @@ class HMM:
         
     def format_params(self, params):
 
-        return HMMParams(self.prior_dist.format_params(params.prior),
+        return self.Params(self.prior_dist.format_params(params.prior),
                         self.transition_kernel.format_params(params.transition),
                         self.emission_kernel.format_params(params.emission))
                         
@@ -552,7 +744,7 @@ class LinearBackwardSmoother(BackwardSmoother):
     @staticmethod
     def linear_gaussian_backwd_params_from_transition_and_filt(filt_mean, filt_cov, params):
 
-        A, a, Q = params.transition.map.w, params.transition.map.b, params.transition.noise.scale.cov
+        A, a, Q = params.map.w, params.map.b, params.noise.scale.cov
         mu, Sigma = filt_mean, filt_cov
         I = jnp.eye(a.shape[0])
 
@@ -563,9 +755,8 @@ class LinearBackwardSmoother(BackwardSmoother):
         a_back = C @ mu - K @ a
         cov_back = C @ Sigma
 
-        return KernelParams(LinearMapParams(A_back, a_back), GaussianNoiseParams(Scale(cov=cov_back)))
+        return Kernel.Params(Maps.LinearMapParams(A_back, a_back), Gaussian.NoiseParams(Scale(cov=cov_back)))
 
-    @staticmethod 
     def __init__(self, state_dim):
 
         backwd_kernel_def = {'map_type':'linear',
@@ -573,7 +764,8 @@ class LinearBackwardSmoother(BackwardSmoother):
                                         'bias': True,
                                         'range_params':(0,1)}}
 
-        super().__init__(filt_dist=Gaussian, backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
+        super().__init__(filt_dist=Gaussian, 
+                        backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
         
     def compute_marginals(self, last_filt_params, backwd_params_seq):
         last_filt_params_mean, last_filt_params_cov = last_filt_params.mean, last_filt_params.scale.cov
@@ -584,14 +776,14 @@ class LinearBackwardSmoother(BackwardSmoother):
             smoothed_mean, smoothed_cov = filt_params
             mean = A_back @ smoothed_mean + a_back
             cov = A_back @ smoothed_cov @ A_back.T + cov_back
-            return (mean, cov), GaussianParams(mean=mean, scale=Scale(cov=cov))
+            return (mean, cov), Gaussian.Params(mean=mean, scale=Scale(cov=cov))
 
         marginals = lax.scan(_step, 
                                 init=(last_filt_params_mean, last_filt_params_cov), 
                                 xs=backwd_params_seq, 
                                 reverse=True)[1]
         
-        marginals = tree_append(marginals, GaussianParams(mean=last_filt_params_mean, 
+        marginals = tree_append(marginals, Gaussian.Params(mean=last_filt_params_mean, 
                                                         scale=Scale(cov=last_filt_params_cov)))
 
         return marginals
@@ -617,7 +809,7 @@ class LinearBackwardSmoother(BackwardSmoother):
                                     xs=backwd_params_subseq, 
                                     reverse=True)[0]
 
-            return None, GaussianParams(mean=marginal[0], scale=Scale(cov=marginal[1]))
+            return None, Gaussian.Params(mean=marginal[0], scale=Scale(cov=marginal[1]))
 
         return lax.scan(_compute_fixed_lag_marginal, 
                             init=None, 
@@ -706,10 +898,10 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
     
     def backwd_params_from_state(self, state, params):
 
-        return self.linear_gaussian_backwd_params_from_transition_and_filt(state.out[0], state.out[1], params)
+        return self.linear_gaussian_backwd_params_from_transition_and_filt(state.out[0], state.out[1], params.transition)
 
     def filt_params_from_state(self, state, params):
-        return GaussianParams(mean=state.out[0], scale=Scale(cov=state.out[1]))
+        return Gaussian.Params(mean=state.out[0], scale=Scale(cov=state.out[1]))
 
     def likelihood_seq(self, obs_seq, params):
 
@@ -721,7 +913,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         key_init_params, key_batcher = random.split(key, 2)
         base_optimizer = getattr(optax, optimizer)(learning_rate)
         optimizer = base_optimizer
-        # optimizer = optax.masked(base_optimizer, mask=HMMParams(prior_mask, transition_mask, emission_mask))
+        # optimizer = optax.masked(base_optimizer, mask=HMM.Params(prior_mask, transition_mask, emission_mask))
 
         params = self.get_random_params(key_init_params)
 
@@ -730,17 +922,14 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         emission_params = theta_star.emission
 
         def build_params(params):
-            return HMMParams(GaussianParams(mean=params[0], scale=prior_scale), 
-                            KernelParams(params[1], transition_scale), 
-                            emission_params)
+            return HMM.Params(prior=Gaussian.Params(mean=params[0], scale=prior_scale), 
+                            transition=Kernel.Params(params[1], transition_scale), 
+                            emission=emission_params)
         
         params = (params.prior.mean, params.transition.map)
 
-        # build_params = lambda x:x
         loss = lambda seq, params: -self.likelihood_seq(seq, build_params(params))
 
-        # if theta_star is not None: 
-        #     params = theta_star
         opt_state = optimizer.init(params)
         num_seqs = data.shape[0]
         
@@ -1002,41 +1191,43 @@ class NonLinearHMM(HMM):
         
         return params, avg_logls
 
-
-@register_pytree_node_class
-@dataclass(init=True)
-class NeuralLinearBackwardSmootherParams:
-
-    prior:Any 
-    state:Any 
-    backwd:Any
-    filt:Any
-
-    def compute_covs(self):
-        self.prior.scale.cov
-        self.backwd.noise.scale.cov
-
-    def tree_flatten(self):
-        return ((self.prior, self.state, self.backwd, self.filt), None)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-
 class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
-    @staticmethod
-    def with_transition_from_p(p:HMM, layers=(8,8)):
-        return NeuralLinearBackwardSmoother(p.state_dim, p.obs_dim, p.transition_kernel, layers)
+    @register_pytree_node_class
+    @dataclass(init=True)
+    class Params:
+
+        prior:Any 
+        state:Any 
+        backwd:Any
+        filt:Any
+
+        def compute_covs(self):
+            self.prior.scale.cov
+            self.backwd.noise.scale.cov
+
+        def tree_flatten(self):
+            return ((self.prior, self.state, self.backwd, self.filt), None)
+
+        @classmethod
+        def tree_unflatten(cls, aux_data, children):
+            return cls(*children)
+
+    @classmethod
+    def with_transition_from_p(cls, p:HMM, layers=(8,8)):
+        return cls(p.state_dim, 
+                    p.obs_dim, 
+                    p.transition_kernel, 
+                    layers)
     
-    @staticmethod
-    def with_linear_gaussian_transition_kernel(p:HMM, layers):
+    @classmethod
+    def with_linear_gaussian_transition_kernel(cls, p:HMM, layers):
 
         transition_kernel = hmm.Kernel.linear_gaussian(matrix_conditonning='init_invertible', 
                                                         bias=True, 
                                                         range_params=(-1,1))(p.state_dim, p.state_dim)
                                                         
-        return NeuralLinearBackwardSmoother(p.state_dim, p.obs_dim, transition_kernel, layers)
+        return cls(p.state_dim, p.obs_dim, transition_kernel, layers)
 
 
     def __init__(self, 
@@ -1046,7 +1237,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
                 update_layers=(8,8)):
         
 
-        super().__init__(state_dim, Gaussian)
+        super().__init__(state_dim)
 
         self.state_dim = state_dim
         self.obs_dim = obs_dim
@@ -1057,7 +1248,8 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         
         self._state_net = hk.without_apply_rng(hk.transform(partial(NeuralInference.gru_net, 
                                                                     layers=self.update_layers)))
-        self._filt_net = hk.without_apply_rng(hk.transform(partial(NeuralInference.gaussian_filt_net, d=d)))
+        self._filt_net = hk.without_apply_rng(hk.transform(partial(NeuralInference.gaussian_filt_net, 
+                                                                    d=d)))
 
 
         if self.transition_kernel is None:
@@ -1082,24 +1274,26 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 
         prior_params = tuple([random.normal(key, shape=[size]) for key, size in zip(random.split(key_prior, len(self.update_layers)), 
                                                                                     self.update_layers)])
-        dummy_prior_state = State(out=None, hidden=prior_params)
 
-        state_params = self._state_net.init(key_state, dummy_obs, dummy_prior_state)
+        state_params = self._state_net.init(key_state, dummy_obs, prior_params)
 
-        dummy_state = self._state_net.apply(state_params, dummy_obs, dummy_prior_state)
-        
+        out, new_state = self._state_net.apply(state_params, dummy_obs, prior_params)
+
+        dummy_state = State(out=out, 
+                            hidden=new_state)
+
         filt_params = self._filt_net.init(key_filt, dummy_state)
 
         if self.transition_kernel is None:
-            backwd_params = self.transition_kernel.get_random_params(key_backwd)
-        else: 
             backwd_params = self._backwd_net.init(key_backwd, dummy_state)
+        else: 
+            backwd_params = self.transition_kernel.get_random_params(key_backwd)
 
 
-        params =  NeuralLinearBackwardSmootherParams(prior_params, 
-                                                    state_params, 
-                                                    backwd_params,
-                                                    filt_params)
+        params =  self.Params(prior_params, 
+                            state_params, 
+                            backwd_params,
+                            filt_params)
         
         if params_to_set is not None:
             params = self.set_params(params, params_to_set)
@@ -1118,10 +1312,10 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         if self.transition_kernel is not None: 
             formatted_backwd_params = self.transition_kernel.format_params(params.backwd)
 
-        return NeuralLinearBackwardSmootherParams(params.prior, 
-                                                params.state, 
-                                                formatted_backwd_params, 
-                                                params.filt)
+        return self.Params(params.prior, 
+                            params.state, 
+                            formatted_backwd_params, 
+                            params.filt)
 
     def init_state(self, obs, params):
         out, init_state = self._state_net.apply(params.state, obs, params.prior)

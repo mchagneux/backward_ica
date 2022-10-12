@@ -33,7 +33,7 @@ from time import time
 # shutil.rmtree(eval_dir)
 
 
-def check_kl_divergences(state_seq, obs_seq, p:hmm.LinearGaussianHMM, q:hmm.LinearGaussianHMM, theta:utils.HMMParams, phi:utils.HMMParams, h = lambda x:x):
+def check_kl_divergences(state_seq, obs_seq, p:hmm.LinearGaussianHMM, q:hmm.LinearGaussianHMM, theta:utils.HMM.Params, phi:utils.HMM.Params, h = lambda x:x):
     filt_seq = q.filt_seq(obs_seq, phi)
     formatted_phi = q.format_params(phi)
     backwd_seq = q.compute_backwd_params_seq(q.compute_filt_params_seq(obs_seq, formatted_phi), formatted_phi)

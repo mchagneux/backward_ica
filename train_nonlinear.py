@@ -10,7 +10,7 @@ utils.enable_x64(True)
 
 def main(args, save_dir):
 
-    utils.set_parametrization(args)
+    hmm.set_parametrization(args)
 
     key_theta = jax.random.PRNGKey(args.seed_theta)
     key_phi = jax.random.PRNGKey(args.seed_phi)
@@ -19,7 +19,7 @@ def main(args, save_dir):
 
     p, theta_star = utils.get_generative_model(args, key_for_random_params=key_params)
 
-    utils.save_params(theta_star, 'theta', save_dir)
+    # utils.save_params(theta_star, 'theta', save_dir)
 
     state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, 
                                             theta_star, 
@@ -84,7 +84,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--p_version', type=str, default='chaotic_rnn')
-    parser.add_argument('--q_version', type=str, default='linear')
+    parser.add_argument('--q_version', type=str, default='neural_backward_linear')
 
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--args_path', type=str, default='')

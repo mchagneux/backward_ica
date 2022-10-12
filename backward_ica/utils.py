@@ -448,7 +448,6 @@ class lazy_property(object):
         return value
 
 
-KernelParams = namedtuple('KernelParams', ['map','noise'])
 State = namedtuple('State', ['out','hidden'])
 GeneralBackwdState = namedtuple('BackwardState', ['inner', 'varying'])
 
@@ -503,16 +502,9 @@ def params_to_flattened_dict(params):
     params_dict = params_to_dict(params)
     return pd.json_normalize(params_dict, sep='/').to_dict(orient='records')[0]
     
-def set_parametrization(args=None):
-        
-    if args is None: 
-        hmm.HMM.parametrization = 'cov_chol' 
-        GaussianParams.parametrization = 'cov_chol'
 
-
-    else:
-        hmm.HMM.parametrization = args.parametrization 
-        GaussianParams.parametrization = args.parametrization
+def empty_add(d):
+    return jnp.zeros((d,d))
 
 @register_pytree_node_class
 class Scale:
@@ -609,194 +601,7 @@ class Scale:
         if parametrization == 'prec_chol':scale=1/scale
         return {parametrization:scale}
 
-@register_pytree_node_class
-@dataclass(init=True)
-class StudentParams:
-    
-    mean: jnp.ndarray
-    df: int
-    scale: Scale
 
-
-    def tree_flatten(self):
-        return ((self.mean, self.df, self.scale), None)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-
-@register_pytree_node_class
-@dataclass(init=True)
-class StudentNoiseParams:
-    
-    df: int
-    scale: Scale
-
-    def tree_flatten(self):
-        return ((self.df, self.scale), None)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-
-
-def empty_add(d):
-    return jnp.zeros((d,d))
-
-
-@register_pytree_node_class
-@dataclass(init=True)
-class GaussianNoiseParams:
-    
-    scale: Scale
-
-
-    @classmethod
-    def from_vec(cls, vec, d, chol_add=empty_add):
-
-        chol = chol_from_vec(vec, d)
-            
-        scale_kwargs = {cls.parametrization:chol + chol_add(d)}
-        return cls(scale=Scale(**scale_kwargs))
-
-    def tree_flatten(self):
-        return ((self.scale,), None)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-
-
-
-@register_pytree_node_class
-class GaussianParams: 
-
-    parametrization = 'cov_chol'
-    
-    def __init__(self, mean=None, scale=None, eta1=None, eta2=None):
-
-        if (mean is not None) and (scale is not None):
-            self.mean = mean 
-            self.scale = scale
-        elif (eta1 is not None) and (eta2 is not None):
-            self.eta1 = eta1 
-            self.eta2 = eta2
-
-    @classmethod
-    def from_mean_scale(cls, mean, scale):
-        obj = cls.__new__(cls)
-        obj.mean = mean 
-        obj.scale = scale
-        return obj
-
-    @classmethod
-    def from_nat_params(cls, eta1, eta2):
-        obj = cls.__new__(cls)
-        obj.eta1 = eta1
-        obj.eta2 = eta2 
-        return obj
-
-    @classmethod
-    def from_vec(cls, vec, d, diag=True, chol_add=empty_add):
-        mean = vec[:d]
-
-        # def diag_chol(vec, d):
-        #     return jnp.diag(vec[d:])
-
-        # def non_diag_chol(vec, d):
-        #     return chol_from_vec(vec[d:], d)
-            
-        if diag: 
-            chol = jnp.diag(vec[d:])
-        else: 
-            chol = chol_from_vec(vec[d:], d)
-            
-        # chol = lax.cond(diag, diag_chol, non_diag_chol, vec, d)
-
-        scale_kwargs = {cls.parametrization:chol + chol_add(d)}
-        return cls(mean=mean, scale=Scale(**scale_kwargs))
-    
-    @property
-    def vec(self):
-        d = self.mean.shape[0]
-        return jnp.concatenate((self.mean, self.scale.chol[jnp.tril_indices(d)]))
-
-    @lazy_property
-    def mean(self):
-        return self.scale.cov @ self.eta1
-
-    @lazy_property
-    def scale(self):
-        return Scale(prec=-2*self.eta2)
-    
-    @lazy_property
-    def eta1(self):
-        return self.scale.prec @ self.mean 
-        
-    @lazy_property
-    def eta2(self):
-        return -0.5 * self.scale.prec 
-        
-    def tree_flatten(self):
-        attrs = vars(self)
-        children = attrs.values()
-        aux_data = attrs.keys()
-        return (children, aux_data)
-        
-    @classmethod
-    def tree_unflatten(cls, aux_data, params):
-        obj = cls.__new__(cls)
-        for k,v in zip(aux_data, params):
-            setattr(obj, k, v)
-        return obj
-
-    def __repr__(self):
-        return str(vars(self))
-
-# GaussianParams = namedtuple('GaussianParams', ['mean', 'scale'])
-
-@register_pytree_node_class
-class LinearMapParams:
-    def __init__(self, w, b=None):
-        self.w = w 
-        if b is not None: 
-            self.b = b
-        
-    def tree_flatten(self):
-        attrs = vars(self)
-        children = attrs.values()
-        aux_data = attrs.keys()
-        return (children, aux_data)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, params):
-        obj = cls.__new__(cls)
-        for k,v in zip(aux_data, params):
-            setattr(obj, k, v)
-        return obj
-
-    def __repr__(self):
-        return str(vars(self))
-
-@register_pytree_node_class
-@dataclass(init=True)
-class HMMParams:
-    
-    prior: GaussianParams 
-    transition: KernelParams
-    emission: KernelParams
-
-    def compute_covs(self):
-        self.prior.scale.cov
-        self.transition.noise.scale.cov
-        self.emission.noise.scale.cov
-
-    def tree_flatten(self):
-        return ((self.prior, self.transition, self.emission), None)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
 
 
 def plot_relative_errors_1D(ax, pred_means, pred_covs, color='black', alpha=0.2, hatch=None, label=''):
@@ -864,21 +669,21 @@ def load_train_logs(save_dir):
     return train_logs
         
 
-def plot_to_image(figure):
-    """Converts the matplotlib plot specified by 'figure' to a PNG image and
-    returns it. The supplied figure is closed and inaccessible after this call."""
-    # Save the plot to a PNG in memory.
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    # Closing the figure prevents it from being displayed directly inside
-    # the notebook.
-    plt.close(figure)
-    buf.seek(0)
-    # Convert PNG buffer to TF image
-    image = tf.image.decode_png(buf.getvalue(), channels=4)
-    # Add the batch dimension
-    image = tf.expand_dims(image, 0)
-    return image
+# def plot_to_image(figure):
+#     """Converts the matplotlib plot specified by 'figure' to a PNG image and
+#     returns it. The supplied figure is closed and inaccessible after this call."""
+#     # Save the plot to a PNG in memory.
+#     buf = io.BytesIO()
+#     plt.savefig(buf, format='png')
+#     # Closing the figure prevents it from being displayed directly inside
+#     # the notebook.
+#     plt.close(figure)
+#     buf.seek(0)
+#     # Convert PNG buffer to TF image
+#     image = tf.image.decode_png(buf.getvalue(), channels=4)
+#     # Add the batch dimension
+#     image = tf.expand_dims(image, 0)
+#     return image
 
 
 
