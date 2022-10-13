@@ -8,7 +8,7 @@ import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 import matplotlib.pyplot as plt
 import os
-import pickle
+import dill
 
 def main(train_args, eval_args):
 
@@ -60,10 +60,10 @@ def main(train_args, eval_args):
         smoothing_q_phi[f'Variational {epoch_nb}'] = utils.multiple_length_linear_backward_smoothing(obs_seqs, q, phi, timesteps)
 
     with open(os.path.join(eval_args.save_dir, 'smoothing_results'), 'wb') as f:
-        pickle.dump(smoothing_q_phi,f)
+        dill.dump(smoothing_q_phi,f)
     
     # with open(os.path.join(eval_args.save_dir, 'smoothing_results'), 'rb') as f:
-    #     smoothing_q_phi = pickle.load(f)
+    #     smoothing_q_phi = dill.load(f)
     # smoothing_q_phi['MLE'] = utils.multiple_length_linear_backward_smoothing(obs_seqs, p, theta_mle, timesteps)
 
     utils.plot_multiple_length_smoothing(state_seqs, smoothing_theta_star, smoothing_q_phi, timesteps, 'true', 'variational', eval_args.save_dir)

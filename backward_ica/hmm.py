@@ -119,17 +119,17 @@ class Maps:
 
         return cls.LinearMapParams(w,b)
 
-class NeuralInference: 
+class InferenceNets: 
 
     @staticmethod
-    def gru_net(obs, prev_state, layers):
+    def deep_gru(obs, prev_state, layers):
 
         gru = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in (*layers,)])
 
         return gru(obs, prev_state)
 
     @staticmethod
-    def gaussian_filt_net(state, d):
+    def gaussian_proj(state, d):
 
         out_dim = d + (d * (d + 1)) // 2
         net = hk.Linear(out_dim, 
@@ -159,7 +159,7 @@ class NeuralInference:
         return out.mean, out.scale
 
     @staticmethod
-    def johnson_update_forward(obs, pred_state, layers, state_dim):
+    def johnson(obs, pred_state, layers, state_dim):
 
         d = state_dim 
         rec_net = hk.nets.MLP((*layers, 2*d),
@@ -180,7 +180,7 @@ class NeuralInference:
         return filt_params
 
     @staticmethod
-    def linear_gaussian_backwd_net(state, d):
+    def linear_gaussian_proj(state, d):
 
         A_back_dim = d * d 
         a_back_dim = d
@@ -1246,14 +1246,14 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         self.update_layers = update_layers
         d = self.state_dim
         
-        self._state_net = hk.without_apply_rng(hk.transform(partial(NeuralInference.gru_net, 
+        self._state_net = hk.without_apply_rng(hk.transform(partial(InferenceNets.deep_gru, 
                                                                     layers=self.update_layers)))
-        self._filt_net = hk.without_apply_rng(hk.transform(partial(NeuralInference.gaussian_filt_net, 
+        self._filt_net = hk.without_apply_rng(hk.transform(partial(InferenceNets.gaussian_proj, 
                                                                     d=d)))
 
 
         if self.transition_kernel is None:
-            self._backwd_net = hk.without_apply_rng(hk.transform(partial(NeuralInference.linear_gaussian_backwd_net, d=d)))
+            self._backwd_net = hk.without_apply_rng(hk.transform(partial(InferenceNets.linear_gaussian_proj, d=d)))
             self._backwd_params_from_state = lambda state, params: self._backwd_net.apply(params.backwd, state)
 
         else: 
@@ -1339,6 +1339,87 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         print('-- in backwd:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.backwd,))))
         print('-- in filt:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt)))
     
+@register_pytree_node_class
+@dataclass(init=True)
+class JohnsonParams:
+    prior: Gaussian.Params
+    transition:Kernel.Params
+    net:Any
+
+    def compute_covs(self):
+        self.prior.scale.cov
+        self.transition.noise.scale.cov
+
+    def tree_flatten(self):
+        return ((self.prior, self.transition, self.net), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+
+class JohnsonBackwardSmoother(LinearBackwardSmoother):
+
+    def __init__(self, state_dim, obs_dim, layers):
+        self.state_dim = state_dim 
+        self.obs_dim = obs_dim 
+        self.prior_dist = Gaussian
+        self.transition_kernel = Kernel.linear_gaussian(matrix_conditonning='diagonal',
+                                                        bias=False, 
+                                                        range_params=(-1,1))(state_dim, state_dim)
+
+        self._net = hk.without_apply_rng(hk.transform(partial(InferenceNets.johnson, layers=layers, state_dim=state_dim)))
+
+        super().__init__(self.state_dim)
+
+    def get_random_params(self, key, params_to_set=None):
+        key_prior, key_transition, key_net = random.split(key, 3)
+
+        dummy_state = Gaussian.Params(mean=jnp.empty((self.state_dim,)), scale=Scale(cov=jnp.eye(self.state_dim)))
+        dummy_obs = jnp.empty((self.obs_dim,))
+
+        prior_params = self.prior_dist.get_random_params(key_prior, self.state_dim)
+        transition_params = self.transition_kernel.get_random_params(key_transition)
+        net_params = self._net.init(key_net, dummy_obs, dummy_state)
+        params = JohnsonParams(prior_params, transition_params, net_params)
+        if params_to_set is not None: 
+            params = self.set_params(params, params_to_set)
+        return params
+
+    def format_params(self, params):
+        return JohnsonParams(self.prior_dist.format_params(params.prior), 
+                            self.transition_kernel.format_params(params.transition),
+                            params.net)
+
+    def init_state(self, obs, params):
+        return self._net.apply(params.net, obs, params.prior)
+
+    def new_state(self, obs, prev_state, params):
+        pred_state = Kalman.predict(prev_state.mean, prev_state.scale.cov, params.transition)
+
+        return self._net.apply(params.net, obs, Gaussian.Params(mean=pred_state[0], scale=Scale(cov=pred_state[1])))
+
+    def filt_params_from_state(self, state, params):
+        return state
+
+    def backwd_params_from_state(self, state, params):
+        return self.linear_gaussian_backwd_params_from_transition_and_filt(state.mean, state.scale.cov, params.transition)
+
+    def compute_state_seq(self, obs_seq, formatted_params):
+        formatted_params.compute_covs()
+        return super().compute_state_seq(obs_seq, formatted_params)
+
+    def set_params(self, params, args):
+        new_params = copy.deepcopy(params)
+        for k,v in vars(args).items():         
+            if k == 'default_transition_base_scale': 
+                new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
+            elif k == 'default_prior_base_scale':
+                new_params.prior.scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
+        return new_params
+
+
+
 # class NeuralBackwardSmoother(BackwardSmoother):
 
 #     def __init__(self, 

@@ -14,9 +14,9 @@ from functools import partial
 import pandas as pd
 from pandas.plotting import table
 import math
-import pickle 
+import dill 
 from backward_ica.elbos import BackwardLinearELBO
-import pickle
+import dill
 
 utils.enable_x64(True)
 
@@ -94,10 +94,10 @@ theta_star = utils.load_params('theta', os.path.join(exp_dir, method_names[0]))
 
 if load: 
     print('Loading sequences and results...')
-    with open(os.path.join(eval_dir, 'sequences.pickle'),'rb') as f:
-        state_seqs, obs_seqs = pickle.load(f)
-    with open(os.path.join(eval_dir, 'results.pickle'),'rb') as f:
-        filt_results, smooth_results = pickle.load(f)
+    with open(os.path.join(eval_dir, 'sequences.dill'),'rb') as f:
+        state_seqs, obs_seqs = dill.load(f)
+    with open(os.path.join(eval_dir, 'results.dill'),'rb') as f:
+        filt_results, smooth_results = dill.load(f)
     print('Done.')
 
 else:
@@ -137,8 +137,8 @@ class ExternalVariationalFamily():
 
         self.means_filt_q = jnp.load(os.path.join(save_dir, 'filter_means.npy'))[jnp.newaxis,:]
         self.covs_filt_q = jnp.load(os.path.join(save_dir, 'filter_covs.npy'))[jnp.newaxis,:]
-        with open(os.path.join(save_dir, 'smoothed_stats.pickle'), 'rb') as f: 
-            smoothed_means, smoothed_covs = pickle.load(f)
+        with open(os.path.join(save_dir, 'smoothed_stats.dill'), 'rb') as f: 
+            smoothed_means, smoothed_covs = dill.load(f)
         self.means_smooth_q_list = smoothed_means
         self.covs_smooth_q_list = smoothed_covs
 
@@ -201,11 +201,11 @@ for method_name in method_names:
     phis.append(phi)
 
 if not load: 
-    with open(os.path.join(eval_dir, 'sequences.pickle'),'wb') as f:
-        pickle.dump((state_seqs, obs_seqs), f)
+    with open(os.path.join(eval_dir, 'sequences.dill'),'wb') as f:
+        dill.dump((state_seqs, obs_seqs), f)
 
-    with open(os.path.join(eval_dir, 'results.pickle'),'wb') as f:
-        pickle.dump((filt_results, smooth_results), f)
+    with open(os.path.join(eval_dir, 'results.dill'),'wb') as f:
+        dill.dump((filt_results, smooth_results), f)
 
 
 
@@ -319,14 +319,14 @@ if metrics:
 
             ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(state_seqs, obs_seqs, means_ref, slices, method_nb)
 
-            with open(os.path.join(eval_dir, f'eval_{method_name}.pickle'), 'wb') as f:
-                pickle.dump((ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive), f)
+            with open(os.path.join(eval_dir, f'eval_{method_name}.dill'), 'wb') as f:
+                dill.dump((ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive), f)
             print('Done.')
         else: 
             print(f'Loading {method_name}')
 
-            with open(os.path.join(eval_dir, f'eval_{method_name}.pickle'), 'rb') as f:
-                ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = pickle.load(f)
+            with open(os.path.join(eval_dir, f'eval_{method_name}.dill'), 'rb') as f:
+                ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = dill.load(f)
             print('Done.')
             if recompute_marginals: 
                 print('Recomputing marginals...')

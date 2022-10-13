@@ -63,9 +63,9 @@ def main(args, save_dir):
                             store_every=args.store_every)
 
     utils.save_params(params, 'phi', save_dir)
-    import pickle
+    import dill
     with open(os.path.join(save_dir, 'train_logs'), 'wb') as f: 
-        pickle.dump((avg_evidence, avg_elbos), f)
+        dill.dump((avg_evidence, avg_elbos), f)
     # phi = params[-1]
 
     # state_seq, obs_seq = p.sample_seq(key, theta, 100)

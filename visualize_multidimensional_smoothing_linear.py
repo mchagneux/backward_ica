@@ -14,7 +14,7 @@ from functools import partial
 import pandas as pd
 from pandas.plotting import table
 import math
-import pickle 
+import dill 
 from backward_ica.elbos import BackwardLinearELBO
 
 
@@ -122,10 +122,10 @@ theta_star = utils.load_params('theta', os.path.join(exp_dir))
 
 if load: 
     print('Loading sequences and results...')
-    with open(os.path.join(eval_dir, 'sequences.pickle'),'rb') as f:
-        state_seqs, obs_seqs = pickle.load(f)
-    with open(os.path.join(eval_dir, 'results.pickle'),'rb') as f:
-        filt_results, smooth_results = pickle.load(f)
+    with open(os.path.join(eval_dir, 'sequences.dill'),'rb') as f:
+        state_seqs, obs_seqs = dill.load(f)
+    with open(os.path.join(eval_dir, 'results.dill'),'rb') as f:
+        filt_results, smooth_results = dill.load(f)
     print('Done.')
 else:
     key_theta, key_gen, key_ffbsi = jax.random.split(key_theta,3)
@@ -164,7 +164,7 @@ current_palette = sns.color_palette()
 def plot_training_curve(exp_dir, epoch_nbs):
     with open(os.path.join(exp_dir, 'train_logs'), 'rb') as f:
         start_pt = 60
-        avg_evidence, avg_elbos = pickle.load(f)
+        avg_evidence, avg_elbos = dill.load(f)
         plt.axhline(y=avg_evidence, c='black', linestyle='dotted')
         for idx, epoch_nb in enumerate(epoch_nbs):
             plt.axvline(x=epoch_nb, label=f'Epoch {epoch_nb}', c=current_palette[idx])
@@ -208,11 +208,11 @@ for epoch_nb in epoch_nbs:
 
 
 if not load: 
-    with open(os.path.join(eval_dir, 'sequences.pickle'),'wb') as f:
-        pickle.dump((state_seqs, obs_seqs), f)
+    with open(os.path.join(eval_dir, 'sequences.dill'),'wb') as f:
+        dill.dump((state_seqs, obs_seqs), f)
 
-    with open(os.path.join(eval_dir, 'results.pickle'),'wb') as f:
-        pickle.dump((filt_results, smooth_results), f)
+    with open(os.path.join(eval_dir, 'results.dill'),'wb') as f:
+        dill.dump((filt_results, smooth_results), f)
 
 #%%
 import numpy as np
@@ -308,14 +308,14 @@ if metrics:
 
             ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(state_seqs, obs_seqs, slices, epoch_nb)
 
-            with open(os.path.join(eval_dir, f'eval_{epoch_nb}.pickle'), 'wb') as f:
-                pickle.dump((ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive), f)
+            with open(os.path.join(eval_dir, f'eval_{epoch_nb}.dill'), 'wb') as f:
+                dill.dump((ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive), f)
             print('Done.')
         else: 
             print(f'Loading {epoch_nb}')
 
-            with open(os.path.join(eval_dir, f'eval_{epoch_nb}.pickle'), 'rb') as f:
-                ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = pickle.load(f)
+            with open(os.path.join(eval_dir, f'eval_{epoch_nb}.dill'), 'rb') as f:
+                ref_and_q_vs_states, q_vs_ref_marginals, q_vs_ref_additive = dill.load(f)
             print('Done.')
 
         ref_and_q_vs_states = pd.DataFrame(ref_and_q_vs_states, columns = ['FFBSi', f'{pretty_name}', f'Additive |FFBSi-{pretty_name}|'])

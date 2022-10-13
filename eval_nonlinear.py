@@ -7,7 +7,7 @@ config.update("jax_enable_x64", True)
 import backward_ica.hmm as hmm
 import backward_ica.utils as utils
 import os 
-import pickle
+import dill
 
 
 
@@ -57,7 +57,7 @@ def main(train_args, eval_args):
 
     smoothing_q_phi = utils.multiple_length_linear_backward_smoothing(obs_seqs, q, phi, timesteps)
     with open(os.path.join(eval_args.save_dir, 'smoothing_results'), 'wb') as f:
-        pickle.dump(smoothing_q_phi, f)
+        dill.dump(smoothing_q_phi, f)
 
 
 

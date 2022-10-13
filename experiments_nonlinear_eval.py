@@ -3,7 +3,7 @@ import jax
 from backward_ica import hmm 
 from backward_ica import utils
 import matplotlib.pyplot as plt 
-import pickle
+import dill
 utils.enable_x64(True)
 import os 
 import subprocess
@@ -79,7 +79,7 @@ def run_ffbsi_smoothing_on_eval_data(train_args, eval_args, ground_truth=True):
     smoothing_ffbsi = utils.multiple_length_ffbsi_smoothing(key_ffbsi, obs_seqs, p, theta, timesteps)
 
     with open(os.path.join(eval_args.save_dir, 'smoothing_results'), 'wb') as f:
-        pickle.dump(smoothing_ffbsi, f)
+        dill.dump(smoothing_ffbsi, f)
 
 def eval(exp_date, exp_name, q_versions_and_dates, run=False):
     

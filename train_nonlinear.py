@@ -19,7 +19,7 @@ def main(args, save_dir):
 
     p, theta_star = utils.get_generative_model(args, key_for_random_params=key_params)
 
-    # utils.save_params(theta_star, 'theta', save_dir)
+    utils.save_params(theta_star, 'theta', save_dir)
 
     state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, 
                                             theta_star, 
@@ -82,9 +82,8 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-
     parser.add_argument('--p_version', type=str, default='chaotic_rnn')
-    parser.add_argument('--q_version', type=str, default='neural_backward_linear')
+    parser.add_argument('--q_version', type=str, default='johnson_backward')
 
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--args_path', type=str, default='')
@@ -94,7 +93,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=5000)
     parser.add_argument('--num_samples', type=int, default=1)
     parser.add_argument('--num_seqs', type=int, default=1000)
-    parser.add_argument('--seq_length',type=int, default=50)
+    parser.add_argument('--seq_length',type=int, default=500)
     parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
     parser.add_argument('--load_sequences',type=bool, default=True)
 

@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import json
 import os 
-import pickle 
+import dill 
 import argparse
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
@@ -70,11 +70,17 @@ def get_variational_model(args, p=None, key_for_random_params=None):
         else:
             q = hmm.NeuralLinearBackwardSmoother.with_linear_gaussian_transition_kernel(p, args.update_layers)
         
-    elif args.q_version == 'neural_backward':
-        q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
-                                        obs_dim=args.obs_dim, 
-                                        update_layers=args.update_layers,
-                                        backwd_layers=args.backwd_map_layers)
+    # elif args.q_version == 'neural_backward':
+    #     q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
+    #                                     obs_dim=args.obs_dim, 
+    #                                     update_layers=args.update_layers,
+    #                                     backwd_layers=args.backwd_map_layers)
+
+    elif args.q_version == 'johnson_backward':
+            q = hmm.JohnsonBackwardSmoother(state_dim=args.state_dim, 
+                                    obs_dim=args.obs_dim, 
+                                    layers=args.update_layers)
+
 
     if key_for_random_params is not None:
         phi = q.get_random_params(key_for_random_params, args)
@@ -110,7 +116,8 @@ def get_config(p_version=None,
         if args.load_sequences:
             args.num_seqs = 1
             args.batch_size = 1
-            args.loaded_data = (os.path.join(chaotic_rnn_base_dir, 'x_data.npy'), os.path.join(chaotic_rnn_base_dir,'y_data.npy'))
+            args.loaded_data = (os.path.join(chaotic_rnn_base_dir, 'x_data.npy'), 
+                                os.path.join(chaotic_rnn_base_dir,'y_data.npy'))
         else: args.loaded_data = None
 
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
@@ -153,11 +160,11 @@ def get_config(p_version=None,
 
     if 'neural_backward' in args.q_version:
         ## variational family
-        args.explicit_proposal = 'explicit_proposal' in args.q_version # whether to use a Kalman predict step as a first move to update the variational filtering familiy
-        args.update_layers = (16,16) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (100,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
-
+    elif 'johnson_backward' in args.q_version:
+        args.update_layers = (8,8)
 
     ## SMC 
     args.num_particles = 10000 # number of particles for bootstrap filtering step
@@ -645,27 +652,27 @@ def load_args(name, save_dir):
         
 def save_params(params, name, save_dir):
     with open(os.path.join(save_dir,name), 'wb') as f: 
-        pickle.dump(params, f)
+        dill.dump(params, f)
 
 def load_params(name, save_dir):
     with open(os.path.join(save_dir, name), 'rb') as f: 
-        params = pickle.load(f)
+        params = dill.load(f)
     return params
         
 def load_smoothing_results(save_dir):
     with open(os.path.join(save_dir, 'smoothing_results'), 'rb') as f: 
-        results = pickle.load(f)
+        results = dill.load(f)
     return results
 
 def save_train_logs(train_logs, save_dir, plot=True, best_epochs_only=False):
     with open(os.path.join(save_dir, 'train_logs'), 'wb') as f: 
-        pickle.dump(train_logs, f)
+        dill.dump(train_logs, f)
     if plot: 
         plot_training_curves(*train_logs, save_dir, plot_only=None, best_epochs_only=best_epochs_only)
 
 def load_train_logs(save_dir):
     with open(os.path.join(save_dir, 'train_logs'), 'rb') as f: 
-        train_logs = pickle.load(f)
+        train_logs = dill.load(f)
     return train_logs
         
 
