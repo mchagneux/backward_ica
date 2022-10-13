@@ -1434,6 +1434,7 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
 
 
 class Johnson(JohnsonSmoother):
+    
     def __init__(self, state_dim, obs_dim, layers):
         super().__init__(state_dim, obs_dim, layers)
 
@@ -1463,7 +1464,7 @@ class Johnson(JohnsonSmoother):
 
         K = inv(jnp.eye((self.state_dim,)) + eta2_temp @ R)
 
-        return Gaussian.Params.from_nat_params(eta1 = A.T @ K @ eta1_temp + b, 
+        return Gaussian.Params.from_nat_params(eta1 = A.T @ K @ (eta1_temp - b), 
                                             eta2 = A.T @ K @ eta2_temp @ A)
 
     def compute_filt_params_seq(self, obs_seq, formatted_params):
