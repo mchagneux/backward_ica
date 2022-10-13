@@ -20,7 +20,6 @@ import numpy as np
 import pandas as pd
 from jaxlib.xla_extension import DeviceArray
 # Containers for parameters of various objects 
-config.update('jax_enable_x64',True)
 
 # @partial(jit, static_argnums=(1,))
 def moving_window(a, size: int):
@@ -77,7 +76,7 @@ def get_variational_model(args, p=None, key_for_random_params=None):
     #                                     backwd_layers=args.backwd_map_layers)
 
     elif args.q_version == 'johnson_backward':
-            q = hmm.JohnsonBackwardSmoother(state_dim=args.state_dim, 
+            q = hmm.JohnsonBackward(state_dim=args.state_dim, 
                                     obs_dim=args.obs_dim, 
                                     layers=args.update_layers)
 

@@ -6,7 +6,6 @@ import backward_ica.utils as utils
 from backward_ica.trainers import SVITrainer
 
 utils.enable_x64(True)
-# jax.config.update('jax_disable_jit', True)
 
 def main(args, save_dir):
 
@@ -21,12 +20,12 @@ def main(args, save_dir):
 
     utils.save_params(theta_star, 'theta', save_dir)
 
-    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, 
+    obs_seqs = p.sample_multiple_sequences(key_gen, 
                                             theta_star, 
                                             args.num_seqs, 
                                             args.seq_length, 
                                             single_split_seq=args.single_split_seq,
-                                            loaded_data=args.loaded_data)
+                                            loaded_data=args.loaded_data)[1]
 
 
     evidence_keys = jax.random.split(key_smc, args.num_seqs)

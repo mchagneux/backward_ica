@@ -12,6 +12,58 @@ def get_dummy_keys(key, num_seqs, num_epochs):
     return jnp.empty((num_epochs, num_seqs, 1))
 
 
+class GeneralELBO:
+
+    def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):
+
+        self.p = p
+        self.q = q
+        self.num_samples = num_samples 
+
+
+
+    def __call__(self, key, obs_seq, theta:HMM.Params, phi):
+
+        def _monte_carlo_sample(key, obs_seq, terminal_law_params, backwd_params_seq):
+
+            keys = jax.random.split(key, obs_seq.shape[0])
+            last_sample = self.q.filt_dist.sample(keys[-1], terminal_law_params)
+
+            last_term = -self.q.filt_dist.logpdf(last_sample, terminal_law_params) \
+                    + self.p.emission_kernel.logpdf(obs_seq[-1], last_sample, theta.emission)
+
+
+            def _sample_step(next_sample, x):
+                
+                key, obs, backwd_params = x
+
+                sample = self.q.backwd_kernel.sample(key, next_sample, backwd_params)
+
+                emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
+
+                transition_term_p = self.p.transition_kernel.logpdf(next_sample, sample, theta.transition)
+
+                backwd_term_q = -self.q.backwd_kernel.logpdf(sample, next_sample, backwd_params)
+
+                return sample, backwd_term_q + emission_term_p + transition_term_p
+            
+            init_sample, terms = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], obs_seq[:-1], backwd_params_seq), reverse=True)
+
+            return self.p.prior_dist.logpdf(init_sample, theta.prior) + jnp.sum(terms) + last_term
+
+        parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
+
+        keys = jax.random.split(key, self.num_samples)
+
+
+        state_seq = self.q.compute_state_seq(obs_seq, phi)
+
+        mc_samples = parallel_sampler(keys, 
+                                    obs_seq, 
+                                    self.q.filt_params_from_state(tree_get_idx(-1, state_seq), phi), 
+                                    self.q.compute_backwd_params_seq(state_seq, phi))
+        return jnp.mean(mc_samples)
+
 class GeneralBackwardELBO:
 
     def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):

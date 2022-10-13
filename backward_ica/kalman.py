@@ -2,7 +2,6 @@ from jax import numpy as jnp, lax, jit
 from jax.scipy.stats.multivariate_normal import logpdf as jax_gaussian_logpdf
 from pykalman.standard import KalmanFilter
 from .utils import *
-config.update('jax_enable_x64',True)
 
 
 class Kalman: 

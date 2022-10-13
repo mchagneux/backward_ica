@@ -13,7 +13,7 @@ from jax.scipy.stats.t import logpdf as student_logpdf, pdf as student_pdf
 from functools import partial
 from jax import nn
 import optax
-config.update('jax_enable_x64',True)
+
 import copy 
 _conditionnings = {'diagonal':lambda param, d: jnp.diag(param),
                 'sym_def_pos': lambda param, d: mat_from_chol_vec(param, d) + jnp.eye(d),
@@ -159,10 +159,9 @@ class InferenceNets:
         return out.mean, out.scale
 
     @staticmethod
-    def johnson(obs, pred_state, layers, state_dim):
+    def johnson(obs, layers, state_dim):
 
-        d = state_dim 
-        rec_net = hk.nets.MLP((*layers, 2*d),
+        rec_net = hk.nets.MLP((*layers, 2*state_dim),
                     w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                     b_init=hk.initializers.RandomNormal(),
                     activation=nn.tanh,
@@ -174,10 +173,7 @@ class InferenceNets:
 
         eta2 = - 0.5 * jnp.diag(nn.softplus(log_prec_diag))
 
-        filt_params = Gaussian.Params(eta1 = eta1 + pred_state.eta1, 
-                                    eta2 = eta2 + pred_state.eta2)
-
-        return filt_params
+        return eta1, eta2
 
     @staticmethod
     def linear_gaussian_proj(state, d):
@@ -240,6 +236,14 @@ class Gaussian:
             obj.eta1 = eta1
             obj.eta2 = eta2 
             return obj
+
+        @classmethod
+        def from_mean_cov(cls, mean, cov):
+            obj = cls.__new__(cls)
+            obj.mean = mean 
+            obj.scale = Scale(cov=cov)
+            return obj 
+
 
         @classmethod
         def from_vec(cls, vec, d, diag=True, chol_add=empty_add):
@@ -1358,29 +1362,28 @@ class JohnsonParams:
         return cls(*children)
 
 
-class JohnsonBackwardSmoother(LinearBackwardSmoother):
+class JohnsonSmoother:
 
     def __init__(self, state_dim, obs_dim, layers):
+
         self.state_dim = state_dim 
         self.obs_dim = obs_dim 
         self.prior_dist = Gaussian
+
         self.transition_kernel = Kernel.linear_gaussian(matrix_conditonning='diagonal',
                                                         bias=False, 
                                                         range_params=(-1,1))(state_dim, state_dim)
 
         self._net = hk.without_apply_rng(hk.transform(partial(InferenceNets.johnson, layers=layers, state_dim=state_dim)))
 
-        super().__init__(self.state_dim)
 
     def get_random_params(self, key, params_to_set=None):
         key_prior, key_transition, key_net = random.split(key, 3)
 
-        dummy_state = Gaussian.Params(mean=jnp.empty((self.state_dim,)), scale=Scale(cov=jnp.eye(self.state_dim)))
-        dummy_obs = jnp.empty((self.obs_dim,))
-
         prior_params = self.prior_dist.get_random_params(key_prior, self.state_dim)
         transition_params = self.transition_kernel.get_random_params(key_transition)
-        net_params = self._net.init(key_net, dummy_obs, dummy_state)
+        net_params = self._net.init(key_net, jnp.empty((self.obs_dim,)))
+
         params = JohnsonParams(prior_params, transition_params, net_params)
         if params_to_set is not None: 
             params = self.set_params(params, params_to_set)
@@ -1391,13 +1394,33 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
                             self.transition_kernel.format_params(params.transition),
                             params.net)
 
+    def set_params(self, params, args):
+        new_params = copy.deepcopy(params)
+        for k,v in vars(args).items():         
+            if k == 'default_transition_base_scale': 
+                new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
+            elif k == 'default_prior_base_scale':
+                new_params.prior.scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
+        return new_params
+
+class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
+
+    def __init__(self, state_dim, obs_dim, layers):
+
+        JohnsonSmoother.__init__(self, state_dim, obs_dim, layers)
+        LinearBackwardSmoother.__init__(self, state_dim)
+
     def init_state(self, obs, params):
-        return self._net.apply(params.net, obs, params.prior)
+        out = self._net.apply(params.net, obs)
+        return Gaussian.Params.from_nat_params(out[0] + params.prior.eta1, out[1] + params.prior.eta2)
 
     def new_state(self, obs, prev_state, params):
-        pred_state = Kalman.predict(prev_state.mean, prev_state.scale.cov, params.transition)
+        pred_mean, pred_cov = Kalman.predict(prev_state.mean, prev_state.scale.cov, params.transition)  
 
-        return self._net.apply(params.net, obs, Gaussian.Params(mean=pred_state[0], scale=Scale(cov=pred_state[1])))
+        pred = Gaussian.Params.from_mean_cov(pred_mean, pred_cov)
+        out = self._net.apply(params.net, obs)
+
+        return Gaussian.Params.from_nat_params(out[0] + pred.eta1, out[1] + pred.eta2)
 
     def filt_params_from_state(self, state, params):
         return state
@@ -1409,17 +1432,101 @@ class JohnsonBackwardSmoother(LinearBackwardSmoother):
         formatted_params.compute_covs()
         return super().compute_state_seq(obs_seq, formatted_params)
 
-    def set_params(self, params, args):
-        new_params = copy.deepcopy(params)
-        for k,v in vars(args).items():         
-            if k == 'default_transition_base_scale': 
-                new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
-            elif k == 'default_prior_base_scale':
-                new_params.prior.scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
-        return new_params
+
+class Johnson(JohnsonSmoother):
+    def __init__(self, state_dim, obs_dim, layers):
+        super().__init__(state_dim, obs_dim, layers)
+
+    def init_filt_params(self, obs, params):
+        out = self._net.apply(params.net, obs)
+        return Gaussian.Params.from_nat_params(out[0] + params.prior.eta1, out[1] + params.prior.eta2)
+
+    def new_filt_params(self, obs, prev_filt_params, params):
+        pred_mean, pred_cov = Kalman.predict(prev_filt_params.mean, prev_filt_params.scale.cov, params.transition)  
+
+        pred = Gaussian.Params.from_mean_cov(pred_mean, pred_cov)
+        out = self._net.apply(params.net, obs)
+
+        return Gaussian.Params.from_nat_params(out[0] + pred.eta1, out[1] + pred.eta2)
+        
+    def init_backwd_var(self):
+        d = self.state_dim 
+        return Gaussian.Params.from_nat_params(eta1=jnp.zeros((d,)), 
+                                               eta2=jnp.zeros((d,d)))
+
+    def new_backwd_var(self, obs, next_backwd_var, params):
+        out = self._net.apply(params.net, obs)
+        temp_backwd_var = Gaussian.Params.from_nat_params(out[0] + next_backwd_var.eta1, 
+                                                          out[1] + next_backwd_var.eta2)
+        eta1_temp, eta2_temp = temp_backwd_var.eta1, temp_backwd_var.eta2
+        A, b, R = params.transiton.map.w, params.transition.map.b, params.transition.noise.scale.cov
+
+        K = inv(jnp.eye((self.state_dim,)) + eta2_temp @ R)
+
+        return Gaussian.Params.from_nat_params(eta1 = A.T @ K @ eta1_temp + b, 
+                                            eta2 = A.T @ K @ eta2_temp @ A)
+
+    def compute_filt_params_seq(self, obs_seq, formatted_params):
+
+        init_state = self.init_filt_params(obs_seq[0], 
+                                        formatted_params)
+
+        @jit
+        def _step(carry, x):
+            prev_state, params = carry
+            obs = x
+            state = self.new_filt_params(obs, prev_state, params)
+            return (state, params), state
+
+        state_seq = lax.scan(_step, init=(init_state, formatted_params), xs=obs_seq[1:])[1]
+
+        return tree_prepend(init_state, state_seq)
+
+    def compute_backwd_variables_seq(self, obs_seq, formatted_params):
+        last_backwd_var = self.init_backwd_var()
+
+        @jit
+        def _step(carry, x):
+            next_state, params = carry
+            obs = x
+            state = self.new_filt_params(obs, next_state, params)
+            return (state, params), state
+
+        backwd_variables_seq = lax.scan(_step, 
+                                        init=(last_backwd_var, formatted_params), 
+                                        xs=obs_seq[:-1], 
+                                        reverse=True)[1]
+
+        return tree_append(backwd_variables_seq, last_backwd_var)
+
+    def compute_marginals(self, filt_params_seq, backwd_variables_seq):
+        
+        @jit
+        def compute_marginal(filt_params:Gaussian.Params, backwd_variable:Gaussian.Params):
+            mu, Sigma = filt_params.mean, filt_params.scale.cov
+            kappa, Pi = backwd_variable.eta1, backwd_variable.eta2
+            K = Sigma @ inv(jnp.eye((self.state_dim,) + Pi @ Sigma))
+            marginal_mean = mu + K @ (kappa - Pi @ mu)
+            marginal_cov = Sigma - K @ Pi @ Sigma
+            return Gaussian.Params(mean=marginal_mean, scale=Scale(cov=marginal_cov))
+
+        return vmap(compute_marginal)(filt_params_seq, backwd_variables_seq)
+
+    def smooth_seq(self, obs_seq, params):
+        formatted_params = self.format_params(params)
+
+        return self.compute_marginals(self.compute_filt_params_seq(obs_seq, formatted_params),
+                                    self.compute_backwd_variables_seq(obs_seq, formatted_params))
+
+
+    def filt_seq(self, obs_seq, params):
+        return self.compute_filt_params_seq(obs_seq, self.format_params(params))
+        
 
 
 
+
+    
 # class NeuralBackwardSmoother(BackwardSmoother):
 
 #     def __init__(self, 

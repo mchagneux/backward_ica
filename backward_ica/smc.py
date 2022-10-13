@@ -2,7 +2,6 @@ from jax.scipy.special import logsumexp
 import jax.numpy as jnp
 from jax import vmap, jit, lax, random
 from jax import lax, config
-config.update('jax_enable_x64',True)
 
 from backward_ica.utils import tree_prepend, exp_and_normalize
 
