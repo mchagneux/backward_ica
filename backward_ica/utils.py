@@ -66,6 +66,11 @@ def get_variational_model(args, p=None, key_for_random_params=None):
         if (p is not None) and (p.transition_kernel.map_type == 'linear'):
             q = hmm.NeuralLinearBackwardSmoother.with_transition_from_p(p, args.update_layers)
 
+        elif 'backwd_net' in args.q_version:
+            q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
+                                                obs_dim=args.obs_dim,
+                                                transition_kernel=None,
+                                                update_layers=args.update_layers)
         else:
             q = hmm.NeuralLinearBackwardSmoother.with_linear_gaussian_transition_kernel(p, args.update_layers)
         
@@ -453,7 +458,8 @@ class lazy_property(object):
 @register_pytree_node_class
 class Scale:
 
-    
+    parametrization = 'cov_chol'
+
     def __init__(self, cov_chol=None, prec_chol=None, cov=None, prec=None):
 
         if cov is not None:

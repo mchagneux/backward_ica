@@ -54,7 +54,7 @@ class GeneralForwardELBO:
         backwd_variables_seq = self.q.compute_backwd_variables_seq(obs_seq, phi)
         init_law_params = self.q.compute_marginal(self.q.init_filt_params(obs_seq[0], phi), 
                                                 tree_get_idx(0, backwd_variables_seq))
-        forward_params_seq = vmap(self.q.forward_params_from_backwd_var, in_axes=(0,None))(tree_droplast(backwd_variables_seq), phi)
+        forward_params_seq = vmap(self.q.forward_params_from_backwd_var, in_axes=(0,None))(tree_dropfirst(backwd_variables_seq), phi)
 
 
         mc_samples = parallel_sampler(keys, 

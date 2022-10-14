@@ -126,8 +126,6 @@ class Gaussian:
 
     @register_pytree_node_class
     class Params: 
-
-        parametrization = 'cov_chol'
         
         def __init__(self, mean=None, scale=None, eta1=None, eta2=None):
 
@@ -177,7 +175,7 @@ class Gaussian:
                 
             # chol = lax.cond(diag, diag_chol, non_diag_chol, vec, d)
 
-            scale_kwargs = {cls.parametrization:chol + chol_add(d)}
+            scale_kwargs = {Scale.parametrization:chol + chol_add(d)}
             return cls(mean=mean, scale=Scale(**scale_kwargs))
         
         @property
@@ -229,7 +227,7 @@ class Gaussian:
 
             chol = chol_from_vec(vec, d)
                 
-            scale_kwargs = {cls.parametrization:chol + chol_add(d)}
+            scale_kwargs = {Scale.parametrization:chol + chol_add(d)}
             return cls(scale=Scale(**scale_kwargs))
 
         def tree_flatten(self):
@@ -648,8 +646,6 @@ class BackwardSmoother(metaclass=ABCMeta):
     def smooth_seq(self, *args):
         raise NotImplementedError
 
-
-
     def compute_state_seq(self, obs_seq, formatted_params):
 
         init_state = self.init_state(obs_seq[0], 
@@ -826,7 +822,7 @@ class LinearBackwardSmoother(BackwardSmoother):
 
         state_seq = self.compute_state_seq(obs_seq, formatted_params)
         filt_params_seq = self.compute_filt_params_seq(state_seq, formatted_params)
-        backwd_params_seq = self.compute_backwd_params_seq(filt_params_seq, formatted_params)
+        backwd_params_seq = self.compute_backwd_params_seq(state_seq, formatted_params)
 
 
         def smooth_up_to_timestep(timestep):
@@ -1285,20 +1281,20 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
     def set_params(self, params, args):
         new_params = copy.deepcopy(params)
         for k,v in vars(args).items():         
-            if k == 'default_transition_base_scale': 
+            if (k == 'default_transition_base_scale') and (self.transition_kernel is not None): 
                 new_params.backwd.noise.scale = Scale.set_default(params.backwd.noise.scale, v, HMM.parametrization)
        
         return new_params
 
     def format_params(self, params):
 
-        if self.transition_kernel is not None: 
-            formatted_backwd_params = self.transition_kernel.format_params(params.backwd)
-
-        return self.Params(params.prior, 
-                            params.state, 
-                            formatted_backwd_params, 
-                            params.filt)
+        if self.transition_kernel is None:
+            return params 
+        else: 
+            return self.Params(params.prior, 
+                                params.state, 
+                                self.transition_kernel.format_params(params.backwd), 
+                                params.filt)
 
     def init_state(self, obs, params):
         out, init_state = self._state_net.apply(params.state, obs, params.prior)
@@ -1322,6 +1318,8 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         print('-- in backwd:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.backwd,))))
         print('-- in filt:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt)))
     
+
+
 @register_pytree_node_class
 @dataclass(init=True)
 class JohnsonParams:
@@ -1339,7 +1337,6 @@ class JohnsonParams:
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
-
 
 class JohnsonSmoother:
 
@@ -1450,27 +1447,35 @@ class JohnsonForward(JohnsonSmoother, TwoFilterSmoother):
 
         return Gaussian.Params.from_nat_params(out[0] + pred.eta1, out[1] + pred.eta2)
         
-    def init_backwd_var(self):
-        d = self.state_dim 
-        init_var = Gaussian.Params.from_nat_params(eta1=jnp.zeros((d,)), 
-                                               eta2=jnp.zeros((d,d)))
+    def init_backwd_var(self, obs, params):
 
-        return BackwdVar(base=init_var, tilde=init_var)
+
+        d = self.state_dim 
+        base = Gaussian.Params.from_nat_params(eta1=jnp.zeros((d,)), 
+                                               eta2=jnp.zeros((d,d)))               
+
+        tilde = Gaussian.Params.from_nat_params(*self._net.apply(params.net, obs))
+
+        return BackwdVar(base=base, tilde=tilde)
 
     def new_backwd_var(self, obs, next_backwd_var, params):
+        next_eta1_tilde, next_eta2_tilde = next_backwd_var.tilde.eta1, next_backwd_var.tilde.eta2
+
+        A, R = params.transition.map.w, params.transition.noise.scale.cov
+        K = inv(jnp.eye(self.state_dim) + next_eta2_tilde @ R)
+
+        base = Gaussian.Params.from_nat_params(eta1 = A.T @ K @ next_eta1_tilde, 
+                                                eta2 = A.T @ K @ next_eta2_tilde @ A)
+
         out = self._net.apply(params.net, obs)
 
-        backwd_var_tilde = Gaussian.Params.from_nat_params(out[0] + next_backwd_var.base.eta1, 
-                                                          out[1] + next_backwd_var.base.eta2)
 
-        eta1_temp, eta2_temp = backwd_var_tilde.eta1, backwd_var_tilde.eta2
-        A, R = params.transition.map.w, params.transition.noise.scale.cov
+        tilde = Gaussian.Params.from_nat_params(out[0] + base.eta1, 
+                                                out[1] + base.eta2)
 
-        K = inv(jnp.eye(self.state_dim) + eta2_temp @ R)
 
-        return BackwdVar(base=Gaussian.Params.from_nat_params(eta1 = A.T @ K @ eta1_temp, 
-                                                eta2 = A.T @ K @ eta2_temp @ A),
-                        tilde=backwd_var_tilde)
+        return BackwdVar(base=base,
+                        tilde=tilde)
 
     def forward_params_from_backwd_var(self, backwd_var:BackwdVar, params):
         return self.linear_gaussian_forward_params_from_backwd_variable_and_transition(backwd_var.tilde, params.transition)
@@ -1481,29 +1486,27 @@ class JohnsonForward(JohnsonSmoother, TwoFilterSmoother):
                                         formatted_params)
 
         @jit
-        def _step(carry, x):
-            prev_filt_params = carry
-            obs = x
+        def _step(carry, obs):
+            prev_filt_params, formatted_params = carry
             filt_params = self.new_filt_params(obs, prev_filt_params, formatted_params)
-            return filt_params, filt_params
+            return (filt_params, formatted_params), filt_params
 
-        state_seq = lax.scan(_step, init=init_filt_params, xs=obs_seq[1:])[1]
+        state_seq = lax.scan(_step, init=(init_filt_params, formatted_params), xs=obs_seq[1:])[1]
 
         return tree_prepend(init_filt_params, state_seq)
 
     def compute_backwd_variables_seq(self, obs_seq, formatted_params):
-        formatted_params.compute_covs()
 
-        last_backwd_var = self.init_backwd_var()
+        last_backwd_var = self.init_backwd_var(obs_seq[-1], formatted_params)
+
         @jit
-        def _step(carry, x):
-            next_backwd_var, params = carry
-            obs = x
-            backwd_var = self.new_backwd_var(obs, next_backwd_var, params)
-            return (backwd_var, params), backwd_var
+        def _step(carry, obs):
+            next_backwd_var, formatted_params = carry 
+            backwd_var = self.new_backwd_var(obs, next_backwd_var, formatted_params)
+            return (backwd_var, formatted_params), backwd_var
 
         backwd_variables_seq = lax.scan(_step, 
-                                        init=(last_backwd_var, formatted_params), 
+                                        init=(last_backwd_var, formatted_params),
                                         xs=obs_seq[:-1], 
                                         reverse=True)[1]
 
@@ -1521,14 +1524,41 @@ class JohnsonForward(JohnsonSmoother, TwoFilterSmoother):
         
         return vmap(self.compute_marginal)(filt_params_seq, backwd_variables_seq)
 
-    def smooth_seq(self, obs_seq, params):
+    def smooth_seq(self, obs_seq, params, lag=None):
+        
         formatted_params = self.format_params(params)
+        formatted_params.compute_covs()
 
-        return self.compute_marginals(self.compute_filt_params_seq(obs_seq, formatted_params),
-                                    self.compute_backwd_variables_seq(obs_seq, formatted_params))
+        marginal_smoothing_stats =  self.compute_marginals(self.compute_filt_params_seq(obs_seq, formatted_params),
+                                                            self.compute_backwd_variables_seq(obs_seq, formatted_params))
+
+        return marginal_smoothing_stats.mean, marginal_smoothing_stats.scale.cov
+
+    def smooth_seq_at_multiple_timesteps(self, obs_seq, params, slices):
+        formatted_params = self.format_params(params)
+        formatted_params.compute_covs()
+        filt_params_seq = self.compute_filt_params_seq(obs_seq, formatted_params)
+
+        def smooth_up_to_timestep(timestep):
+            marginals = self.compute_marginals(filt_params_seq=tree_get_slice(0, timestep, filt_params_seq), 
+                                                backwd_variables_seq=self.compute_backwd_variables_seq(obs_seq[:timestep], formatted_params))
+            return marginals.mean, marginals.scale.cov
+        means, covs = [], []
+
+        for timestep in slices:
+            mean, cov = smooth_up_to_timestep(timestep)
+            means.append(mean)
+            covs.append(cov)
+            
+        return means, covs  
 
     def filt_seq(self, obs_seq, params):
-        return self.compute_filt_params_seq(obs_seq, self.format_params(params))
+        formatted_params = self.format_params(params)
+        formatted_params.compute_covs()
+
+        filt_params_seq =  self.compute_filt_params_seq(obs_seq, formatted_params)
+
+        return vmap(lambda x:x.mean)(filt_params_seq), vmap(lambda x:x.scale.cov)(filt_params_seq)
         
 
 

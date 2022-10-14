@@ -1,7 +1,7 @@
 import haiku as hk 
 from jax import numpy as jnp, nn 
 import backward_ica.hmm as hmm
-
+from backward_ica.utils import chol_from_vec
 
 def deep_gru(obs, prev_state, layers):
 
@@ -55,19 +55,22 @@ def johnson(obs, layers, state_dim):
 
 def linear_gaussian_proj(state, d):
 
-    A_back_dim = d * d 
+    A_back_dim = (d * (d+1)) // 2
     a_back_dim = d
     Sigma_back_dim = (d * (d + 1)) // 2
-
-    net = hk.Linear(A_back_dim + a_back_dim + Sigma_back_dim, 
+    
+    out_dim = A_back_dim + a_back_dim + Sigma_back_dim
+    net = hk.nets.MLP(output_sizes=(8,8,out_dim),
+                activation=nn.tanh,
+                activate_final=False, 
                 w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                 b_init=hk.initializers.RandomNormal(),)
 
-    out = net(state.out)
+    out = net(jnp.concatenate(state.hidden))
 
-    A_back = out[:A_back_dim].reshape((d,d))
+    A_back_chol = chol_from_vec(out[:A_back_dim], d)
     a_back = out[A_back_dim:A_back_dim+a_back_dim]
     Sigma_back_vec = out[A_back_dim+a_back_dim:]
 
-    return hmm.Kernel.Params(map=hmm.Maps.LinearMapParams(w=A_back, b=a_back), 
-                        noise=hmm.Gaussian.NoiseParams.from_vec(Sigma_back_vec, d))
+    return hmm.Kernel.Params(map=hmm.Maps.LinearMapParams(w=A_back_chol @ A_back_chol.T + jnp.eye(d), b=a_back), 
+                        noise=hmm.Gaussian.NoiseParams.from_vec(Sigma_back_vec, d, chol_add=jnp.eye))

@@ -17,10 +17,11 @@ import math
 import dill 
 from backward_ica.elbos import BackwardLinearELBO
 import dill
+import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_10_10__16_40_43'
+exp_dir = 'experiments/p_chaotic_rnn/2022_10_14__18_19_48'
 
 method_names = ['neural_backward_linear', 
                 'external_campbell']
@@ -36,7 +37,7 @@ if method_names[1] == 'external_campbell':
     train_args.num_seqs = 1
     train_args.seq_length = 500
     
-utils.set_parametrization(train_args)
+hmm.set_parametrization(train_args)
 
 eval_dir = os.path.join(exp_dir, 'eval')
 os.makedirs(eval_dir, exist_ok=True)
@@ -134,11 +135,10 @@ if not load:
 class ExternalVariationalFamily():
 
     def __init__(self, save_dir):
-
         self.means_filt_q = jnp.load(os.path.join(save_dir, 'filter_means.npy'))[jnp.newaxis,:]
         self.covs_filt_q = jnp.load(os.path.join(save_dir, 'filter_covs.npy'))[jnp.newaxis,:]
-        with open(os.path.join(save_dir, 'smoothed_stats.dill'), 'rb') as f: 
-            smoothed_means, smoothed_covs = dill.load(f)
+        with open(os.path.join(save_dir, 'smoothed_stats.pickle'), 'rb') as f: 
+            smoothed_means, smoothed_covs = pickle.load(f)
         self.means_smooth_q_list = smoothed_means
         self.covs_smooth_q_list = smoothed_covs
 
@@ -187,12 +187,12 @@ for method_name in method_names:
             print(f'Computational time {method_name}', profile_q(key_phi, p, q, theta_star, phi, obs_seqs_profile))
 
         if not load: 
-            if isinstance(q, hmm.NeuralBackwardSmoother) and (not q.backward_help):
-                means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
-                means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,0, None, None))(keys_smooth_q, obs_seqs, phi, num_particles)
-            else:     
-                means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
-                means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,None,None))(obs_seqs, phi, lag)
+            # if isinstance(q, hmm.GeneraLBackwardSmoother) and (not q.backward_help):
+            #     means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
+            #     means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,0, None, None))(keys_smooth_q, obs_seqs, phi, num_particles)
+            # else:     
+            means_filt_q, covs_filt_q = jax.vmap(q.filt_seq, in_axes=(0, None))(obs_seqs, phi)
+            means_smooth_q, covs_smooth_q = jax.vmap(q.smooth_seq, in_axes=(0,None,None))(obs_seqs, phi, lag)
 
             filt_results.append((means_filt_q, covs_filt_q))
             smooth_results.append((means_smooth_q, covs_smooth_q))

@@ -82,7 +82,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--p_version', type=str, default='chaotic_rnn')
-    parser.add_argument('--q_version', type=str, default='johnson_forward')
+    parser.add_argument('--q_version', type=str, default='neural_backward_linear')
 
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--args_path', type=str, default='')

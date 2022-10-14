@@ -5,11 +5,11 @@ from datetime import datetime
 p_version = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_version}')
 
-q_versions = ['neural_backward_linear', 'johnson_backward']
+q_versions = ['neural_backward_linear', 'johnson_backward', 'johnson_forward']
 
-learning_rates = ['0.01', '0.01']
-num_epochs_list = ['500', '500']
-dims_list = ['5 5', '5 5']
+learning_rates = ['0.01', '0.01', '0.01']
+num_epochs_list = ['10000', '10000', '10000']
+dims_list = ['5 5', '5 5', '5 5']
 
 os.makedirs(base_dir, exist_ok=True)
 
