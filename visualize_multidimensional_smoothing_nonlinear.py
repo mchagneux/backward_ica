@@ -21,12 +21,12 @@ import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_10_14__18_19_48'
+exp_dir = 'experiments/p_chaotic_rnn/2022_10_14__21_13_33'
 
-method_names = ['neural_backward_linear', 
+method_names = ['johnson_backward', 
                 'external_campbell']
                 
-pretty_names = ['Ours', 
+pretty_names = ['Johnson Backward', 
                 'Campbell']
 
 train_args = utils.load_args('train_args', os.path.join(exp_dir, method_names[0]))
@@ -39,7 +39,7 @@ if method_names[1] == 'external_campbell':
     
 hmm.set_parametrization(train_args)
 
-eval_dir = os.path.join(exp_dir, 'eval')
+eval_dir = os.path.join(exp_dir, f'eval_{method_names[0]}')
 os.makedirs(eval_dir, exist_ok=True)
 from time import time
 

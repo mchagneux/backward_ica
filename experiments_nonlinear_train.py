@@ -8,7 +8,7 @@ base_dir = os.path.join('experiments', f'p_{p_version}')
 q_versions = ['neural_backward_linear', 'johnson_backward', 'johnson_forward']
 
 learning_rates = ['0.01', '0.01', '0.01']
-num_epochs_list = ['10000', '10000', '10000']
+num_epochs_list = ['1000', '1000', '1000']
 dims_list = ['5 5', '5 5', '5 5']
 
 os.makedirs(base_dir, exist_ok=True)

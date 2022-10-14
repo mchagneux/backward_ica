@@ -51,8 +51,9 @@ class GeneralForwardELBO:
 
         keys = jax.random.split(key, self.num_samples)
 
-        backwd_variables_seq = self.q.compute_backwd_variables_seq(obs_seq, phi)
-        init_law_params = self.q.compute_marginal(self.q.init_filt_params(obs_seq[0], phi), 
+        state_seq = self.q.compute_state_seq(obs_seq, phi)
+        backwd_variables_seq = self.q.compute_backwd_variables_seq(state_seq, phi)
+        init_law_params = self.q.compute_marginal(self.q.init_filt_params(tree_get_idx(0, state_seq), phi), 
                                                 tree_get_idx(0, backwd_variables_seq))
         forward_params_seq = vmap(self.q.forward_params_from_backwd_var, in_axes=(0,None))(tree_dropfirst(backwd_variables_seq), phi)
 
