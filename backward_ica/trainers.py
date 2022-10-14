@@ -51,28 +51,35 @@ class SVITrainer:
         # format_params = lambda params: self.q.format_params(params)
 
 
-        if online:
-            self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize, num_samples)
+
+        if isinstance(self.q, TwoFilterSmoother):
+            self.elbo = GeneralForwardELBO(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))[0]
-        else:
-            if force_full_mc: 
-                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+            self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
+
+        else: 
+            if online:
+                self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize, num_samples)
                 self.get_montecarlo_keys = get_keys
-                self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
+                self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))[0]
             else:
-                if isinstance(self.p, LinearGaussianHMM):
-                    self.elbo = LinearGaussianELBO(self.p, self.q)
-                    self.get_montecarlo_keys = get_dummy_keys
-                    self.loss = lambda key, data, params: -self.elbo(data, self.p.format_params(self.theta_star), q.format_params(params))
-                elif isinstance(self.q, LinearBackwardSmoother) and self.p.transition_kernel.map_type == 'linear':
-                    self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
-                    self.get_montecarlo_keys = get_keys
-                    self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
-                else:
+                if force_full_mc: 
                     self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                     self.get_montecarlo_keys = get_keys
                     self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
+                else:
+                    if isinstance(self.p, LinearGaussianHMM):
+                        self.elbo = LinearGaussianELBO(self.p, self.q)
+                        self.get_montecarlo_keys = get_dummy_keys
+                        self.loss = lambda key, data, params: -self.elbo(data, self.p.format_params(self.theta_star), q.format_params(params))
+                    elif isinstance(self.q, LinearBackwardSmoother) and self.p.transition_kernel.map_type == 'linear':
+                        self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
+                        self.get_montecarlo_keys = get_keys
+                        self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
+                    else:
+                        self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+                        self.get_montecarlo_keys = get_keys
+                        self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None):
 

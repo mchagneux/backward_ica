@@ -80,6 +80,11 @@ def get_variational_model(args, p=None, key_for_random_params=None):
                                     obs_dim=args.obs_dim, 
                                     layers=args.update_layers)
 
+    elif args.q_version == 'johnson_forward':
+            q = hmm.JohnsonForward(state_dim=args.state_dim, 
+                                    obs_dim=args.obs_dim, 
+                                    layers=args.update_layers)
+
 
     if key_for_random_params is not None:
         phi = q.get_random_params(key_for_random_params, args)
@@ -162,7 +167,7 @@ def get_config(p_version=None,
         args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (100,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
-    elif 'johnson_backward' in args.q_version:
+    elif 'johnson' in args.q_version:
         args.update_layers = (8,8)
 
     ## SMC 
@@ -261,8 +266,6 @@ def tree_get_slice(start, stop, tree):
 
 
 ## quadratic forms and Gaussian subroutines 
-
-
 
 @dataclass(init=True)
 @register_pytree_node_class
@@ -420,14 +423,6 @@ def inv_of_chol_from_chol(mat_chol):
     return solve_triangular(a=mat_chol, b=jnp.eye(mat_chol.shape[0]), lower=True)
 
 
-## normalizers 
-
-def exp_and_normalize(x):
-
-    x = jnp.exp(x - x.max())
-    return x / x.sum()
-
-
 
 ## user-defined types
 class lazy_property(object):
@@ -454,63 +449,6 @@ class lazy_property(object):
         return value
 
 
-State = namedtuple('State', ['out','hidden'])
-GeneralBackwdState = namedtuple('BackwardState', ['inner', 'varying'])
-
-def define_frozen_tree(key, frozen_params, q, theta_star):
-
-    # key_theta, key_phi = random.split(key, 2)
-
-    frozen_phi = q.get_random_params(key)
-    frozen_phi = tree_map(lambda x: '', frozen_phi)
-
-
-    # if 'theta' in frozen_params: 
-    #     frozen_theta = theta_star 
-
-    if 'prior_phi' in frozen_params:
-        if isinstance(q, hmm.LinearGaussianHMM) or (isinstance(q, hmm.NeuralLinearBackwardSmoother) and q.explicit_proposal):
-            frozen_phi.prior = theta_star.prior
-        else:
-            if isinstance(frozen_phi, GeneralBackwardSmootherParams):
-                frozen_phi.prior = GeneralBackwardSmootherParams(q.get_init_state(), frozen_phi.filt_update, frozen_phi.backwd)
-            else: 
-                frozen_phi.prior = q.get_init_state()
-    
-    if 'transition_phi' in frozen_params:
-        if isinstance(q, hmm.NeuralBackwardSmoother):
-            raise NotImplementedError
-        else: 
-            frozen_phi.transition = theta_star.transition
-
-    if 'covariances' in frozen_params: 
-        frozen_phi.transition.noise.scale = theta_star.transition.noise.scale
-    
-    # frozen_params = (frozen_theta, frozen_phi)
-
-    return frozen_phi
-
-def params_to_dict(params):
-    if isinstance(params, np.ndarray) or isinstance(params, DeviceArray):
-        return params
-    elif isinstance(params, dict):
-        for key, value in params.items():
-            params[key] = params_to_dict(value)
-        return params
-    elif hasattr(params, '__dict__'):
-        return params_to_dict(vars(params))
-    elif hasattr(params, '_asdict'): 
-        return params_to_dict(params._asdict())
-    else:
-        return params_to_dict({k:v for k,v in enumerate(params)})
-
-def params_to_flattened_dict(params):
-    params_dict = params_to_dict(params)
-    return pd.json_normalize(params_dict, sep='/').to_dict(orient='records')[0]
-    
-
-def empty_add(d):
-    return jnp.zeros((d,d))
 
 @register_pytree_node_class
 class Scale:
@@ -606,6 +544,101 @@ class Scale:
 
         if parametrization == 'prec_chol':scale=1/scale
         return {parametrization:scale}
+
+
+
+## normalizers 
+
+def exp_and_normalize(x):
+
+    x = jnp.exp(x - x.max())
+    return x / x.sum()
+
+
+
+## user-defined types
+class lazy_property(object):
+    r"""
+    Used as a decorator for lazy loading of class attributes. This uses a
+    non-data descriptor that calls the wrapped method to compute the property on
+    first call; thereafter replacing the wrapped method into an instance
+    attribute.
+    """
+
+    def __init__(self, wrapped):
+        self.wrapped = wrapped
+        update_wrapper(self, wrapped)
+
+    # This is to prevent warnings from sphinx
+    def __call__(self, *args, **kwargs):
+        return self.wrapped(*args, **kwargs)
+
+    def __get__(self, instance, obj_type=None):
+        if instance is None:
+            return self
+        value = self.wrapped(instance)
+        setattr(instance, self.wrapped.__name__, value)
+        return value
+
+
+State = namedtuple('State', ['out','hidden'])
+GeneralBackwdState = namedtuple('BackwardState', ['inner', 'varying'])
+
+def define_frozen_tree(key, frozen_params, q, theta_star):
+
+    # key_theta, key_phi = random.split(key, 2)
+
+    frozen_phi = q.get_random_params(key)
+    frozen_phi = tree_map(lambda x: '', frozen_phi)
+
+
+    # if 'theta' in frozen_params: 
+    #     frozen_theta = theta_star 
+
+    if 'prior_phi' in frozen_params:
+        if isinstance(q, hmm.LinearGaussianHMM) or (isinstance(q, hmm.NeuralLinearBackwardSmoother) and q.explicit_proposal):
+            frozen_phi.prior = theta_star.prior
+        else:
+            if isinstance(frozen_phi, GeneralBackwardSmootherParams):
+                frozen_phi.prior = GeneralBackwardSmootherParams(q.get_init_state(), frozen_phi.filt_update, frozen_phi.backwd)
+            else: 
+                frozen_phi.prior = q.get_init_state()
+    
+    if 'transition_phi' in frozen_params:
+        if isinstance(q, hmm.NeuralBackwardSmoother):
+            raise NotImplementedError
+        else: 
+            frozen_phi.transition = theta_star.transition
+
+    if 'covariances' in frozen_params: 
+        frozen_phi.transition.noise.scale = theta_star.transition.noise.scale
+    
+    # frozen_params = (frozen_theta, frozen_phi)
+
+    return frozen_phi
+
+def params_to_dict(params):
+    if isinstance(params, np.ndarray) or isinstance(params, DeviceArray):
+        return params
+    elif isinstance(params, dict):
+        for key, value in params.items():
+            params[key] = params_to_dict(value)
+        return params
+    elif hasattr(params, '__dict__'):
+        return params_to_dict(vars(params))
+    elif hasattr(params, '_asdict'): 
+        return params_to_dict(params._asdict())
+    else:
+        return params_to_dict({k:v for k,v in enumerate(params)})
+
+def params_to_flattened_dict(params):
+    params_dict = params_to_dict(params)
+    return pd.json_normalize(params_dict, sep='/').to_dict(orient='records')[0]
+    
+
+def empty_add(d):
+    return jnp.zeros((d,d))
+
 
 
 

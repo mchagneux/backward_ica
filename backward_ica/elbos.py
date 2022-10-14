@@ -12,15 +12,65 @@ def get_dummy_keys(key, num_seqs, num_epochs):
     return jnp.empty((num_epochs, num_seqs, 1))
 
 
-class GeneralELBO:
+class GeneralForwardELBO:
 
-    def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):
+    def __init__(self, p:HMM, q:TwoFilterSmoother, num_samples=200):
 
         self.p = p
         self.q = q
         self.num_samples = num_samples 
 
+    def __call__(self, key, obs_seq, theta, phi):
 
+        def _monte_carlo_sample(key, obs_seq, init_law_params, forward_params_seq):
+            keys = jax.random.split(key, obs_seq.shape[0])
+            init_sample = self.q.marginal_dist.sample(keys[0], init_law_params)
+            init_term = self.p.emission_kernel.logpdf(obs_seq[0], init_sample, theta.emission) \
+                        + self.p.prior_dist.logpdf(init_sample, theta.prior) \
+                        - self.q.marginal_dist.logpdf(init_sample, init_law_params)
+
+            def _sample_step(prev_sample, x):
+
+                key, obs, forward_params = x
+                sample = self.q.forward_kernel.sample(key, prev_sample, forward_params)
+                emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
+                transition_term_p = self.p.transition_kernel.logpdf(sample, prev_sample, theta.transition)
+                fwd_term_q = -self.q.forward_kernel.logpdf(sample, prev_sample, forward_params)
+
+                return sample, emission_term_p + transition_term_p + fwd_term_q
+
+            init_sample, terms = lax.scan(f=_sample_step, 
+                                        init=init_sample, 
+                                        xs=(keys[1:], obs_seq[1:], forward_params_seq), reverse=False)
+
+
+            return jnp.sum(terms) + init_term 
+
+
+        parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
+
+        keys = jax.random.split(key, self.num_samples)
+
+        backwd_variables_seq = self.q.compute_backwd_variables_seq(obs_seq, phi)
+        init_law_params = self.q.compute_marginal(self.q.init_filt_params(obs_seq[0], phi), 
+                                                tree_get_idx(0, backwd_variables_seq))
+        forward_params_seq = vmap(self.q.forward_params_from_backwd_var, in_axes=(0,None))(tree_droplast(backwd_variables_seq), phi)
+
+
+        mc_samples = parallel_sampler(keys, 
+                                    obs_seq, 
+                                    init_law_params,
+                                    forward_params_seq)
+
+        return jnp.mean(mc_samples)
+
+class GeneralBackwardELBO:
+
+    def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):
+
+        self.p = p
+        self.q = q
+        self.num_samples = num_samples
 
     def __call__(self, key, obs_seq, theta:HMM.Params, phi):
 
