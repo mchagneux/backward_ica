@@ -3,7 +3,7 @@ import os
 from datetime import datetime 
 
 p_version = 'chaotic_rnn'
-base_dir = os.path.join('experiments', f'p_{p_version}')
+base_dir = os.path.join('data/experiments', f'p_{p_version}')
 
 q_versions = ['neural_backward_linear', 'johnson_backward', 'johnson_forward']
 
