@@ -26,7 +26,7 @@ for q_version in q_versions:
     save_dirs.append(save_dir)
 
 
-processes = [subprocess.Popen(f'python train_nonlinear.py \
+processes = [subprocess.Popen(f'python train.py \
                                 --p_version {p_version} \
                                 --q_version {q_version} \
                                 --save_dir {save_dir} \
