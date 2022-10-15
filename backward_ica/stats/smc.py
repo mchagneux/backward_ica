@@ -1,9 +1,7 @@
 from jax.scipy.special import logsumexp
-import jax.numpy as jnp
-from jax import vmap, jit, lax, random
-from jax import lax, config
 
-from backward_ica.utils import tree_prepend, exp_and_normalize
+
+from backward_ica.utils import *
 
 def compute_pred_likel(probs):
     return 

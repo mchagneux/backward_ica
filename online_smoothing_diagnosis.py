@@ -3,7 +3,7 @@ import argparse
 import haiku as hk
 import jax
 import jax.numpy as jnp
-import backward_ica.hmm as hmm
+import backward_ica.models as models
 import backward_ica.utils as utils
 import backward_ica.smc as smc
 from backward_ica.elbos import GeneralBackwardELBO, LinearGaussianELBO, OnlineGeneralBackwardELBO, OnlineGeneralBackwardELBOSpecialInit, OnlineGeneralBackwardELBOV2
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import random
 import pandas as pd
 import math
-gaussian_distance = hmm.Gaussian.KL
+gaussian_distance = models.Gaussian.KL
 
 normalizer = smc.exp_and_normalize
 # normalizer = lambda x: jnp.mean(jnp.exp(x))
@@ -60,7 +60,7 @@ def plot():
                     samples_x = samples_old[:,dim_nb]
                     range_x = jnp.linspace(samples_x.min(), samples_x.max(), 1000)
                     mu, sigma = backwd_params.mean[dim_nb], backwd_params.scale.cov[dim_nb, dim_nb]
-                    backwd_pdf = lambda x: hmm.gaussian_pdf(x, mu, sigma)
+                    backwd_pdf = lambda x: models.gaussian_pdf(x, mu, sigma)
 
                     axes[dim_nb].plot(range_x,
                                     backwd_pdf(range_x),
@@ -81,7 +81,7 @@ def plot():
             plt.savefig(os.path.join(save_dir, f'seq_{seq_nb}_time_{time_idx}'))
             plt.close()
 
-def compute_distances_filt_and_backwd(q:hmm.BackwardSmoother, samples_seq, filt_params_seq, backwd_params_seq):
+def compute_distances_filt_and_backwd(q:models.BackwardSmoother, samples_seq, filt_params_seq, backwd_params_seq):
     samples_seq = utils.tree_dropfirst(samples_seq)
     filt_params_seq = utils.tree_droplast(filt_params_seq)
     def compute_distance_at_t(x_tp1, q_t_params, q_t_tp1_params):

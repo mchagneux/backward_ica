@@ -1,7 +1,10 @@
-from backward_ica.hmm import * 
-from backward_ica.elbos import * 
+from backward_ica.elbos import *
+from backward_ica.models import * 
+
 import tensorflow as tf 
 from jax.tree_util import tree_flatten
+import jax
+import optax 
 
 def winsorize_grads():
     def init_fn(_): 
@@ -9,10 +12,44 @@ def winsorize_grads():
     def update_fn(updates, state, params=None):
         flattened_updates = jnp.concatenate([arr.flatten() for arr in tree_flatten(updates)[0]])
         high_value = jnp.sort(jnp.abs(flattened_updates))[int(0.90*flattened_updates.shape[0])]
-        return jax.tree_map(lambda x: jnp.clip(x, -high_value, high_value), updates), ()
+        return tree_map(lambda x: jnp.clip(x, -high_value, high_value), updates), ()
     return optax.GradientTransformation(init_fn, update_fn)
 
 
+
+def define_frozen_tree(key, frozen_params, q, theta_star):
+
+    # key_theta, key_phi = random.split(key, 2)
+
+    frozen_phi = q.get_random_params(key)
+    frozen_phi = tree_map(lambda x: '', frozen_phi)
+
+
+    # if 'theta' in frozen_params: 
+    #     frozen_theta = theta_star 
+
+    if 'prior_phi' in frozen_params:
+        if isinstance(q, LinearGaussianHMM) or (isinstance(q, NeuralLinearBackwardSmoother) and q.explicit_proposal):
+            frozen_phi.prior = theta_star.prior
+        else:
+            if isinstance(frozen_phi, GeneralBackwardSmootherParams):
+                frozen_phi.prior = GeneralBackwardSmootherParams(q.get_init_state(), frozen_phi.filt_update, frozen_phi.backwd)
+            else: 
+                frozen_phi.prior = q.get_init_state()
+    
+    if 'transition_phi' in frozen_params:
+        if isinstance(q, NeuralBackwardSmoother):
+            raise NotImplementedError
+        else: 
+            frozen_phi.transition = theta_star.transition
+
+    if 'covariances' in frozen_params: 
+        frozen_phi.transition.noise.scale = theta_star.transition.noise.scale
+    
+    # frozen_params = (frozen_theta, frozen_phi)
+
+    return frozen_phi
+    
 class SVITrainer:
 
     def __init__(self, p:HMM, 

@@ -15,7 +15,6 @@ import dill
 import argparse
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
-from backward_ica import hmm
 import numpy as np
 import pandas as pd
 from jaxlib.xla_extension import DeviceArray
@@ -29,73 +28,14 @@ def moving_window(a, size: int):
 chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-10-03_17-00-46_Train_run'
 
 
+
+_conditionnings = {'diagonal':lambda param, d: jnp.diag(param),
+                'sym_def_pos': lambda param, d: mat_from_chol_vec(param, d) + jnp.eye(d),
+                None:lambda x, d:x,
+                'init_invertible': lambda x,d:x + jnp.eye(d)}
+
+
 ## config routines and model selection
-
-def get_generative_model(args, key_for_random_params=None):
-
-    if args.p_version == 'linear':
-        p = hmm.LinearGaussianHMM(args.state_dim, 
-                                args.obs_dim, 
-                                args.transition_matrix_conditionning, 
-                                args.range_transition_map_params,
-                                args.transition_bias, 
-                                args.emission_bias)
-    elif 'chaotic_rnn' in args.p_version:
-        p = hmm.NonLinearHMM.chaotic_rnn(args)
-    else: 
-        p = hmm.NonLinearHMM.linear_transition_with_nonlinear_emission(args) # specify the structure of the true model
-    
-    if key_for_random_params is not None:
-        theta_star = p.get_random_params(key_for_random_params, args)
-        return p, theta_star
-    else:
-        return p
-
-def get_variational_model(args, p=None, key_for_random_params=None):
-
-    if args.q_version == 'linear':
-
-        q = hmm.LinearGaussianHMM(state_dim=args.state_dim, 
-                            obs_dim=args.obs_dim,
-                            transition_matrix_conditionning=args.transition_matrix_conditionning,
-                            range_transition_map_params=args.range_transition_map_params,
-                            transition_bias=args.transition_bias, 
-                            emission_bias=args.emission_bias)
-
-    elif 'neural_backward_linear' in args.q_version:
-        if (p is not None) and (p.transition_kernel.map_type == 'linear'):
-            q = hmm.NeuralLinearBackwardSmoother.with_transition_from_p(p, args.update_layers)
-
-        elif 'backwd_net' in args.q_version:
-            q = hmm.NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
-                                                obs_dim=args.obs_dim,
-                                                transition_kernel=None,
-                                                update_layers=args.update_layers)
-        else:
-            q = hmm.NeuralLinearBackwardSmoother.with_linear_gaussian_transition_kernel(p, args.update_layers)
-        
-    # elif args.q_version == 'neural_backward':
-    #     q = hmm.NeuralBackwardSmoother(state_dim=args.state_dim, 
-    #                                     obs_dim=args.obs_dim, 
-    #                                     update_layers=args.update_layers,
-    #                                     backwd_layers=args.backwd_map_layers)
-
-    elif args.q_version == 'johnson_backward':
-            q = hmm.JohnsonBackward(state_dim=args.state_dim, 
-                                    obs_dim=args.obs_dim, 
-                                    layers=args.update_layers)
-
-    elif args.q_version == 'johnson_forward':
-            q = hmm.JohnsonForward(state_dim=args.state_dim, 
-                                    obs_dim=args.obs_dim, 
-                                    layers=args.update_layers)
-
-
-    if key_for_random_params is not None:
-        phi = q.get_random_params(key_for_random_params, args)
-        return q, phi
-    else:
-        return q
 
 def get_config(p_version=None, 
             q_version=None, 
@@ -455,104 +395,6 @@ class lazy_property(object):
 
 
 
-@register_pytree_node_class
-class Scale:
-
-    parametrization = 'cov_chol'
-
-    def __init__(self, cov_chol=None, prec_chol=None, cov=None, prec=None):
-
-        if cov is not None:
-            self.cov = cov
-            self.cov_chol = cholesky(cov)
-
-        elif prec is not None:
-            self.prec = prec
-            self.prec_chol = cholesky(prec)
-        
-        elif cov_chol is not None:
-            self.cov_chol = cov_chol
-
-        elif prec_chol is not None: 
-            self.prec_chol = prec_chol 
-        else:
-            raise ValueError()        
-
-    @lazy_property
-    def cov(self):
-        if 'cov_chol' in vars(self).keys():
-            return mat_from_chol(self.cov_chol)
-        else: return inv_from_chol(self.prec_chol)
-
-    @lazy_property
-    def prec(self):
-        if 'prec_chol' in vars(self).keys():
-            return mat_from_chol(self.prec_chol)
-        else: return inv_from_chol(self.cov_chol)
-
-
-    @lazy_property
-    def cov_chol(self):
-        return cholesky(self.cov)
-
-    @lazy_property
-    def prec_chol(self):
-        return cholesky(self.prec)
-
-
-    @property
-    def chol(self):
-        if 'cov_chol' in vars(self).keys(): 
-            return self.cov_chol
-        else: 
-            return self.prec_chol
-
-    @lazy_property
-    def log_det(self):
-        if 'cov_chol' in vars(self).keys():
-            return log_det_from_chol(self.cov_chol)
-        else: return log_det_from_chol(chol_from_prec(self.prec))
-
-
-    def tree_flatten(self):
-        attrs = vars(self)
-        children = attrs.values()
-        aux_data = attrs.keys()
-        return (children, aux_data)
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, params):
-        obj = cls.__new__(cls)
-        for k,v in zip(aux_data, params):
-            setattr(obj, k, v)
-        return obj
-
-    def __repr__(self):
-        return str(vars(self))
-
-    @staticmethod
-    def get_random(key, dim, parametrization):
-
-        scale = random.uniform(key, shape=(dim,), minval=-1, maxval=1)
-
-        if parametrization == 'prec_chol':scale=1/scale
-
-        return {parametrization:scale}
-
-    @classmethod
-    def format(cls, scale):
-        base_scale =  {k:jnp.diag(v) for k,v in scale.items()}
-        return cls(**base_scale)
-
-    @staticmethod
-    def set_default(previous_value, default_value, parametrization):
-        scale = default_value * jnp.ones_like(previous_value[parametrization])
-
-        if parametrization == 'prec_chol':scale=1/scale
-        return {parametrization:scale}
-
-
-
 ## normalizers 
 
 def exp_and_normalize(x):
@@ -562,66 +404,6 @@ def exp_and_normalize(x):
 
 
 
-## user-defined types
-class lazy_property(object):
-    r"""
-    Used as a decorator for lazy loading of class attributes. This uses a
-    non-data descriptor that calls the wrapped method to compute the property on
-    first call; thereafter replacing the wrapped method into an instance
-    attribute.
-    """
-
-    def __init__(self, wrapped):
-        self.wrapped = wrapped
-        update_wrapper(self, wrapped)
-
-    # This is to prevent warnings from sphinx
-    def __call__(self, *args, **kwargs):
-        return self.wrapped(*args, **kwargs)
-
-    def __get__(self, instance, obj_type=None):
-        if instance is None:
-            return self
-        value = self.wrapped(instance)
-        setattr(instance, self.wrapped.__name__, value)
-        return value
-
-
-State = namedtuple('State', ['out','hidden'])
-GeneralBackwdState = namedtuple('BackwardState', ['inner', 'varying'])
-
-def define_frozen_tree(key, frozen_params, q, theta_star):
-
-    # key_theta, key_phi = random.split(key, 2)
-
-    frozen_phi = q.get_random_params(key)
-    frozen_phi = tree_map(lambda x: '', frozen_phi)
-
-
-    # if 'theta' in frozen_params: 
-    #     frozen_theta = theta_star 
-
-    if 'prior_phi' in frozen_params:
-        if isinstance(q, hmm.LinearGaussianHMM) or (isinstance(q, hmm.NeuralLinearBackwardSmoother) and q.explicit_proposal):
-            frozen_phi.prior = theta_star.prior
-        else:
-            if isinstance(frozen_phi, GeneralBackwardSmootherParams):
-                frozen_phi.prior = GeneralBackwardSmootherParams(q.get_init_state(), frozen_phi.filt_update, frozen_phi.backwd)
-            else: 
-                frozen_phi.prior = q.get_init_state()
-    
-    if 'transition_phi' in frozen_params:
-        if isinstance(q, hmm.NeuralBackwardSmoother):
-            raise NotImplementedError
-        else: 
-            frozen_phi.transition = theta_star.transition
-
-    if 'covariances' in frozen_params: 
-        frozen_phi.transition.noise.scale = theta_star.transition.noise.scale
-    
-    # frozen_params = (frozen_theta, frozen_phi)
-
-    return frozen_phi
 
 def params_to_dict(params):
     if isinstance(params, np.ndarray) or isinstance(params, DeviceArray):
@@ -641,10 +423,8 @@ def params_to_flattened_dict(params):
     params_dict = params_to_dict(params)
     return pd.json_normalize(params_dict, sep='/').to_dict(orient='records')[0]
     
-
 def empty_add(d):
     return jnp.zeros((d,d))
-
 
 
 

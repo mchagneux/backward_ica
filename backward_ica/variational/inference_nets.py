@@ -1,7 +1,8 @@
 import haiku as hk 
 from jax import numpy as jnp, nn 
-import backward_ica.hmm as hmm
-from backward_ica.utils import chol_from_vec
+from backward_ica.utils import *
+from backward_ica.stats.distributions import * 
+from backward_ica.stats.kernels import * 
 
 def deep_gru(obs, prev_state, layers):
 
@@ -18,7 +19,7 @@ def gaussian_proj(state, d):
 
     out = net(state.out)
     
-    return hmm.Gaussian.Params.from_vec(out, d, diag=False)
+    return Gaussian.Params.from_vec(out, d, diag=False)
 
 def backwd_update_forward(varying_params, next_state, layers, state_dim):
 
@@ -33,7 +34,7 @@ def backwd_update_forward(varying_params, next_state, layers, state_dim):
     
     out = net(jnp.concatenate((varying_params, next_state)))
 
-    out = hmm.Gaussian.Params.from_vec(out, d, diag=False)
+    out = Gaussian.Params.from_vec(out, d, diag=False)
 
     return out.mean, out.scale
 
@@ -72,5 +73,5 @@ def linear_gaussian_proj(state, d):
     a_back = out[A_back_dim:A_back_dim+a_back_dim]
     Sigma_back_vec = out[A_back_dim+a_back_dim:]
 
-    return hmm.Kernel.Params(map=hmm.Maps.LinearMapParams(w=A_back_chol @ A_back_chol.T + jnp.eye(d), b=a_back), 
-                        noise=hmm.Gaussian.NoiseParams.from_vec(Sigma_back_vec, d, chol_add=jnp.eye))
+    return Kernel.Params(map=Maps.LinearMapParams(w=A_back_chol @ A_back_chol.T + jnp.eye(d), b=a_back), 
+                        noise=Gaussian.NoiseParams.from_vec(Sigma_back_vec, d, chol_add=jnp.eye))

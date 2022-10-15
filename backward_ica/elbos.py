@@ -1,7 +1,8 @@
 import jax
 from jax import vmap, lax, numpy as jnp
-from .hmm import *
+from .models import *
 from .utils import *
+from backward_ica.stats import BackwardSmoother, TwoFilterSmoother
 
 def get_keys(key, num_seqs, num_epochs):
     keys = jax.random.split(key, num_seqs * num_epochs)

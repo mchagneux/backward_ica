@@ -1,22 +1,23 @@
 import jax 
 import jax.numpy as jnp
 
-import backward_ica.hmm as hmm
 import backward_ica.utils as utils
-from backward_ica.trainers import SVITrainer
+import backward_ica.models as models
+import backward_ica.stats as stats
+from backward_ica.training import SVITrainer, define_frozen_tree
 
 utils.enable_x64(True)
 
 def main(args, save_dir):
 
-    hmm.set_parametrization(args)
+    stats.set_parametrization(args)
 
     key_theta = jax.random.PRNGKey(args.seed_theta)
     key_phi = jax.random.PRNGKey(args.seed_phi)
 
     key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
 
-    p, theta_star = utils.get_generative_model(args, key_for_random_params=key_params)
+    p, theta_star = models.get_generative_model(args, key_for_random_params=key_params)
 
     utils.save_params(theta_star, 'theta', save_dir)
 
@@ -37,13 +38,13 @@ def main(args, save_dir):
 
         print('Oracle evidence:', avg_evidence)
 
-    q = utils.get_variational_model(args, p=p)
+    q = models.get_variational_model(args, p=p)
 
 
-    frozen_params = utils.define_frozen_tree(key_phi, 
-                                            args.frozen_params, 
-                                            q, 
-                                            theta_star)
+    frozen_params = define_frozen_tree(key_phi, 
+                                        args.frozen_params, 
+                                        q, 
+                                        theta_star)
     
 
     trainer = SVITrainer(p=p, 
