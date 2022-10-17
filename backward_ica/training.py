@@ -1,5 +1,6 @@
 from backward_ica.elbos import *
-from backward_ica.models import * 
+from backward_ica.stats.hmm import * 
+from backward_ica.variational.models import *
 
 import tensorflow as tf 
 from jax.tree_util import tree_flatten
@@ -31,16 +32,16 @@ def define_frozen_tree(key, frozen_params, q, theta_star):
     if 'prior_phi' in frozen_params:
         if isinstance(q, LinearGaussianHMM) or (isinstance(q, NeuralLinearBackwardSmoother) and q.explicit_proposal):
             frozen_phi.prior = theta_star.prior
-        else:
-            if isinstance(frozen_phi, GeneralBackwardSmootherParams):
-                frozen_phi.prior = GeneralBackwardSmootherParams(q.get_init_state(), frozen_phi.filt_update, frozen_phi.backwd)
-            else: 
-                frozen_phi.prior = q.get_init_state()
+        # else:
+        #     if isinstance(frozen_phi, GeneralBackwardSmootherParams):
+        #         frozen_phi.prior = GeneralBackwardSmootherParams(q.get_init_state(), frozen_phi.filt_update, frozen_phi.backwd)
+        #     else: 
+        #         frozen_phi.prior = q.get_init_state()
     
     if 'transition_phi' in frozen_params:
-        if isinstance(q, NeuralBackwardSmoother):
-            raise NotImplementedError
-        else: 
+        # if isinstance(q, NeuralBackwardSmoother):
+        #     raise NotImplementedError
+        # else: 
             frozen_phi.transition = theta_star.transition
 
     if 'covariances' in frozen_params: 

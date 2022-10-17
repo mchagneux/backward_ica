@@ -1,7 +1,5 @@
-from collections import namedtuple
 from dataclasses import dataclass
 
-from typing import Any
 from jax import numpy as jnp, vmap, config, random, jit, scipy as jsp, lax
 from functools import update_wrapper, partial
 from jax.tree_util import register_pytree_node_class, tree_map

@@ -2,7 +2,7 @@ from .distributions import *
 import haiku as hk 
 from jax import nn 
 from backward_ica.utils import _conditionnings
-
+from collections import namedtuple
 class Maps:
 
     @register_pytree_node_class

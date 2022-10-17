@@ -1,6 +1,6 @@
 import jax
 from jax import vmap, lax, numpy as jnp
-from .models import *
+from .stats.hmm import *
 from .utils import *
 from backward_ica.stats import BackwardSmoother, TwoFilterSmoother
 

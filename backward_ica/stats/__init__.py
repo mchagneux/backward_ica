@@ -1,9 +1,13 @@
 from .distributions import *
 from .kernels import *
 from abc import ABCMeta, abstractmethod
-
+from collections import namedtuple
 def set_parametrization(args):
     Scale.parametrization = args.parametrization
+
+
+State = namedtuple('State', ['out','hidden'])
+GeneralBackwdState = namedtuple('BackwardState', ['inner', 'varying'])
 
 
 class BackwardSmoother(metaclass=ABCMeta):
