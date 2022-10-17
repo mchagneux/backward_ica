@@ -84,7 +84,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--p_version', type=str, default='chaotic_rnn')
-    parser.add_argument('--q_version', type=str, default='johnson_forward')
+    parser.add_argument('--q_version', type=str, default='neural_backward_linear')
 
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--args_path', type=str, default='')
@@ -103,7 +103,7 @@ if __name__ == '__main__':
     save_dir = args.save_dir
 
     if save_dir=='':
-        save_dir = os.path.join('experiments','tests',date)
+        save_dir = os.path.join('data/experiments','tests',date)
         os.makedirs(save_dir, exist_ok=True)
 
     if args.args_path != '':

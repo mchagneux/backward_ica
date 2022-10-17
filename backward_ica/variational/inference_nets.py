@@ -6,7 +6,7 @@ from backward_ica.stats.kernels import *
 
 def deep_gru(obs, prev_state, layers):
 
-    gru = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in (*layers,)])
+    gru = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in layers])
 
     return gru(obs, prev_state)
 

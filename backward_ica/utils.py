@@ -205,7 +205,7 @@ def tree_get_idx(idx, tree):
 
 def tree_get_slice(start, stop, tree):
     '''Get idx row from each leaf of tuple'''
-    return tree_map(lambda a: a[start:stop], tree)
+    return tree_map(lambda a: lax.dynamic_slice_in_dim(a, start, stop-start), tree)
 
 
 ## quadratic forms and Gaussian subroutines 
@@ -367,7 +367,7 @@ def inv_of_chol_from_chol(mat_chol):
 
 
 
-## user-defined types
+## tool for lazy eval 
 class lazy_property(object):
     r"""
     Used as a decorator for lazy loading of class attributes. This uses a
@@ -394,7 +394,6 @@ class lazy_property(object):
 
 
 ## normalizers 
-
 def exp_and_normalize(x):
 
     x = jnp.exp(x - x.max())

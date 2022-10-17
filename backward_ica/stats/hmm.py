@@ -193,7 +193,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         mean, cov = Kalman.init(obs, params.prior, params.emission)
 
-        return State(out=(mean, cov), hidden=None)
+        return State(out=(mean, cov), hidden=jnp.empty_like(mean))
     
     def new_state(self, obs, prev_state, params):
 
@@ -201,7 +201,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         
         mean, cov = Kalman.update(pred_mean, pred_cov, obs, params.emission)
 
-        return State(out=(mean, cov), hidden=None)
+        return State(out=(mean, cov), hidden=jnp.empty_like(mean))
     
     def backwd_params_from_state(self, state, params):
 

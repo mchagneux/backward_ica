@@ -3,9 +3,11 @@ from typing import NamedTuple
 import haiku as hk 
 import jax 
 import jax.numpy as jnp
-import backward_ica.hmm as hmm 
+import backward_ica.stats.hmm as hmm
+from backward_ica.stats import set_parametrization
+import backward_ica.variational.models as models
 import backward_ica.utils as utils 
-import backward_ica.smc as smc
+import backward_ica.stats.smc as smc
 import seaborn as sns
 import os 
 import matplotlib.pyplot as plt
@@ -13,20 +15,18 @@ import numpy as np
 from functools import partial
 import pandas as pd
 from pandas.plotting import table
-import math
 import dill 
 from backward_ica.elbos import BackwardLinearELBO
-import dill
 import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_10_14__21_13_33'
+exp_dir = 'data/experiments/p_chaotic_rnn/2022_10_17__18_36_57'
 
-method_names = ['johnson_backward', 
+method_names = ['neural_backward_linear', 
                 'external_campbell']
                 
-pretty_names = ['Johnson Backward', 
+pretty_names = ['Ours', 
                 'Campbell']
 
 train_args = utils.load_args('train_args', os.path.join(exp_dir, method_names[0]))
@@ -37,7 +37,7 @@ if method_names[1] == 'external_campbell':
     train_args.num_seqs = 1
     train_args.seq_length = 500
     
-hmm.set_parametrization(train_args)
+set_parametrization(train_args)
 
 eval_dir = os.path.join(exp_dir, f'eval_{method_names[0]}')
 os.makedirs(eval_dir, exist_ok=True)
@@ -90,7 +90,7 @@ def profile_q(key, p, q, theta, phi, obs_seqs):
     return time_inference, time_elbo, time_grad_elbo
 
     
-p = utils.get_generative_model(train_args)
+p = hmm.get_generative_model(train_args)
 theta_star = utils.load_params('theta', os.path.join(exp_dir, method_names[0]))
 
 if load: 
@@ -175,7 +175,7 @@ for method_name in method_names:
         key_phi, key_filt_q, key_smooth_q = jax.random.split(key_phi, 3)
         keys_smooth_q = jax.random.split(key_smooth_q, num_seqs)
 
-        q = utils.get_variational_model(args, p)
+        q = models.get_variational_model(args, p)
 
         if visualize_init: 
             phi = q.get_random_params(key_phi, args)

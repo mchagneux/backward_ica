@@ -4,6 +4,7 @@ from abc import ABCMeta, abstractmethod
 from collections import namedtuple
 def set_parametrization(args):
     Scale.parametrization = args.parametrization
+from jax import lax, numpy as jnp 
 
 
 State = namedtuple('State', ['out','hidden'])
@@ -49,19 +50,25 @@ class BackwardSmoother(metaclass=ABCMeta):
     def smooth_seq(self, *args):
         raise NotImplementedError
 
-    def compute_state_seq(self, obs_seq, formatted_params):
+    def compute_state_seq(self, obs_seq, compute_up_to, formatted_params):
+
+        mask_seq = jnp.arange(0, len(obs_seq)) <= compute_up_to
 
         init_state = self.init_state(obs_seq[0], 
                                     formatted_params)
 
+        def false_fun(obs, prev_state, params):
+            return prev_state
+
         @jit
         def _step(carry, x):
             prev_state, params = carry
-            obs = x
-            state = self.new_state(obs, prev_state, params)
+            obs, mask = x
+            state = lax.cond(mask, self.new_state, false_fun, 
+                            obs, prev_state, params)
             return (state, params), state
 
-        state_seq = lax.scan(_step, init=(init_state, formatted_params), xs=obs_seq[1:])[1]
+        state_seq = lax.scan(_step, init=(init_state, formatted_params), xs=(obs_seq[1:], mask_seq[1:]))[1]
 
         return tree_prepend(init_state, state_seq)
 
@@ -205,7 +212,7 @@ class LinearBackwardSmoother(BackwardSmoother):
     def filt_seq(self, obs_seq, params):
         formatted_params = self.format_params(params)
 
-        state_seq = self.compute_state_seq(obs_seq, formatted_params)
+        state_seq = self.compute_state_seq(obs_seq, len(obs_seq), formatted_params)
         filt_params_seq = self.compute_filt_params_seq(state_seq, formatted_params)
         return vmap(lambda x:x.mean)(filt_params_seq), vmap(lambda x:x.scale.cov)(filt_params_seq)
     
@@ -213,7 +220,7 @@ class LinearBackwardSmoother(BackwardSmoother):
         
         formatted_params = self.format_params(params)
 
-        state_seq = self.compute_state_seq(obs_seq, formatted_params)
+        state_seq = self.compute_state_seq(obs_seq, len(obs_seq), formatted_params)
         filt_params_seq = self.compute_filt_params_seq(state_seq, formatted_params)
         backwd_params_seq = self.compute_backwd_params_seq(state_seq, formatted_params)
 
@@ -228,7 +235,7 @@ class LinearBackwardSmoother(BackwardSmoother):
         formatted_params = self.format_params(params)
 
 
-        state_seq = self.compute_state_seq(obs_seq, formatted_params)
+        state_seq = self.compute_state_seq(obs_seq, len(obs_seq), formatted_params)
         filt_params_seq = self.compute_filt_params_seq(state_seq, formatted_params)
         backwd_params_seq = self.compute_backwd_params_seq(state_seq, formatted_params)
 

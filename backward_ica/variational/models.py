@@ -5,6 +5,7 @@ from backward_ica.stats.kalman import Kalman
 from backward_ica.stats.hmm import HMM, LinearGaussianHMM
 
 from jax.tree_util import tree_leaves
+from jax import numpy as jnp 
 from backward_ica.utils import * 
 import copy
 from typing import Any 
@@ -206,7 +207,6 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         print('-- in filt:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt)))
     
 
-
 @register_pytree_node_class
 @dataclass(init=True)
 class JohnsonParams:
@@ -290,9 +290,9 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
     def backwd_params_from_state(self, state, params):
         return self.linear_gaussian_backwd_params_from_transition_and_filt(state.mean, state.scale.cov, params.transition)
 
-    def compute_state_seq(self, obs_seq, formatted_params):
+    def compute_state_seq(self, obs_seq, compute_up_to, formatted_params):
         formatted_params.compute_covs()
-        return super().compute_state_seq(obs_seq, formatted_params)
+        return super().compute_state_seq(obs_seq, compute_up_to, formatted_params)
 
 BackwdVar = namedtuple('BackwdVar', ['base', 'tilde'])
 
