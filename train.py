@@ -7,9 +7,10 @@ import backward_ica.variational.models as variational_models
 import backward_ica.stats as stats
 from backward_ica.training import SVITrainer, define_frozen_tree
 
-utils.enable_x64(True)
+# jax.config.update('jax_disable_jit', True)
 
 def main(args, save_dir):
+    if args.float64: utils.enable_x64(True)
 
     stats.set_parametrization(args)
 
@@ -28,7 +29,6 @@ def main(args, save_dir):
                                             args.seq_length, 
                                             single_split_seq=args.single_split_seq,
                                             loaded_data=args.loaded_data)[1]
-
 
     evidence_keys = jax.random.split(key_smc, args.num_seqs)
 
@@ -59,7 +59,7 @@ def main(args, save_dir):
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
                         online=args.online,
-                        sweep_sequence=False)
+                        sweep_sequences=args.sweep_sequences)
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
@@ -90,20 +90,22 @@ if __name__ == '__main__':
     parser.add_argument('--args_path', type=str, default='')
     parser.add_argument('--dims', type=int, nargs='+', default=(5,5))
     parser.add_argument('--batch_size', type=int, default=20)
-    parser.add_argument('--learning_rate', type=float, default=0.1)
-    parser.add_argument('--num_epochs', type=int, default=1000)
+    parser.add_argument('--learning_rate', type=float, default=0.01)
+    parser.add_argument('--num_epochs', type=int, default=10000)
     parser.add_argument('--num_samples', type=int, default=1)
     parser.add_argument('--num_seqs', type=int, default=1000)
-    parser.add_argument('--seq_length',type=int, default=100)
+    parser.add_argument('--seq_length',type=int, default=500)
     parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
-    parser.add_argument('--load_sequences',type=bool, default=False)
+    parser.add_argument('--load_sequences', action='store_true')
+    parser.add_argument('--sweep_sequences', action='store_true')
+    parser.add_argument('--float64', action='store_true')
 
     args = parser.parse_args()
 
     save_dir = args.save_dir
 
     if save_dir=='':
-        save_dir = os.path.join('data/experiments','tests',date)
+        save_dir = os.path.join('experiments','tests',date)
         os.makedirs(save_dir, exist_ok=True)
 
     if args.args_path != '':

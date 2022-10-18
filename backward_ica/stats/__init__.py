@@ -105,7 +105,7 @@ class TwoFilterSmoother(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def compute_backwd_variables_seq(self, state_seq, formatted_params):
+    def compute_backwd_variables_seq(self, state_seq, compute_up_to, formatted_params):
         raise NotImplementedError
 
     @abstractmethod 

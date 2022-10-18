@@ -5,7 +5,7 @@ from backward_ica.stats.kalman import Kalman
 from backward_ica.stats.hmm import HMM, LinearGaussianHMM
 
 from jax.tree_util import tree_leaves
-from jax import numpy as jnp 
+from jax import numpy as jnp, lax
 from backward_ica.utils import * 
 import copy
 from typing import Any 
@@ -265,6 +265,14 @@ class JohnsonSmoother:
                 new_params.prior.scale = Scale.set_default(params.prior.scale, v, Scale.parametrization)
         return new_params
 
+    def print_num_params(self):
+        params = self.get_random_params(random.PRNGKey(0))
+        print('Num params:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params)))
+        print('-- in prior:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior,))))
+        print('-- in transition:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.transition,))))
+        print('-- in net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.net,))))
+    
+
 class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
 
     def __init__(self, state_dim, obs_dim, layers):
@@ -387,22 +395,42 @@ class JohnsonForward(JohnsonSmoother, TwoFilterSmoother):
 
         return tree_prepend(init_filt_params, filt_params_seq)
 
-    def compute_backwd_variables_seq(self, state_seq, formatted_params):
+    def compute_backwd_variables_seq(self, state_seq, compute_up_to, formatted_params):
 
-        last_backwd_var = self.init_backwd_var(tree_get_idx(-1, state_seq), formatted_params)
+        empty_backwd_var_comp = Gaussian.Params.from_nat_params(eta1=jnp.empty((self.state_dim,)), 
+                                        eta2=jnp.empty((self.state_dim,self.state_dim)))      
+        empty_backwd_var = BackwdVar(base=empty_backwd_var_comp, tilde=empty_backwd_var_comp)
 
         @jit
-        def _step(carry, state):
-            next_backwd_var, formatted_params = carry 
-            backwd_var = self.new_backwd_var(state, next_backwd_var, formatted_params)
-            return (backwd_var, formatted_params), backwd_var
+        def _step(carry, x):
+
+            next_backwd_var, params = carry 
+            idx = x
+
+            def false_fun(idx, next_backwd_var, params):
+
+                return empty_backwd_var
+
+            def true_fun(idx, next_backwd_var, params):
+
+                def last_term(idx, next_backwd_var, params):
+                    return self.init_backwd_var(tree_get_idx(idx, state_seq), params)
+                def other_terms(idx, next_backwd_var, params):
+                    return self.new_backwd_var(tree_get_idx(idx, state_seq), next_backwd_var, params)
+
+                return lax.cond(idx < compute_up_to, other_terms, last_term, idx, next_backwd_var, params)
+
+            backwd_var = lax.cond(idx <= compute_up_to, true_fun, false_fun, idx, next_backwd_var, params)
+
+            return (backwd_var, params), backwd_var
+        
 
         backwd_variables_seq = lax.scan(_step, 
-                                        init=(last_backwd_var, formatted_params),
-                                        xs=tree_droplast(state_seq), 
+                                        init=(empty_backwd_var, formatted_params),
+                                        xs=jnp.arange(0, len(state_seq[0])),
                                         reverse=True)[1]
 
-        return tree_append(backwd_variables_seq, last_backwd_var)
+        return backwd_variables_seq
 
     def compute_marginal(self, filt_params:Gaussian.Params, backwd_variable:Gaussian.Params):
         mu, Sigma = filt_params.mean, filt_params.scale.cov
@@ -460,7 +488,7 @@ class JohnsonForward(JohnsonSmoother, TwoFilterSmoother):
 
 
 
-    
+
 # class NeuralBackwardSmoother(BackwardSmoother):
 
 #     def __init__(self, 

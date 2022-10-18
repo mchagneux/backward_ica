@@ -3,13 +3,19 @@ import os
 from datetime import datetime 
 
 p_version = 'chaotic_rnn'
-base_dir = os.path.join('data/experiments', f'p_{p_version}')
+base_dir = os.path.join('experiments', f'p_{p_version}')
 
-q_versions = ['neural_backward_linear', 'johnson_backward']
-learning_rates = ['0.01', '0.01']
-num_epochs_list = ['5000', '5000']
-dims_list = ['5 5', '5 5']
+q_versions = ['neural_backward_linear', 'johnson_forward', 'johnson_backward']
+
+num_epochs = 5000
+learning_rate = 0.01
+dims = '5 5'
 load_sequences = True
+sweep_sequences = False
+seq_length = 500
+num_samples = 10
+float64 = True
+
 os.makedirs(base_dir, exist_ok=True)
 
 logfiles = []
@@ -24,27 +30,25 @@ for q_version in q_versions:
     logfiles.append(f)
     save_dirs.append(save_dir)
 
-
-processes = [subprocess.Popen(f'python train.py \
+load_sequences = '--load_sequences' if load_sequences else ''
+sweep_sequences ='--sweep_sequences' if sweep_sequences else ''
+float64 = '--float64' if float64 else ''
+processes = [subprocess.Popen(f'python train.py {load_sequences} {sweep_sequences} {float64} \
                                 --p_version {p_version} \
                                 --q_version {q_version} \
                                 --save_dir {save_dir} \
                                 --learning_rate {learning_rate} \
                                 --num_epochs {num_epochs} \
-                                --load_sequences {load_sequences} \
+                                --seq_length {seq_length} \
+                                --num_samples {num_samples} \
                                 --dims {dims}',
                         shell=True, stdout=logfile, stderr=logfile) \
-                        for (q_version, 
-                            learning_rate, 
-                            dims, 
-                            num_epochs, 
-                            save_dir, 
-                            logfile) in zip(q_versions, 
-                                            learning_rates, 
-                                            dims_list, 
-                                            num_epochs_list, 
-                                            save_dirs, 
-                                            logfiles)]
+
+            for (q_version, 
+                save_dir, 
+                logfile) in zip(q_versions, 
+                                save_dirs, 
+                                logfiles)]
 
 # print(date)
 

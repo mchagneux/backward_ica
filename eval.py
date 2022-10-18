@@ -21,7 +21,7 @@ import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'data/experiments/p_chaotic_rnn/2022_10_17__18_36_57'
+exp_dir = 'experiments/p_chaotic_rnn/2022_10_18__12_23_20'
 
 method_names = ['neural_backward_linear', 
                 'external_campbell']
@@ -35,7 +35,7 @@ if method_names[1] == 'external_campbell':
     train_args.loaded_data = (os.path.join(utils.chaotic_rnn_base_dir, 'x_data.npy'), 
                             os.path.join(utils.chaotic_rnn_base_dir,'y_data.npy'))
     train_args.num_seqs = 1
-    train_args.seq_length = 500
+    # train_args.seq_length = 500
     
 set_parametrization(train_args)
 
@@ -134,13 +134,13 @@ if not load:
 
 class ExternalVariationalFamily():
 
-    def __init__(self, save_dir):
-        self.means_filt_q = jnp.load(os.path.join(save_dir, 'filter_means.npy'))[jnp.newaxis,:]
-        self.covs_filt_q = jnp.load(os.path.join(save_dir, 'filter_covs.npy'))[jnp.newaxis,:]
+    def __init__(self, save_dir, length=None):
+        self.means_filt_q = jnp.load(os.path.join(save_dir, 'filter_means.npy'))[jnp.newaxis,:length]
+        self.covs_filt_q = jnp.load(os.path.join(save_dir, 'filter_covs.npy'))[jnp.newaxis,:length]
         with open(os.path.join(save_dir, 'smoothed_stats.pickle'), 'rb') as f: 
             smoothed_means, smoothed_covs = pickle.load(f)
-        self.means_smooth_q_list = smoothed_means
-        self.covs_smooth_q_list = smoothed_covs
+        self.means_smooth_q_list = [smoothed_means[i] for i in range(length)]
+        self.covs_smooth_q_list = [smoothed_covs[i] for i in range(length)]
 
     def get_filt_means_and_covs(self):
         return (self.means_filt_q, self.covs_filt_q)
@@ -160,7 +160,7 @@ qs = []
 phis = []
 for method_name in method_names:
     if 'external' in method_name:
-        q = ExternalVariationalFamily(utils.chaotic_rnn_base_dir)
+        q = ExternalVariationalFamily(utils.chaotic_rnn_base_dir, train_args.seq_length)
 
         filt_results.append(q.get_filt_means_and_covs())
         smooth_results.append(q.get_smooth_means_and_covs())
@@ -279,8 +279,7 @@ def eval_smoothing_single_seq(state_seq, obs_seq, means_ref, slices, method_nb):
 
 
     means_q = qs[method_nb].smooth_seq_at_multiple_timesteps(obs_seq, phis[method_nb], slices)[0]
-    # if method_nb == 0: 
-    #     means_q[-1] = smooth_results[1][0][0]
+
     q_vs_states = jnp.mean(jnp.linalg.norm(means_q[-1] - state_seq, ord=1, axis=1), axis=0)
     ref_vs_states = jnp.mean(jnp.linalg.norm(means_ref[-1] - state_seq, ord=1, axis=1), axis=0)
     q_vs_ref_marginals = jnp.linalg.norm((means_q[-1] - means_ref[-1]), ord=1, axis=1)[slices]
@@ -299,7 +298,7 @@ eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0,0, None,None))
 
 if metrics: 
 
-    num_slices = 250
+    num_slices = 25
     slice_length = len(obs_seqs[0]) // num_slices
     slices = jnp.array(list(range(0, len(obs_seqs[0])+1, slice_length)))[1:]
     q_vs_ref_marginals_all = []
@@ -379,48 +378,7 @@ if metrics:
     sns.lineplot(data=q_vs_ref_additive, x='n', y='Value',hue='Method',style='Sequence',alpha=0.3, legend=False)
     plt.ylabel('Additive error')
 
-    # sns.lineplot(data=q_vs_ref_additive, x='Timestep', y='Value',hue='Method', ax=ax)
-    # plt.title('Additive 1-norm error against FFBSi')
+
 
     plt.savefig(os.path.join(eval_dir, f'additive_errors'))
     plt.close()
-
-# ax0.set_title('Marginal 1-norm error against FFBSi')
-# ax0.set_xlabel('t')
-
-# ax1.set_title('Additive 1-norm error against FFBSi')
-# ax1.set_xlabel('t')
-
-
-
-#%%
-# bins=100
-# for timestep in range(len(filt_weights)):
-#     smoothing_particles_t = smoothing_paths[timestep]
-#     filt_weights_t = filt_weights[timestep]
-#     filt_particles_t = filt_particles[timestep]
-
-#     if args.state_dim == 2:
-#         g = sns.JointGrid(x=filt_particles_t[:,0], y=filt_particles_t[:,1], xlim=(-1.5, 1.5), ylim=(-1.5,1.5))
-
-#         g.plot_marginals(sns.histplot, weights=filt_weights_t, bins=bins, binrange=(-1.5, 1.5))
-#         g.plot_joint(sns.kdeplot, weights=filt_weights_t, fill=True)
-
-#         g.savefig(os.path.join(filt_dir, str(timestep)))
-
-#         g = sns.JointGrid(x=smoothing_particles_t[:,0], y=smoothing_particles_t[:,1])
-#         g.plot_joint(sns.kdeplot, fill=True)
-#         g.plot_marginals(sns.histplot, bins=bins, binrange=(-1.5, 1.5))
-#         g.savefig(os.path.join(smooth_dir, str(timestep)))
-
-#     elif args.state_dim == 1: 
-#         g = sns.displot(x=filt_particles_t[:,0], kde=True, weights = filt_weights_t, binrange=(-1.5, 1.5), bins=bins)
-#         g.savefig(os.path.join(filt_dir, str(timestep)))
-
-#         g = sns.displot(smoothing_particles_t, kde=True, bins=bins, binrange=(-1.5, 1.5))
-#         g.savefig(os.path.join(smooth_dir, str(timestep)))
-
-#     else: 
-#         pass
-
-

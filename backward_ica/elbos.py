@@ -21,31 +21,51 @@ class GeneralForwardELBO:
         self.q = q
         self.num_samples = num_samples 
 
-    def __call__(self, key, obs_seq, theta, phi):
+    def __call__(self, key, obs_seq, compute_up_to, theta, phi):
 
-        def _monte_carlo_sample(key, obs_seq, init_law_params, forward_params_seq):
-            keys = jax.random.split(key, obs_seq.shape[0])
-            init_sample = self.q.marginal_dist.sample(keys[0], init_law_params)
-            init_term = self.p.emission_kernel.logpdf(obs_seq[0], init_sample, theta.emission) \
-                        + self.p.prior_dist.logpdf(init_sample, theta.prior) \
-                        - self.q.marginal_dist.logpdf(init_sample, init_law_params)
-
+        def _monte_carlo_sample(key, obs_seq, init_state, backwd_variables_seq):
+            
             def _sample_step(prev_sample, x):
 
-                key, obs, forward_params = x
-                sample = self.q.forward_kernel.sample(key, prev_sample, forward_params)
-                emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
-                transition_term_p = self.p.transition_kernel.logpdf(sample, prev_sample, theta.transition)
-                fwd_term_q = -self.q.forward_kernel.logpdf(sample, prev_sample, forward_params)
+                key, obs, idx = x
 
-                return sample, emission_term_p + transition_term_p + fwd_term_q
+                def false_fun(key, prev_sample, obs, idx):
+                    return prev_sample, 0.0
 
-            init_sample, terms = lax.scan(f=_sample_step, 
-                                        init=init_sample, 
-                                        xs=(keys[1:], obs_seq[1:], forward_params_seq), reverse=False)
+                def true_fun(key, prev_sample, obs, idx):
+
+                    def init_term(key, prev_sample, obs, idx):
+                        init_law_params = self.q.compute_marginal(self.q.init_filt_params(init_state, phi), 
+                                                tree_get_idx(0, backwd_variables_seq)) 
+                        init_sample = self.q.marginal_dist.sample(key, init_law_params)
+                        init_term = self.p.emission_kernel.logpdf(obs, init_sample, theta.emission) \
+                                    + self.p.prior_dist.logpdf(init_sample, theta.prior) \
+                                    - self.q.marginal_dist.logpdf(init_sample, init_law_params)
+                        return init_sample, init_term
 
 
-            return jnp.sum(terms) + init_term 
+                    def other_terms(key, prev_sample, obs, idx):
+                        forward_params = self.q.forward_params_from_backwd_var(tree_get_idx(idx, backwd_variables_seq), phi)
+                        sample = self.q.forward_kernel.sample(key, prev_sample, forward_params)
+                        emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
+                        transition_term_p = self.p.transition_kernel.logpdf(sample, prev_sample, theta.transition)
+                        fwd_term_q = -self.q.forward_kernel.logpdf(sample, prev_sample, forward_params)
+                        return sample,  emission_term_p + transition_term_p + fwd_term_q
+
+
+                    return lax.cond(idx > 0, other_terms, init_term, key, prev_sample, obs, idx)
+
+                return lax.cond(idx <= compute_up_to, true_fun, false_fun, key, prev_sample, obs, idx)
+
+            terms = lax.scan(f=_sample_step, 
+                            init=jnp.empty((self.p.state_dim,)), 
+                            xs=(jax.random.split(key, obs_seq.shape[0]), 
+                                obs_seq, 
+                                jnp.arange(0, len(obs_seq))), 
+                                reverse=False)[1]
+
+
+            return jnp.sum(terms)
 
 
         parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
@@ -53,71 +73,17 @@ class GeneralForwardELBO:
         keys = jax.random.split(key, self.num_samples)
 
         state_seq = self.q.compute_state_seq(obs_seq, phi)
-        backwd_variables_seq = self.q.compute_backwd_variables_seq(state_seq, phi)
-        init_law_params = self.q.compute_marginal(self.q.init_filt_params(tree_get_idx(0, state_seq), phi), 
-                                                tree_get_idx(0, backwd_variables_seq))
-        forward_params_seq = vmap(self.q.forward_params_from_backwd_var, in_axes=(0,None))(tree_dropfirst(backwd_variables_seq), phi)
+        backwd_variables_seq = self.q.compute_backwd_variables_seq(state_seq, compute_up_to, phi)
 
 
         mc_samples = parallel_sampler(keys, 
                                     obs_seq, 
-                                    init_law_params,
-                                    forward_params_seq)
+                                    tree_get_idx(0, state_seq),
+                                    backwd_variables_seq)
 
-        return jnp.mean(mc_samples)
+        return jnp.mean(mc_samples) / (compute_up_to + 1)
 
 class GeneralBackwardELBO:
-
-    def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):
-
-        self.p = p
-        self.q = q
-        self.num_samples = num_samples
-
-    def __call__(self, key, obs_seq, theta:HMM.Params, phi):
-
-        def _monte_carlo_sample(key, obs_seq, terminal_law_params, backwd_params_seq):
-
-            keys = jax.random.split(key, obs_seq.shape[0])
-            last_sample = self.q.filt_dist.sample(keys[-1], terminal_law_params)
-
-            last_term = -self.q.filt_dist.logpdf(last_sample, terminal_law_params) \
-                    + self.p.emission_kernel.logpdf(obs_seq[-1], last_sample, theta.emission)
-
-
-            def _sample_step(next_sample, x):
-                
-                key, obs, backwd_params = x
-
-                sample = self.q.backwd_kernel.sample(key, next_sample, backwd_params)
-
-                emission_term_p = self.p.emission_kernel.logpdf(obs, sample, theta.emission)
-
-                transition_term_p = self.p.transition_kernel.logpdf(next_sample, sample, theta.transition)
-
-                backwd_term_q = -self.q.backwd_kernel.logpdf(sample, next_sample, backwd_params)
-
-                return sample, backwd_term_q + emission_term_p + transition_term_p
-            
-            init_sample, terms = lax.scan(_sample_step, init=last_sample, xs=(keys[:-1], obs_seq[:-1], backwd_params_seq), reverse=True)
-
-            return self.p.prior_dist.logpdf(init_sample, theta.prior) + jnp.sum(terms) + last_term
-
-        parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
-
-        keys = jax.random.split(key, self.num_samples)
-
-
-        state_seq = self.q.compute_state_seq(obs_seq, phi)
-
-        mc_samples = parallel_sampler(keys, 
-                                    obs_seq, 
-                                    self.q.filt_params_from_state(tree_get_idx(-1, state_seq), phi), 
-                                    self.q.compute_backwd_params_seq(state_seq, phi))
-        return jnp.mean(mc_samples)
-
-
-class GeneralBackwardELBOMasked:
 
     def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):
 
@@ -128,8 +94,6 @@ class GeneralBackwardELBOMasked:
     def __call__(self, key, obs_seq, compute_up_to, theta:HMM.Params, phi):
 
         def _monte_carlo_sample(key, obs_seq, state_seq):
-
-            keys = jax.random.split(key, obs_seq.shape[0])
 
             def _sample_step(next_sample, x):
                 
@@ -170,18 +134,18 @@ class GeneralBackwardELBOMasked:
             
             init_sample, terms = lax.scan(_sample_step, 
                                         init=jnp.empty((self.p.state_dim,)), 
-                                        xs=(keys, obs_seq, jnp.arange(0, len(obs_seq))),
+                                        xs=(jax.random.split(key, obs_seq.shape[0]), 
+                                            obs_seq, 
+                                            jnp.arange(0, len(obs_seq))),
                                         reverse=True)
 
             return self.p.prior_dist.logpdf(init_sample, theta.prior) + jnp.sum(terms)
 
         parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None))
 
-        keys = jax.random.split(key, self.num_samples)
-
         state_seq = self.q.compute_state_seq(obs_seq, compute_up_to, phi)
 
-        mc_samples = parallel_sampler(keys, 
+        mc_samples = parallel_sampler(jax.random.split(key, self.num_samples),
                                     obs_seq, 
                                     state_seq)
 
