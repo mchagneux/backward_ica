@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import backward_ica.stats.hmm as hmm
 from backward_ica.stats import set_parametrization
-import backward_ica.variational.models as models
+import backward_ica.variational as variational
 import backward_ica.utils as utils 
 import backward_ica.stats.smc as smc
 import seaborn as sns
@@ -21,12 +21,12 @@ import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_10_18__16_04_12'
+exp_dir = 'experiments/p_chaotic_rnn/2022_10_19__16_27_59'
 
-method_names = ['johnson_forward', 
+method_names = ['johnson_backward', 
                 'external_campbell']
                 
-pretty_names = ['Johnson Forward', 
+pretty_names = ['Johnson Backward', 
                 'Campbell']
 
 train_args = utils.load_args('train_args', os.path.join(exp_dir, method_names[0]))
@@ -35,7 +35,7 @@ if method_names[1] == 'external_campbell':
     train_args.loaded_data = (os.path.join(utils.chaotic_rnn_base_dir, 'x_data.npy'), 
                             os.path.join(utils.chaotic_rnn_base_dir,'y_data.npy'))
     train_args.num_seqs = 1
-    train_args.seq_length = 500
+    train_args.seq_length = 2000
     
 set_parametrization(train_args)
 
@@ -49,7 +49,7 @@ key_theta = jax.random.PRNGKey(train_args.seed_theta)
 num_particles = 1000
 num_smooth_particles = 1000
 num_seqs = 1
-seq_length = 500
+seq_length = 2000
 load = False
 metrics = True
 plot_sequences = True
@@ -59,7 +59,7 @@ filter_rmse = True
 visualize_init = False
 lag = None
 ref_type = 'states'
-num_slices = 250
+num_slices = 200
 
 
 train_args.num_particles = num_particles
@@ -176,7 +176,7 @@ for method_name in method_names:
         key_phi, key_filt_q, key_smooth_q = jax.random.split(key_phi, 3)
         keys_smooth_q = jax.random.split(key_smooth_q, num_seqs)
 
-        q = models.get_variational_model(args, p)
+        q = variational.get_variational_model(args, p)
 
         if visualize_init: 
             phi = q.get_random_params(key_phi, args)

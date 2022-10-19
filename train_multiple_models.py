@@ -5,7 +5,7 @@ from datetime import datetime
 p_version = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_version}')
 
-q_versions = ['johnson_forward', 'johnson_backward']
+q_versions = ['johnson_backward', 'johnson_backward_isotropic']
 
 num_epochs = 10000
 learning_rate = 0.01

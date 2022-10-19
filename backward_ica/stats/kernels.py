@@ -73,9 +73,10 @@ class Maps:
         elif conditionning == 'sym_def_pos':
             d = out_dim 
             w = random.uniform(key_w, ((d*(d+1)) // 2,), minval=range_params[0], maxval=range_params[1])
-        elif conditionning == 'init_invertible':
-            w = random.uniform(key_w, (out_dim, len(dummy_in)), minval=range_params[0], maxval=range_params[1])
-            w = w @ w.T
+        elif conditionning == 'init_sym_def_pos':
+            d = out_dim 
+            w = random.uniform(key_w, ((d*(d+1)) // 2,), minval=range_params[0], maxval=range_params[1])
+            w = _conditionnings['sym_def_pos'](w, d)
         else: 
             w = random.uniform(key_w, (out_dim, len(dummy_in)), minval=range_params[0], maxval=range_params[1])
             

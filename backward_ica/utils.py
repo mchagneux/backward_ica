@@ -23,14 +23,14 @@ def moving_window(a, size: int):
     starts = jnp.arange(len(a) - size + 1)
     return vmap(lambda start: lax.dynamic_slice_in_dim(a, start, size))(starts)
 
-chaotic_rnn_base_dir = 'data/external_data/2022-10-18_15-28-00_Train_run'
+chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
 
 
 
 _conditionnings = {'diagonal':lambda param, d: jnp.diag(param),
                 'sym_def_pos': lambda param, d: mat_from_chol_vec(param, d) + jnp.eye(d),
                 None:lambda x, d:x,
-                'init_invertible': lambda x,d:x + jnp.eye(d)}
+                'init_sym_def_pos': lambda x,d:x}
 
 
 ## config routines and model selection
@@ -107,11 +107,12 @@ def get_config(p_version=None,
 
     if 'neural_backward' in args.q_version:
         ## variational family
-        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (32,) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (100,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     elif 'johnson' in args.q_version:
         args.update_layers = (100,)
+        args.isotropic = 'isotropic' in args.q_version
 
     ## SMC 
     args.num_particles = 10000 # number of particles for bootstrap filtering step
@@ -138,7 +139,7 @@ def enable_x64(use_x64=True):
     if not use_x64:
         use_x64 = os.getenv("JAX_ENABLE_X64", 0)
     config.update("jax_enable_x64", use_x64)
-
+    if use_x64: print('Using float64.')
 def set_platform(platform=None):
     """
     Changes platform to CPU, GPU, or TPU. This utility only takes

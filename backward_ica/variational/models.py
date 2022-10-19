@@ -2,7 +2,7 @@ from backward_ica.stats.distributions import *
 from backward_ica.stats.kernels import * 
 from backward_ica.stats import LinearBackwardSmoother, TwoFilterSmoother, State
 from backward_ica.stats.kalman import Kalman
-from backward_ica.stats.hmm import HMM, LinearGaussianHMM
+from backward_ica.stats.hmm import HMM
 
 from jax.tree_util import tree_leaves
 from jax import numpy as jnp, lax
@@ -11,51 +11,7 @@ import copy
 from typing import Any 
 import backward_ica.variational.inference_nets as inference_nets
 from collections import namedtuple
-def get_variational_model(args, p=None, key_for_random_params=None):
 
-    if args.q_version == 'linear':
-
-        q = LinearGaussianHMM(state_dim=args.state_dim, 
-                            obs_dim=args.obs_dim,
-                            transition_matrix_conditionning=args.transition_matrix_conditionning,
-                            range_transition_map_params=args.range_transition_map_params,
-                            transition_bias=args.transition_bias, 
-                            emission_bias=args.emission_bias)
-
-    elif 'neural_backward_linear' in args.q_version:
-        if (p is not None) and (p.transition_kernel.map_type == 'linear'):
-            q = NeuralLinearBackwardSmoother.with_transition_from_p(p, args.update_layers)
-
-        elif 'backwd_net' in args.q_version:
-            q = NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
-                                                obs_dim=args.obs_dim,
-                                                transition_kernel=None,
-                                                update_layers=args.update_layers)
-        else:
-            q = NeuralLinearBackwardSmoother.with_linear_gaussian_transition_kernel(p, args.update_layers)
-        
-    # elif args.q_version == 'neural_backward':
-    #     q = NeuralBackwardSmoother(state_dim=args.state_dim, 
-    #                                     obs_dim=args.obs_dim, 
-    #                                     update_layers=args.update_layers,
-    #                                     backwd_layers=args.backwd_map_layers)
-
-    elif args.q_version == 'johnson_backward':
-            q = JohnsonBackward(state_dim=args.state_dim, 
-                                    obs_dim=args.obs_dim, 
-                                    layers=args.update_layers)
-
-    elif args.q_version == 'johnson_forward':
-            q = JohnsonForward(state_dim=args.state_dim, 
-                                    obs_dim=args.obs_dim, 
-                                    layers=args.update_layers)
-
-
-    if key_for_random_params is not None:
-        phi = q.get_random_params(key_for_random_params, args)
-        return q, phi
-    else:
-        return q
 
 
 class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
@@ -90,7 +46,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
     @classmethod
     def with_linear_gaussian_transition_kernel(cls, p:HMM, layers):
 
-        transition_kernel = Kernel.linear_gaussian(matrix_conditonning='init_invertible', 
+        transition_kernel = Kernel.linear_gaussian(matrix_conditonning='init_sym_def_pos', 
                                                         bias=True, 
                                                         range_params=(-1,1))(p.state_dim, p.state_dim)
                                                         
@@ -227,17 +183,19 @@ class JohnsonParams:
 
 class JohnsonSmoother:
 
-    def __init__(self, state_dim, obs_dim, layers):
+    def __init__(self, state_dim, obs_dim, layers, isotropic):
 
         self.state_dim = state_dim 
         self.obs_dim = obs_dim 
         self.prior_dist = Gaussian
 
-        self.transition_kernel = Kernel.linear_gaussian(matrix_conditonning='diagonal',
-                                                        bias=False, 
+        self.transition_kernel = Kernel.linear_gaussian(matrix_conditonning='init_sym_def_pos',
+                                                        bias=True, 
                                                         range_params=(-1,1))(state_dim, state_dim)
 
-        self._net = hk.without_apply_rng(hk.transform(partial(inference_nets.johnson, layers=layers, state_dim=state_dim)))
+        net = inference_nets.johnson if not isotropic else inference_nets.johnson_isotropic
+        self._net = hk.without_apply_rng(hk.transform(partial(net, layers=layers, state_dim=state_dim)))
+
 
     def get_random_params(self, key, params_to_set=None):
         key_prior, key_transition, key_net = random.split(key, 3)
@@ -275,16 +233,18 @@ class JohnsonSmoother:
 
 class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
 
-    def __init__(self, state_dim, obs_dim, layers):
+    def __init__(self, state_dim, obs_dim, layers, isotropic):
 
-        JohnsonSmoother.__init__(self, state_dim, obs_dim, layers)
+        JohnsonSmoother.__init__(self, state_dim, obs_dim, layers, isotropic)
         LinearBackwardSmoother.__init__(self, state_dim)
+
 
     def init_state(self, obs, params):
         out = self._net.apply(params.net, obs)
         return Gaussian.Params.from_nat_params(out[0] + params.prior.eta1, out[1] + params.prior.eta2)
 
     def new_state(self, obs, prev_state, params):
+
         pred_mean, pred_cov = Kalman.predict(prev_state.mean, prev_state.scale.cov, params.transition)  
 
         pred = Gaussian.Params.from_mean_cov(pred_mean, pred_cov)
