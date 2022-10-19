@@ -21,12 +21,12 @@ import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_10_18__12_23_20'
+exp_dir = 'experiments/p_chaotic_rnn/2022_10_18__16_04_12'
 
-method_names = ['neural_backward_linear', 
+method_names = ['johnson_forward', 
                 'external_campbell']
                 
-pretty_names = ['Ours', 
+pretty_names = ['Johnson Forward', 
                 'Campbell']
 
 train_args = utils.load_args('train_args', os.path.join(exp_dir, method_names[0]))
@@ -35,7 +35,7 @@ if method_names[1] == 'external_campbell':
     train_args.loaded_data = (os.path.join(utils.chaotic_rnn_base_dir, 'x_data.npy'), 
                             os.path.join(utils.chaotic_rnn_base_dir,'y_data.npy'))
     train_args.num_seqs = 1
-    # train_args.seq_length = 500
+    train_args.seq_length = 500
     
 set_parametrization(train_args)
 
@@ -49,7 +49,7 @@ key_theta = jax.random.PRNGKey(train_args.seed_theta)
 num_particles = 1000
 num_smooth_particles = 1000
 num_seqs = 1
-seq_length = train_args.seq_length
+seq_length = 500
 load = False
 metrics = True
 plot_sequences = True
@@ -59,6 +59,7 @@ filter_rmse = True
 visualize_init = False
 lag = None
 ref_type = 'states'
+num_slices = 250
 
 
 train_args.num_particles = num_particles
@@ -298,7 +299,6 @@ eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0,0, None,None))
 
 if metrics: 
 
-    num_slices = 25
     slice_length = len(obs_seqs[0]) // num_slices
     slices = jnp.array(list(range(0, len(obs_seqs[0])+1, slice_length)))[1:]
     q_vs_ref_marginals_all = []

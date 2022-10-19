@@ -212,7 +212,7 @@ class LinearBackwardSmoother(BackwardSmoother):
     def filt_seq(self, obs_seq, params):
         formatted_params = self.format_params(params)
 
-        state_seq = self.compute_state_seq(obs_seq, len(obs_seq), formatted_params)
+        state_seq = self.compute_state_seq(obs_seq, len(obs_seq)-1, formatted_params)
         filt_params_seq = self.compute_filt_params_seq(state_seq, formatted_params)
         return vmap(lambda x:x.mean)(filt_params_seq), vmap(lambda x:x.scale.cov)(filt_params_seq)
     
@@ -220,7 +220,7 @@ class LinearBackwardSmoother(BackwardSmoother):
         
         formatted_params = self.format_params(params)
 
-        state_seq = self.compute_state_seq(obs_seq, len(obs_seq), formatted_params)
+        state_seq = self.compute_state_seq(obs_seq, len(obs_seq)-1, formatted_params)
         filt_params_seq = self.compute_filt_params_seq(state_seq, formatted_params)
         backwd_params_seq = self.compute_backwd_params_seq(state_seq, formatted_params)
 
@@ -235,7 +235,7 @@ class LinearBackwardSmoother(BackwardSmoother):
         formatted_params = self.format_params(params)
 
 
-        state_seq = self.compute_state_seq(obs_seq, len(obs_seq), formatted_params)
+        state_seq = self.compute_state_seq(obs_seq, len(obs_seq)-1, formatted_params)
         filt_params_seq = self.compute_filt_params_seq(state_seq, formatted_params)
         backwd_params_seq = self.compute_backwd_params_seq(state_seq, formatted_params)
 

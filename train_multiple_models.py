@@ -5,16 +5,19 @@ from datetime import datetime
 p_version = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_version}')
 
-q_versions = ['neural_backward_linear', 'johnson_forward', 'johnson_backward']
+q_versions = ['johnson_forward', 'johnson_backward']
 
-num_epochs = 5000
+num_epochs = 10000
 learning_rate = 0.01
 dims = '5 5'
 load_sequences = True
 sweep_sequences = False
-seq_length = 500
-num_samples = 10
-float64 = True
+
+batch_size = 1
+num_seqs = 1
+seq_length = 2000
+num_samples = 1
+float64 = False
 
 os.makedirs(base_dir, exist_ok=True)
 
@@ -40,6 +43,8 @@ processes = [subprocess.Popen(f'python train.py {load_sequences} {sweep_sequence
                                 --learning_rate {learning_rate} \
                                 --num_epochs {num_epochs} \
                                 --seq_length {seq_length} \
+                                --num_seqs {num_seqs} \
+                                --batch_size {batch_size} \
                                 --num_samples {num_samples} \
                                 --dims {dims}',
                         shell=True, stdout=logfile, stderr=logfile) \

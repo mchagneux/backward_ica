@@ -23,7 +23,7 @@ def moving_window(a, size: int):
     starts = jnp.arange(len(a) - size + 1)
     return vmap(lambda start: lax.dynamic_slice_in_dim(a, start, size))(starts)
 
-chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-10-03_17-00-46_Train_run'
+chaotic_rnn_base_dir = 'data/external_data/2022-10-18_15-28-00_Train_run'
 
 
 
@@ -111,7 +111,7 @@ def get_config(p_version=None,
         args.backwd_map_layers = (100,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     elif 'johnson' in args.q_version:
-        args.update_layers = (8,8)
+        args.update_layers = (100,)
 
     ## SMC 
     args.num_particles = 10000 # number of particles for bootstrap filtering step

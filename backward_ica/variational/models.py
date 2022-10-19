@@ -451,7 +451,7 @@ class JohnsonForward(JohnsonSmoother, TwoFilterSmoother):
 
         state_seq = self.compute_state_seq(obs_seq, formatted_params)
         marginal_smoothing_stats =  self.compute_marginals(self.compute_filt_params_seq(state_seq, formatted_params),
-                                                            self.compute_backwd_variables_seq(state_seq, formatted_params))
+                                                            self.compute_backwd_variables_seq(state_seq, len(obs_seq)-1, formatted_params))
 
         return marginal_smoothing_stats.mean, marginal_smoothing_stats.scale.cov
 
@@ -464,7 +464,7 @@ class JohnsonForward(JohnsonSmoother, TwoFilterSmoother):
 
         def smooth_up_to_timestep(timestep):
             marginals = self.compute_marginals(filt_params_seq=tree_get_slice(0, timestep, filt_params_seq), 
-                                                backwd_variables_seq=self.compute_backwd_variables_seq(tree_get_slice(0, timestep, state_seq), formatted_params))
+                                                backwd_variables_seq=self.compute_backwd_variables_seq(tree_get_slice(0, timestep, state_seq), timestep-1, formatted_params))
             return marginals.mean, marginals.scale.cov
         means, covs = [], []
 
