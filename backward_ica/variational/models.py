@@ -183,17 +183,17 @@ class JohnsonParams:
 
 class JohnsonSmoother:
 
-    def __init__(self, state_dim, obs_dim, layers, isotropic):
+    def __init__(self, state_dim, obs_dim, layers, anisotropic):
 
         self.state_dim = state_dim 
         self.obs_dim = obs_dim 
         self.prior_dist = Gaussian
 
-        self.transition_kernel = Kernel.linear_gaussian(matrix_conditonning='init_sym_def_pos',
-                                                        bias=True, 
+        self.transition_kernel = Kernel.linear_gaussian(matrix_conditonning='diagonal',
+                                                        bias=False, 
                                                         range_params=(-1,1))(state_dim, state_dim)
 
-        net = inference_nets.johnson if not isotropic else inference_nets.johnson_isotropic
+        net = inference_nets.johnson_anisotropic if anisotropic else inference_nets.johnson
         self._net = hk.without_apply_rng(hk.transform(partial(net, layers=layers, state_dim=state_dim)))
 
 
@@ -230,12 +230,11 @@ class JohnsonSmoother:
         print('-- in transition:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.transition,))))
         print('-- in net:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.net,))))
     
-
 class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
 
-    def __init__(self, state_dim, obs_dim, layers, isotropic):
+    def __init__(self, state_dim, obs_dim, layers, anisotropic):
 
-        JohnsonSmoother.__init__(self, state_dim, obs_dim, layers, isotropic)
+        JohnsonSmoother.__init__(self, state_dim, obs_dim, layers, anisotropic)
         LinearBackwardSmoother.__init__(self, state_dim)
 
 
@@ -282,8 +281,8 @@ class JohnsonForward(JohnsonSmoother, TwoFilterSmoother):
         return Kernel.Params(map=Maps.LinearMapParams(A_forward, b_forward), 
                             noise=Gaussian.NoiseParams(Scale(prec=prec_forward)))
         
-    def __init__(self, state_dim, obs_dim, layers):
-        JohnsonSmoother.__init__(self, state_dim, obs_dim, layers)
+    def __init__(self, state_dim, obs_dim, layers, anisotropic):
+        JohnsonSmoother.__init__(self, state_dim, obs_dim, layers, anisotropic)
         
         TwoFilterSmoother.__init__(self, state_dim, 
                                     forward_kernel=Kernel.linear_gaussian(matrix_conditonning=None, 

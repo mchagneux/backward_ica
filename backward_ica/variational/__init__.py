@@ -34,13 +34,13 @@ def get_variational_model(args, p=None, key_for_random_params=None):
             q = JohnsonBackward(state_dim=args.state_dim, 
                                     obs_dim=args.obs_dim, 
                                     layers=args.update_layers,
-                                    isotropic=args.isotropic)
+                                    anisotropic=args.anisotropic)
 
     elif 'johnson_forward' in args.q_version:
             q = JohnsonForward(state_dim=args.state_dim, 
                                     obs_dim=args.obs_dim, 
                                     layers=args.update_layers,
-                                    isotropic=args.isotropic)
+                                    anisotropic=args.anisotropic)
 
 
     if key_for_random_params is not None:

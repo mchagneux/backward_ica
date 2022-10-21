@@ -108,11 +108,11 @@ def get_config(p_version=None,
     if 'neural_backward' in args.q_version:
         ## variational family
         args.update_layers = (32,) # number of layers in the GRU which updates the variational filtering dist
-        args.backwd_map_layers = (100,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
+        args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     elif 'johnson' in args.q_version:
         args.update_layers = (100,)
-        args.isotropic = 'isotropic' in args.q_version
+        args.anisotropic = 'anisotropic' in args.q_version
 
     ## SMC 
     args.num_particles = 10000 # number of particles for bootstrap filtering step

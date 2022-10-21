@@ -38,7 +38,7 @@ def backwd_update_forward(varying_params, next_state, layers, state_dim):
 
     return out.mean, out.scale
 
-def johnson_isotropic(obs, layers, state_dim):
+def johnson(obs, layers, state_dim):
 
     rec_net = hk.nets.MLP((*layers, 2*state_dim),
                 w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
@@ -55,7 +55,7 @@ def johnson_isotropic(obs, layers, state_dim):
     return eta1, eta2
 
 
-def johnson(obs, layers, state_dim):
+def johnson_anisotropic(obs, layers, state_dim):
 
 
     d = state_dim 
