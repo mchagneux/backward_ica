@@ -78,7 +78,7 @@ class HMM:
         self.transition_kernel:Kernel = transition_kernel_type(state_dim)
         self.emission_kernel:Kernel = emission_kernel_type(state_dim, obs_dim)
         
-    def sample_multiple_sequences(self, key, params, num_seqs, seq_length, single_split_seq=False, load_from=None):
+    def sample_multiple_sequences(self, key, params, num_seqs, seq_length, single_split_seq=False, load_from=''):
 
         if load_from != '': 
             state_seq = jnp.load(os.path.join(load_from, 'x_data.npy')).astype(jnp.float64)

@@ -4,37 +4,56 @@ import numpy as np
 import dill 
 import os 
 import matplotlib.pyplot as plt
-base_eval_folder = 'experiments/p_chaotic_rnn/2022_10_20__11_53_44'
 
-output_folder = os.path.join(base_eval_folder, 'eval_combined')
-os.makedirs(output_folder, exist_ok=True)
+exp_dirs = ['experiments/p_chaotic_rnn/2022_10_24__17_15_25', 
+            'experiments/p_chaotic_rnn/2022_10_24__17_25_51']
+
+eval_dir = os.path.join('experiments', 'test')
+os.makedirs(eval_dir, exist_ok=True)
+
 evals_additive = dict()
 evals_marginals = dict()
-up_to = 200
-with open(os.path.join(base_eval_folder, 'eval_johnson_forward','eval_external_campbell.dill'), 'rb') as f:
-    evals = dill.load(f)
-    evals_additive['Campbell'] = evals[2].squeeze()[:up_to]
-    evals_marginals['Campbell'] = evals[1].squeeze()[:up_to]
+method_names = ['johnson_backward', 'johnson_forward', 'neural_backward_linear']
 
-methods = ['johnson_backward', 'johnson_forward', 'neural_backward_linear']
-pretty_names = ['Johnson Backward', 'Johnson Forward', 'GRU Backward']
+for exp_nb, exp_dir in enumerate(exp_dirs):
 
-for method, pretty_name in zip(methods, pretty_names):
-    with open(os.path.join(base_eval_folder, f'eval_{method}', f'eval_{method}.dill'), 'rb') as f: 
-        evals = dill.load(f)
-        evals_additive[pretty_name] = evals[2].squeeze()[:up_to]
-        evals_marginals[pretty_name] = evals[1].squeeze()[:up_to]
+    evals_marginals[exp_nb] = dict()
+    evals_additive[exp_nb] = dict()
 
-evals_additive = pd.DataFrame(evals_additive).unstack().reset_index()
-evals_additive.columns = ['Method', 'Timestep', 'Additive error']
-evals_additive['Timestep'] = evals_additive['Timestep']*10 + 10
-sns.lineplot(evals_additive, x='Timestep', y='Additive error', hue='Method')
-plt.savefig(os.path.join(output_folder,'additive_error'))
+    for method_name in method_names: 
+        method_eval_dir = os.path.join(exp_dir, method_name, 'eval')
+        if method_name == 'johnson_backward':
+            pretty_name = 'Conjugate Backward'
+        elif method_name == 'johnson_forward':
+            pretty_name = 'Conjugate Forward'
+        elif method_name == 'neural_backward_linear':
+            pretty_name = 'GRU Backward'
+        elif method_name == 'external_campbell':
+            pretty_name = 'Campbell'
+
+
+
+        with open(os.path.join(method_eval_dir, f'eval.dill'), 'rb') as f: 
+            evals = dill.load(f)
+            evals_marginals[exp_nb][pretty_name] = evals[0].squeeze().tolist()
+            evals_additive[exp_nb][pretty_name] = evals[1].squeeze().tolist()
+
+evals_additive = pd.DataFrame.from_dict(evals_additive, orient="index").stack().to_frame()
+# to break out the lists into columns
+evals_additive = pd.DataFrame(evals_additive[0].values.tolist(), index=evals_additive.index).T
+evals_additive = evals_additive.unstack().reset_index()
+evals_additive.columns = ['Exp', 'Model', 'Timestep', 'Additive error']
+
+sns.lineplot(data=evals_additive, x='Timestep', y='Additive error', hue='Model')
+plt.savefig(os.path.join(eval_dir,'additive_error'))
 plt.close()
 
-evals_marginals = pd.DataFrame(evals_marginals).unstack().reset_index()
-evals_marginals.columns = ['Method', 'Timestep', 'Marginal error']
-evals_marginals['Timestep'] = evals_marginals['Timestep']*10 + 10
-sns.lineplot(evals_marginals, x='Timestep', y='Marginal error', hue='Method')
-plt.savefig(os.path.join(output_folder,'marginal_error'))
+evals_marginal = pd.DataFrame.from_dict(evals_marginals, orient="index").stack().to_frame()
+# to break out the lists into columns
+evals_marginal = pd.DataFrame(evals_marginal[0].values.tolist(), index=evals_marginal.index).T
+evals_marginal = evals_marginal.unstack().reset_index()
+evals_marginal.columns = ['Exp', 'Model', 'Timestep', 'Marginal error']
 
+sns.lineplot(data=evals_marginal, x='Timestep', y='Marginal error', hue='Model')
+plt.savefig(os.path.join(eval_dir,'Marginal_error'))
+plt.close()

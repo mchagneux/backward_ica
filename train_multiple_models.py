@@ -10,7 +10,7 @@ q_models = ['johnson_backward', 'johnson_forward', 'neural_backward_linear']
 num_epochs = 10000
 learning_rate = 0.01
 dims = '5 5'
-load_from = '../online_var_fil/outputs/2022-10-24_12-02-05_Train_run'
+load_from = '../online_var_fil/outputs/2022-10-24_15-20-33_Train_run'
 
 batch_size = 1
 num_seqs = 1
@@ -56,7 +56,7 @@ processes = [subprocess.Popen(f'python train.py \
                         stderr=logfile) for model, logfile in zip(q_models, logfiles)]
 
          
-tensorboard_process = subprocess.Popen(f'tensorboard --logdir {base_dir}/{date}', shell=True)
+tensorboard_process = subprocess.Popen(f'tensorboard --logdir {exp_dir}', shell=True)
 tensorboard_process.wait()
 
 for process in processes: 
