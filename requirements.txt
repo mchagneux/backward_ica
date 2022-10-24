@@ -1,6 +1,9 @@
 optax
 pandas
-matplotlib
+seaborn
 pykalman
 tqdm
 dm-haiku
+tensorflow 
+tbp-nightly
+dill

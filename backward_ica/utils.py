@@ -34,33 +34,9 @@ _conditionnings = {'diagonal':lambda param, d: jnp.diag(param),
 
 ## config routines and model selection
 
-def get_config(p_version=None, 
-            q_version=None, 
-            dims=None,
-            external_args=None):
-
-    if external_args is None:
-        args = argparse.Namespace()
-    else: 
-        args = external_args
-        args.state_dim, args.obs_dim = args.dims
-        del args.dims
-
-    args.seed_theta = 1329
-    args.seed_phi = 4569
-    import math 
-
-    args.load_from = None if args.load_from == '' else args.load_from
-
-    ## dataset 
-    if external_args is None:
-        args.p_version = p_version
-        args.q_version = q_version
-        args.state_dim, args.obs_dim = dims
-
-    args.single_split_seq = False # whether to draw one long sample of length seq_length * num_seqs and divide it in seq_length // num_seqs sequences
-    
-    args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
+def get_defaults(args):
+    import math
+    args.float64 = True
 
     ## prior defaults
     args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior
@@ -75,50 +51,34 @@ def get_config(p_version=None,
     ## emission defaults
     args.default_emission_base_scale = math.sqrt(1e-2)
 
-
-    if args.p_version == 'chaotic_rnn': 
+    if args.model == 'chaotic_rnn':
         args.emission_matrix_conditionning = 'diagonal'
         args.range_emission_map_params = (0.99,1)
-
-        if args.load_from is not None: 
-            args.num_seqs = 1
-            args.batch_size = 1
-
         args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
         args.grid_size = 0.001 # discretization parameter for the chaotic rnn
         args.gamma = 2.5 # gamma for the chaotic rnn
         args.tau = 0.025 # tau for the chaotic rnn
         args.default_transition_matrix = os.path.join(args.load_from, 'W.npy')
-
-    elif 'nonlinear_emission' in args.p_version:
+    elif 'nonlinear_emission' in args.model:
         args.emission_map_layers = (8,)
         args.slope = 0 # amount of linearity in the emission function
         args.injective = True
 
-
-    if 'neural_backward' in args.q_version:
+    if 'neural_backward' in args.model:
         ## variational family
         args.update_layers = (32,) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
-    elif 'johnson' in args.q_version:
+    elif 'johnson' in args.model:
         args.update_layers = (100,)
-        args.anisotropic = 'anisotropic' in args.q_version
+        args.anisotropic = 'anisotropic' in args.model
 
-    ## SMC 
+    args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
+
+
     args.num_particles = 10000 # number of particles for bootstrap filtering step
     args.num_smooth_particles = 1000 # number of particles for the FFBSi ancestral sampling step
-
-    ## optimizer
-    args.optimizer = 'adamw' 
-    args.store_every = args.num_epochs // 5 # step to store intermediate parameter values
-    args.num_fits = 1 # number of optimization runs starting from multiple seeds
-
-    args.full_mc = 'full_mc' in args.q_version # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
-    args.frozen_params  = args.q_version.split('__')[1:] # list of parameter groups which are not learnt
-    args.online = 'online' in args.q_version # whether to use the online ELBO or not
-
 
     return args
 

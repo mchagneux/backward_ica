@@ -10,36 +10,25 @@ from backward_ica.training import SVITrainer, define_frozen_tree
 
 # jax.config.update('jax_disable_jit', True) 
 
-def main(args, save_dir):
-    if args.float64: utils.enable_x64(True)
 
+    
+def main(args):
+
+
+    if args.float64: 
+        utils.enable_x64(True)
     stats.set_parametrization(args)
 
-    key_theta = jax.random.PRNGKey(args.seed_theta)
-    key_phi = jax.random.PRNGKey(args.seed_phi)
+    p = hmm.get_generative_model(utils.load_args('args', args.exp_dir))
+    theta_star = utils.load_params('theta_star', args.exp_dir)
+    data = jnp.load(os.path.join(args.exp_dir, 'obs_seqs.npy'))
 
-    key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
 
-    p, theta_star = hmm.get_generative_model(args, key_for_random_params=key_params)
 
-    utils.save_params(theta_star, 'theta', save_dir)
 
-    obs_seqs = p.sample_multiple_sequences(key_gen, 
-                                            theta_star, 
-                                            args.num_seqs, 
-                                            args.seq_length, 
-                                            single_split_seq=args.single_split_seq,
-                                            load_from=args.load_from)[1]
+    key_phi = jax.random.PRNGKey(args.seed)
 
-    evidence_keys = jax.random.split(key_smc, args.num_seqs)
-
-    if args.compute_oracle_evidence:
-        print('Computing evidence...')
-
-        avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
-
-        print('Oracle evidence:', avg_evidence)
-
+    
     q = variational.get_variational_model(args, p=p)
 
 
@@ -65,14 +54,14 @@ def main(args, save_dir):
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
 
-    params, (best_fit_idx, stored_epoch_nbs, avg_elbos) = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
-                                                            data=obs_seqs, 
+    params = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
+                                                            data=data, 
                                                             num_fits=args.num_fits,
-                                                            log_dir=save_dir,
-                                                            args=args) # returns the best fit (based on the last value of the elbo)
+                                                            log_dir=args.save_dir,
+                                                            args=args)[0] # returns the best fit (based on the last value of the elbo)
     
-    # utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), save_dir, plot=True, best_epochs_only=True)
-    utils.save_params(params, 'phi', save_dir)
+    # utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), args.save_dir, plot=True, best_epochs_only=True)
+    utils.save_params(params, 'phi', args.save_dir)
 
 if __name__ == '__main__':
 
@@ -84,42 +73,33 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--p_version', type=str, default='chaotic_rnn')
-    parser.add_argument('--q_version', type=str, default='neural_backward_linear')
+    parser.add_argument('--model', type=str, default='neural_backward_linear')
+    parser.add_argument('--exp_dir', type=str, default='experiments/tests')
 
-    parser.add_argument('--save_dir', type=str, default='')
-    parser.add_argument('--args_path', type=str, default='')
-    parser.add_argument('--float64', action='store_true', default=True)
-
-    parser.add_argument('--num_seqs', type=int, default=1000)
-    parser.add_argument('--seq_length',type=int, default=2000)
-    parser.add_argument('--load_from', action='str', default='')
     parser.add_argument('--sweep_sequences', action='store_true', default=False)
 
-    parser.add_argument('--dims', type=int, nargs='+', default=(5,5))
-    parser.add_argument('--transition_bias', type=bool, default=False)
-    parser.add_argument('--emission_bias', type=bool, default=False)
-
-    parser.add_argument('--batch_size', type=int, default=20)
+    parser.add_argument('--num_fits', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--num_epochs', type=int, default=10000)
     parser.add_argument('--num_samples', type=int, default=1)
     
-    parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
+    parser.add_argument('--optimizer', type=str, default='adamw')
+    parser.add_argument('--store_every', type=int, default=5)
+    parser.add_argument('--seed', type=int, default=1)
 
     args = parser.parse_args()
 
-    save_dir = args.save_dir
+    args.full_mc = 'full_mc' in args.model # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
+    args.frozen_params  = args.model.split('__')[1:] # list of parameter groups which are not learnt
+    args.online = 'online' in args.model # whether to use the online ELBO or not
+    args.save_dir = os.path.join(args.exp_dir, args.model)
 
-    if save_dir=='':
-        save_dir = os.path.join('experiments','tests',date)
-        os.makedirs(save_dir, exist_ok=True)
+    
+    args = utils.get_defaults(args)
 
-    if args.args_path != '':
-        args = utils.load_args('train_args',args.args_path)
-        args.save_dir = save_dir
-    else:
-        args = utils.get_config(external_args=args)
-    utils.save_args(args, 'train_args', save_dir)
+    utils.save_args(args, 'args', args.save_dir)
+    args_p = utils.load_args('args', args.exp_dir)
+    args.state_dim, args.obs_dim = args_p.state_dim, args_p.obs_dim
+    main(args)
 
-    main(args, save_dir)

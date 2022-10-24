@@ -3,7 +3,8 @@ from backward_ica.variational.models import NeuralLinearBackwardSmoother, Johnso
 
 def get_variational_model(args, p=None, key_for_random_params=None):
 
-    if args.q_version == 'linear':
+
+    if args.model == 'linear':
 
         q = LinearGaussianHMM(state_dim=args.state_dim, 
                             obs_dim=args.obs_dim,
@@ -12,11 +13,11 @@ def get_variational_model(args, p=None, key_for_random_params=None):
                             transition_bias=True, 
                             emission_bias=True)
 
-    elif 'neural_backward_linear' in args.q_version:
+    elif 'neural_backward_linear' in args.model:
         if (p is not None) and (p.transition_kernel.map_type == 'linear'):
             q = NeuralLinearBackwardSmoother.with_transition_from_p(p, args.update_layers)
 
-        elif 'backwd_net' in args.q_version:
+        elif 'backwd_net' in args.model:
             q = NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
                                                 obs_dim=args.obs_dim,
                                                 transition_kernel=None,
@@ -24,19 +25,19 @@ def get_variational_model(args, p=None, key_for_random_params=None):
         else:
             q = NeuralLinearBackwardSmoother.with_linear_gaussian_transition_kernel(p, args.update_layers)
         
-    # elif args.q_version == 'neural_backward':
+    # elif args.model == 'neural_backward':
     #     q = NeuralBackwardSmoother(state_dim=args.state_dim, 
     #                                     obs_dim=args.obs_dim, 
     #                                     update_layers=args.update_layers,
     #                                     backwd_layers=args.backwd_map_layers)
 
-    elif 'johnson_backward' in args.q_version:
+    elif 'johnson_backward' in args.model:
             q = JohnsonBackward(state_dim=args.state_dim, 
                                     obs_dim=args.obs_dim, 
                                     layers=args.update_layers,
                                     anisotropic=args.anisotropic)
 
-    elif 'johnson_forward' in args.q_version:
+    elif 'johnson_forward' in args.model:
             q = JohnsonForward(state_dim=args.state_dim, 
                                     obs_dim=args.obs_dim, 
                                     layers=args.update_layers,

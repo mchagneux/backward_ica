@@ -21,16 +21,13 @@ import pickle
 
 utils.enable_x64(True)
 
-exp_dir = 'experiments/p_chaotic_rnn/2022_10_20__11_53_44'
+exp_dir = 'experiments/p_chaotic_rnn/2022_10_24__14_02_03'
 
-method_name = 'johnson_backward'
+method_name = 'external_campbell'
                 
-pretty_name = 'Johnson Backward'
+pretty_name = 'Campbell'
 
-if 'chaotic_rnn' in exp_dir:
-    seq_length = 2000
-    num_seqs = 1
-    single_split_seq = False 
+
 
 num_particles = 1000
 num_smooth_particles = 1000
@@ -44,12 +41,15 @@ visualize_init = False
 lag = None
 ref_type = 'states'
 num_slices = 10
+seq_length = 500
+num_seqs = 1
+single_split_seq = False 
 
-train_args = utils.load_args('train_args', os.path.join(exp_dir, method_name))
-key_theta = jax.random.PRNGKey(train_args.seed_theta)
-train_args.num_particles = num_particles
-train_args.num_smooth_particles = num_smooth_particles
-
+if 'external' in method_name: 
+    train_args = utils.load_args('train_args', os.path.join(exp_dir))
+    key_theta = jax.random.PRNGKey(train_args.seed_theta)
+    train_args.num_particles = num_particles
+    train_args.num_smooth_particles = num_smooth_particles
 
     
 set_parametrization(train_args)
@@ -60,7 +60,7 @@ from time import time
 
     
 p = hmm.get_generative_model(train_args)
-theta_star = utils.load_params('theta', os.path.join(exp_dir, method_name))
+theta_star = utils.load_params('theta', os.path.join(exp_dir))
 
 
 
@@ -98,7 +98,7 @@ class ExternalVariationalFamily():
 
 
 if 'external' in method_name:
-    q = ExternalVariationalFamily(utils.chaotic_rnn_base_dir, seq_length)
+    q = ExternalVariationalFamily(args.load_from, seq_length)
 
     filt_results.append(q.get_filt_means_and_covs())
     smooth_results.append(q.get_smooth_means_and_covs())

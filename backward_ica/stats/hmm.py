@@ -22,14 +22,14 @@ def xtanh(slope):
 
 def get_generative_model(args, key_for_random_params=None):
 
-    if args.p_version == 'linear':
+    if args.model == 'linear':
         p = LinearGaussianHMM(args.state_dim, 
                                 args.obs_dim, 
                                 args.transition_matrix_conditionning, 
                                 args.range_transition_map_params,
                                 args.transition_bias, 
                                 args.emission_bias)
-    elif 'chaotic_rnn' in args.p_version:
+    elif 'chaotic_rnn' in args.model:
         p = NonLinearHMM.chaotic_rnn(args)
     else: 
         p = NonLinearHMM.linear_transition_with_nonlinear_emission(args) # specify the structure of the true model
@@ -80,7 +80,7 @@ class HMM:
         
     def sample_multiple_sequences(self, key, params, num_seqs, seq_length, single_split_seq=False, load_from=None):
 
-        if load_from is not None: 
+        if load_from != '': 
             state_seq = jnp.load(os.path.join(load_from, 'x_data.npy')).astype(jnp.float64)
             obs_seq = jnp.load(os.path.join(load_from, 'y_data.npy')).astype(jnp.float64)
             
