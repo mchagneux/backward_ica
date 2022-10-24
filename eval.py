@@ -27,10 +27,13 @@ method_name = 'johnson_backward'
                 
 pretty_name = 'Johnson Backward'
 
-seq_length = 2000
+if 'chaotic_rnn' in exp_dir:
+    seq_length = 2000
+    num_seqs = 1
+    single_split_seq = False 
+
 num_particles = 1000
 num_smooth_particles = 1000
-num_seqs = 1
 load = False
 metrics = True
 plot_sequences = True
@@ -48,10 +51,6 @@ train_args.num_particles = num_particles
 train_args.num_smooth_particles = num_smooth_particles
 
 
-train_args.loaded_data = (os.path.join(utils.chaotic_rnn_base_dir, 'x_data.npy'), 
-                        os.path.join(utils.chaotic_rnn_base_dir,'y_data.npy'))
-train_args.num_seqs = 1
-train_args.seq_length = seq_length
     
 set_parametrization(train_args)
 
@@ -69,13 +68,8 @@ theta_star = utils.load_params('theta', os.path.join(exp_dir, method_name))
 
 
 key_theta, key_gen, key_ffbsi = jax.random.split(key_theta,3)
-if train_args.loaded_data: 
-    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, train_args.num_seqs, seq_length, train_args.single_split_seq, train_args.loaded_data)
-else:
-    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, num_seqs, seq_length)
+state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, num_seqs, seq_length, train_args.single_split_seq, train_args.load_from)
 
-    # print(state_seqs.shape)
-    # print(state_seqs.dtype)
 
 keys_ffbsi = jax.random.split(key_theta, num_seqs)
 filt_results, smooth_results = [], []

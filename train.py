@@ -29,7 +29,7 @@ def main(args, save_dir):
                                             args.num_seqs, 
                                             args.seq_length, 
                                             single_split_seq=args.single_split_seq,
-                                            loaded_data=args.loaded_data)[1]
+                                            load_from=args.load_from)[1]
 
     evidence_keys = jax.random.split(key_smc, args.num_seqs)
 
@@ -97,7 +97,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_seqs', type=int, default=1000)
     parser.add_argument('--seq_length',type=int, default=2000)
     parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
-    parser.add_argument('--load_sequences', action='store_true', default=True)
+    parser.add_argument('--load_from', action='str', default='')
     parser.add_argument('--sweep_sequences', action='store_true', default=False)
     parser.add_argument('--float64', action='store_true', default=True)
 

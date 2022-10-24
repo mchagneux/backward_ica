@@ -23,7 +23,6 @@ def moving_window(a, size: int):
     starts = jnp.arange(len(a) - size + 1)
     return vmap(lambda start: lax.dynamic_slice_in_dim(a, start, size))(starts)
 
-chaotic_rnn_base_dir = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
 
 
 
@@ -60,13 +59,10 @@ def get_config(p_version=None,
     args.single_split_seq = False # whether to draw one long sample of length seq_length * num_seqs and divide it in seq_length // num_seqs sequences
     
     if args.p_version == 'chaotic_rnn': 
-        if args.load_sequences:
+        if args.load_from is not None: 
             args.num_seqs = 1
             args.batch_size = 1
-            args.loaded_data = (os.path.join(chaotic_rnn_base_dir, 'x_data.npy'), 
-                                os.path.join(chaotic_rnn_base_dir,'y_data.npy'))
-        else: args.loaded_data = None
-
+    
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
 
     ## prior 
