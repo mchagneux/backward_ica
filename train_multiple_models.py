@@ -10,7 +10,7 @@ q_versions = ['neural_backward_linear']
 num_epochs = 10000
 learning_rate = 0.01
 dims = '5 5'
-load_sequences = True
+load_from = ''
 sweep_sequences = False
 
 batch_size = 1
@@ -33,10 +33,9 @@ for q_version in q_versions:
     logfiles.append(f)
     save_dirs.append(save_dir)
 
-load_sequences = '--load_sequences' if load_sequences else ''
 sweep_sequences ='--sweep_sequences' if sweep_sequences else ''
 float64 = '--float64' if float64 else ''
-processes = [subprocess.Popen(f'python train.py {load_sequences} {sweep_sequences} {float64} \
+processes = [subprocess.Popen(f'python train.py {sweep_sequences} {float64} \
                                 --p_version {p_version} \
                                 --q_version {q_version} \
                                 --save_dir {save_dir} \
@@ -46,6 +45,7 @@ processes = [subprocess.Popen(f'python train.py {load_sequences} {sweep_sequence
                                 --num_seqs {num_seqs} \
                                 --batch_size {batch_size} \
                                 --num_samples {num_samples} \
+                                --load_from {load_from} \
                                 --dims {dims}',
                         shell=True, stdout=logfile, stderr=logfile) \
 

@@ -58,9 +58,6 @@ eval_dir = os.path.join(exp_dir, f'eval_{method_name}')
 os.makedirs(eval_dir, exist_ok=True)
 from time import time
 
-# shutil.rmtree(eval_dir)
-
-
     
 p = hmm.get_generative_model(train_args)
 theta_star = utils.load_params('theta', os.path.join(exp_dir, method_name))

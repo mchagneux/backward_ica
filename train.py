@@ -89,17 +89,23 @@ if __name__ == '__main__':
 
     parser.add_argument('--save_dir', type=str, default='')
     parser.add_argument('--args_path', type=str, default='')
+    parser.add_argument('--float64', action='store_true', default=True)
+
+    parser.add_argument('--num_seqs', type=int, default=1000)
+    parser.add_argument('--seq_length',type=int, default=2000)
+    parser.add_argument('--load_from', action='str', default='')
+    parser.add_argument('--sweep_sequences', action='store_true', default=False)
+
     parser.add_argument('--dims', type=int, nargs='+', default=(5,5))
+    parser.add_argument('--transition_bias', type=bool, default=False)
+    parser.add_argument('--emission_bias', type=bool, default=False)
+
     parser.add_argument('--batch_size', type=int, default=20)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--num_epochs', type=int, default=10000)
     parser.add_argument('--num_samples', type=int, default=1)
-    parser.add_argument('--num_seqs', type=int, default=1000)
-    parser.add_argument('--seq_length',type=int, default=2000)
+    
     parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
-    parser.add_argument('--load_from', action='str', default='')
-    parser.add_argument('--sweep_sequences', action='store_true', default=False)
-    parser.add_argument('--float64', action='store_true', default=True)
 
     args = parser.parse_args()
 

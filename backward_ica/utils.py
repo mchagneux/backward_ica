@@ -50,6 +50,8 @@ def get_config(p_version=None,
     args.seed_phi = 4569
     import math 
 
+    args.load_from = None if args.load_from == '' else args.load_from
+
     ## dataset 
     if external_args is None:
         args.p_version = p_version
@@ -58,44 +60,38 @@ def get_config(p_version=None,
 
     args.single_split_seq = False # whether to draw one long sample of length seq_length * num_seqs and divide it in seq_length // num_seqs sequences
     
-    if args.p_version == 'chaotic_rnn': 
-        if args.load_from is not None: 
-            args.num_seqs = 1
-            args.batch_size = 1
-    
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
 
-    ## prior 
+    ## prior defaults
     args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior
     args.default_prior_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the prior
 
-    ## transition 
+    ## transition defaults
     args.transition_matrix_conditionning = 'init_invertible' # constraint on the transition matrix 
     args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
-
     args.default_transition_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the transition kernel
-    args.transition_bias = False 
     args.default_transition_bias = 0.0
 
-    ## emission 
+    ## emission defaults
     args.default_emission_base_scale = math.sqrt(1e-2)
 
-    if args.p_version == 'chaotic_rnn' or args.p_version == 'linear':
-        args.emission_bias = False
+
+    if args.p_version == 'chaotic_rnn': 
         args.emission_matrix_conditionning = 'diagonal'
         args.range_emission_map_params = (0.99,1)
 
+        if args.load_from is not None: 
+            args.num_seqs = 1
+            args.batch_size = 1
 
-    
-    if args.p_version == 'chaotic_rnn':
         args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
         args.grid_size = 0.001 # discretization parameter for the chaotic rnn
         args.gamma = 2.5 # gamma for the chaotic rnn
         args.tau = 0.025 # tau for the chaotic rnn
-        args.default_transition_matrix = os.path.join(chaotic_rnn_base_dir, 'W.npy')
+        args.default_transition_matrix = os.path.join(args.load_from, 'W.npy')
 
-    if 'nonlinear_emission' in args.p_version:
+    elif 'nonlinear_emission' in args.p_version:
         args.emission_map_layers = (8,)
         args.slope = 0 # amount of linearity in the emission function
         args.injective = True
