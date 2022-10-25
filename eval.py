@@ -21,7 +21,7 @@ import pickle
 
 utils.enable_x64(True)
 
-def main(exp_dir, method_name, num_slices):
+def main(exp_dir, method_name, num_slices, num_seqs, plot_sequences, filter_rmse):
         
 
     if method_name == 'johnson_backward':
@@ -34,20 +34,28 @@ def main(exp_dir, method_name, num_slices):
         pretty_name = 'Campbell'
 
     metrics = True
-    plot_sequences = True
-    filter_rmse = True
     visualize_init = False
     lag = None
-    seq_length = 500
-    num_seqs = 1
+
 
     data_args = utils.load_args('args', exp_dir)
+    seq_length = data_args.seq_length
+
     p = hmm.get_generative_model(utils.load_args('args', exp_dir))
     theta_star = utils.load_params('theta_star', exp_dir)
+    num_seqs = data_args.num_seqs if num_seqs == 1 else num_seqs
 
     if data_args.model == 'chaotic_rnn':
-        obs_seqs = jnp.load(os.path.join(exp_dir, 'obs_seqs.npy'))
-        state_seqs = jnp.load(os.path.join(exp_dir, 'state_seqs.npy'))
+        if num_seqs != 1: 
+            state_seqs, obs_seqs = p.sample_multiple_sequences(jax.random.PRNGKey(0), 
+                                                                theta_star,
+                                                                num_seqs=num_seqs, 
+                                                                seq_length=seq_length,
+                                                                single_split_seq=False,
+                                                                load_from=data_args.load_from)
+        else: 
+            obs_seqs = jnp.load(os.path.join(exp_dir, 'obs_seqs.npy'))
+            state_seqs = jnp.load(os.path.join(exp_dir, 'state_seqs.npy'))
     else: 
         state_seqs, obs_seqs = p.sample_multiple_sequences(jax.random.PRNGKey(data_args.seed), 
                                                         theta_star,
@@ -137,13 +145,9 @@ def main(exp_dir, method_name, num_slices):
         print('-----')
         if method_name == 'external_campbell':
             filt_rmses_campbell = jnp.load(os.path.join(data_args.load_from, 'filter_RMSEs.npy'))[:,-1]
-            print(f'Filter RMSE campbell external:', jnp.mean(filt_rmses_campbell))
-
+            print('Filter RMSE campbell external:', jnp.mean(filt_rmses_campbell))
     #%%
-
     if plot_sequences: 
-        colors = ['blue',
-                'red']
         print('Plotting individual sequences...')
         for task_name, results in zip(['filtering','smoothing'], [filt_results, smooth_results]): 
             means_q, covs_q = results[0]
@@ -188,7 +192,7 @@ def main(exp_dir, method_name, num_slices):
 
         print(f'Evaluating {method_name}')
 
-        q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(state_seqs, obs_seqs, slices)
+        q_vs_ref_marginals, q_vs_ref_additive = eval_smoothing(means_ref, obs_seqs, slices)
 
         with open(os.path.join(eval_dir, 'eval.dill'), 'wb') as f:
             dill.dump((q_vs_ref_marginals, q_vs_ref_additive), f)
@@ -196,10 +200,19 @@ def main(exp_dir, method_name, num_slices):
 
 if __name__ == '__main__':
 
-    exp_dir = 'experiments/p_chaotic_rnn/2022_10_24__17_25_51'
-    method_names = ['external_campbell', 'johnson_backward', 'johnson_forward', 'neural_backward_linear']
-    for method_name in method_names:
-        main(exp_dir, method_name, 50)
+    import argparse 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--exp_dir',type=str, default='')
+    parser.add_argument('--models', type=str, nargs='+', default=['johnson_backward', 'johnson_forward'])
+    parser.add_argument('--n_slices', type=int, default=25)     
+    parser.add_argument('--rmse', action='store_true')
+    parser.add_argument('--plot', action='store_true')
+    parser.add_argument('--num_seqs', type=int, default=1)
+
+    args = parser.parse_args()
+
+    for method_name in args.models:
+        main(args.exp_dir, method_name, args.n_slices, args.num_seqs, False, True)
     # import argparse 
     # parser = argparse.ArgumentParser()
     # parser.add_argument('--exp_dir',type=str,default='')

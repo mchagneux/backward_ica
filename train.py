@@ -94,6 +94,7 @@ if __name__ == '__main__':
     args.frozen_params  = args.model.split('__')[1:] # list of parameter groups which are not learnt
     args.online = 'online' in args.model # whether to use the online ELBO or not
     args.save_dir = os.path.join(args.exp_dir, args.model)
+    os.makedirs(args.save_dir, exist_ok=True)
 
     
     args = utils.get_defaults(args)

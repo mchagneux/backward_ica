@@ -80,7 +80,7 @@ class HMM:
         
     def sample_multiple_sequences(self, key, params, num_seqs, seq_length, single_split_seq=False, load_from=''):
 
-        if load_from != '': 
+        if num_seqs == 1 and load_from != '': 
             state_seq = jnp.load(os.path.join(load_from, 'x_data.npy')).astype(jnp.float64)
             obs_seq = jnp.load(os.path.join(load_from, 'y_data.npy')).astype(jnp.float64)
             
