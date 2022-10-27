@@ -21,7 +21,7 @@ import pickle
 
 utils.enable_x64(True)
 
-def main(exp_dir, method_name, num_slices, num_seqs, plot_sequences, filter_rmse):
+def main(exp_dir, method_name, num_slices, num_seqs, plot_sequences, filter_rmse, loaded_seq):
         
 
     if method_name == 'johnson_backward':
@@ -40,29 +40,24 @@ def main(exp_dir, method_name, num_slices, num_seqs, plot_sequences, filter_rmse
 
     data_args = utils.load_args('args', exp_dir)
     seq_length = data_args.seq_length
-
+    num_seqs = data_args.num_seqs
     p = hmm.get_generative_model(utils.load_args('args', exp_dir))
     theta_star = utils.load_params('theta_star', exp_dir)
-    num_seqs = data_args.num_seqs if num_seqs == 1 else num_seqs
 
-    if data_args.model == 'chaotic_rnn':
-        if num_seqs != 1: 
-            state_seqs, obs_seqs = p.sample_multiple_sequences(jax.random.PRNGKey(0), 
-                                                                theta_star,
-                                                                num_seqs=num_seqs, 
-                                                                seq_length=seq_length,
-                                                                single_split_seq=False,
-                                                                load_from=data_args.load_from)
-        else: 
-            obs_seqs = jnp.load(os.path.join(exp_dir, 'obs_seqs.npy'))
-            state_seqs = jnp.load(os.path.join(exp_dir, 'state_seqs.npy'))
+    if num_seqs != 1: 
+        num_seqs = 1 if loaded_seq else num_seqs
+        state_seqs, obs_seqs = p.sample_multiple_sequences(jax.random.PRNGKey(0), 
+                                                            theta_star,
+                                                            num_seqs=num_seqs, 
+                                                            seq_length=seq_length,
+                                                            single_split_seq=False,
+                                                            load_from=data_args.load_from,
+                                                            loaded_seq=data_args.loaded_seq)
+                                                    
+
     else: 
-        state_seqs, obs_seqs = p.sample_multiple_sequences(jax.random.PRNGKey(data_args.seed), 
-                                                        theta_star,
-                                                        num_seqs=num_seqs, 
-                                                        seq_length=seq_length,
-                                                        single_split_seq=False,
-                                                        load_from='')
+        obs_seqs = jnp.load(os.path.join(exp_dir, 'obs_seqs.npy'))
+        state_seqs = jnp.load(os.path.join(exp_dir, 'state_seqs.npy'))
 
     set_parametrization(data_args)
 
@@ -134,9 +129,6 @@ def main(exp_dir, method_name, num_slices, num_seqs, plot_sequences, filter_rmse
     smooth_results.append((means_smooth_q, covs_smooth_q))
 
 
-
-
-
     if filter_rmse: 
         filt_rmse_q = jnp.mean(jnp.sqrt(jnp.mean((means_filt_q - state_seqs)**2, axis=-1)))
         print(f'Filter RMSE {pretty_name}:', filt_rmse_q)
@@ -179,7 +171,6 @@ def main(exp_dir, method_name, num_slices, num_seqs, plot_sequences, filter_rmse
 
         return q_vs_ref_marginals, q_vs_ref_additive
         
-
     eval_smoothing = jax.vmap(eval_smoothing_single_seq, in_axes=(0,0, None))
 
     if metrics: 
@@ -203,16 +194,17 @@ if __name__ == '__main__':
     import argparse 
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp_dir',type=str, default='')
-    parser.add_argument('--models', type=str, nargs='+', default=['johnson_backward', 'johnson_forward'])
-    parser.add_argument('--n_slices', type=int, default=25)     
+    parser.add_argument('--models', type=str, nargs='+', default=['external_campbell'])
+    parser.add_argument('--n_slices', type=int, default=250)     
     parser.add_argument('--rmse', action='store_true')
     parser.add_argument('--plot', action='store_true')
     parser.add_argument('--num_seqs', type=int, default=1)
+    parser.add_argument('--load_seq', action='store_true')
 
     args = parser.parse_args()
 
     for method_name in args.models:
-        main(args.exp_dir, method_name, args.n_slices, args.num_seqs, False, True)
+        main(args.exp_dir, method_name, args.n_slices, args.num_seqs, True, True, True)
     # import argparse 
     # parser = argparse.ArgumentParser()
     # parser.add_argument('--exp_dir',type=str,default='')

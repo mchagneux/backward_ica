@@ -38,40 +38,46 @@ def get_defaults(args):
     import math
     args.float64 = True
 
-    ## prior defaults
     args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior
     args.default_prior_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the prior
-
-    ## transition defaults
-    args.transition_matrix_conditionning = 'init_invertible' # constraint on the transition matrix 
-    args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
     args.default_transition_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the transition kernel
     args.default_transition_bias = 0.0
-
-    ## emission defaults
     args.default_emission_base_scale = math.sqrt(1e-2)
 
-    if args.model == 'chaotic_rnn':
+    if 'chaotic_rnn' not in args.model:
+        args.transition_matrix_conditionning = 'diagonal'
+        if not(hasattr(args, 'transition_bias')):
+            args.transition_bias = False
+        args.range_transition_map_params = [0.9,0.99] # range of the components of the transition matrix
+
+    else:
+        args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
+        args.transition_matrix_conditionning = 'init_sym_def_pos' # constraint
+        args.default_transition_matrix = os.path.join(args.load_from, 'W.npy')
+        args.grid_size = 0.001 # discretization parameter for the chaotic rnn
+        args.gamma = 2.5 # gamma for the chaotic rnn
+        args.tau = 0.025 # tau for the chaotic rnn
+
         args.emission_matrix_conditionning = 'diagonal'
         args.range_emission_map_params = (0.99,1)
         args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
-        args.grid_size = 0.001 # discretization parameter for the chaotic rnn
-        args.gamma = 2.5 # gamma for the chaotic rnn
-        args.tau = 0.025 # tau for the chaotic rnn
-        args.default_transition_matrix = os.path.join(args.load_from, 'W.npy')
-    elif 'nonlinear_emission' in args.model:
+
+    if not(hasattr(args, 'emission_bias')):
+        args.emission_bias = False 
+
+    if 'nonlinear_emission' in args.model:
         args.emission_map_layers = (8,)
         args.slope = 0 # amount of linearity in the emission function
-        args.injective = True
+        args.injective = False
 
     if 'neural_backward' in args.model:
         ## variational family
-        args.update_layers = (32,) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     elif 'johnson' in args.model:
-        args.update_layers = (100,)
+        args.update_layers = (8,8)
         args.anisotropic = 'anisotropic' in args.model
 
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 

@@ -14,7 +14,8 @@ def main(args):
 
     key_theta = jax.random.PRNGKey(args.seed)
     key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
-    p, theta_star = hmm.get_generative_model(args, key_for_random_params=key_params)
+    p, theta_star = hmm.get_generative_model(args, 
+                                            key_for_random_params=key_params)
 
     utils.save_params(theta_star, 'theta_star', args.exp_dir)
 
@@ -23,7 +24,8 @@ def main(args):
                                             args.num_seqs, 
                                             args.seq_length, 
                                             single_split_seq=args.single_split_seq,
-                                            load_from=args.load_from)
+                                            load_from=args.load_from,
+                                            loaded_seq=args.loaded_seq)
 
     jnp.save(os.path.join(args.exp_dir, 'state_seqs.npy'), state_seqs)
     jnp.save(os.path.join(args.exp_dir, 'obs_seqs.npy'), obs_seqs)
@@ -48,12 +50,13 @@ if __name__ == '__main__':
     parser.add_argument('--num_seqs', type=int, default=1000)
     parser.add_argument('--seq_length',type=int, default=2000)
     parser.add_argument('--single_split_seq', type=bool, default=False)
-    parser.add_argument('--load_from', type=str, default='../online_var_fil/outputs/2022-10-24_12-02-05_Train_run')
+    parser.add_argument('--load_from', type=str, default='')
     parser.add_argument('--transition_bias', type=bool, default=False)
     parser.add_argument('--emission_bias', type=bool, default=False)
     parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
     parser.add_argument('--exp_dir', type=str, default='experiments/tests')
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--loaded_seq', action='store_true', default=False)
 
     args = parser.parse_args()
     args.state_dim, args.obs_dim = args.dims

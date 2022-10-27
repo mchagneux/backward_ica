@@ -23,6 +23,7 @@ class GeneralForwardELBO:
 
     def __call__(self, key, obs_seq, compute_up_to, theta, phi):
 
+        theta.compute_covs()
         def _monte_carlo_sample(key, obs_seq, init_state, backwd_variables_seq):
             
             def _sample_step(prev_sample, x):
@@ -83,6 +84,8 @@ class GeneralForwardELBO:
 
         return jnp.mean(mc_samples) / (compute_up_to + 1)
 
+
+
 class GeneralBackwardELBO:
 
     def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):
@@ -92,6 +95,7 @@ class GeneralBackwardELBO:
         self.num_samples = num_samples
 
     def __call__(self, key, obs_seq, compute_up_to, theta:HMM.Params, phi):
+        theta.compute_covs()
 
         def _monte_carlo_sample(key, obs_seq, state_seq):
 

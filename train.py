@@ -74,14 +74,14 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='neural_backward_linear')
-    parser.add_argument('--exp_dir', type=str, default='experiments/tests')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2022_10_26__17_13_18')
 
-    parser.add_argument('--sweep_sequences', action='store_true', default=False)
+    parser.add_argument('--sweep_sequences', action='store_true')
 
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
-    parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--num_epochs', type=int, default=10000)
+    parser.add_argument('--learning_rate', type=float, default=0.01)
+    parser.add_argument('--num_epochs', type=int, default=400)
     parser.add_argument('--num_samples', type=int, default=1)
     
     parser.add_argument('--optimizer', type=str, default='adamw')

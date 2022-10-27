@@ -29,8 +29,11 @@ def get_generative_model(args, key_for_random_params=None):
                                 args.range_transition_map_params,
                                 args.transition_bias, 
                                 args.emission_bias)
-    elif 'chaotic_rnn' in args.model:
-        p = NonLinearHMM.chaotic_rnn(args)
+    elif 'chaotic_rnn' in args.model or args.model == 'chaotic_rnn':
+        if 'nonlinear_emission' in args.model:
+            p = NonLinearHMM.chaotic_rnn_with_nonlinear_emission(args)
+        else: 
+            p = NonLinearHMM.chaotic_rnn(args)
     else: 
         p = NonLinearHMM.linear_transition_with_nonlinear_emission(args) # specify the structure of the true model
     
@@ -78,9 +81,9 @@ class HMM:
         self.transition_kernel:Kernel = transition_kernel_type(state_dim)
         self.emission_kernel:Kernel = emission_kernel_type(state_dim, obs_dim)
         
-    def sample_multiple_sequences(self, key, params, num_seqs, seq_length, single_split_seq=False, load_from=''):
+    def sample_multiple_sequences(self, key, params, num_seqs, seq_length, single_split_seq=False, load_from='', loaded_seq=False):
 
-        if num_seqs == 1 and load_from != '': 
+        if loaded_seq:
             state_seq = jnp.load(os.path.join(load_from, 'x_data.npy')).astype(jnp.float64)
             obs_seq = jnp.load(os.path.join(load_from, 'y_data.npy')).astype(jnp.float64)
             
@@ -281,9 +284,9 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         
         return build_params(best_params), avg_logls, best_optim
     
-    def compute_state_seq(self, obs_seq, formatted_params):
+    def compute_state_seq(self, obs_seq, compute_up_to, formatted_params):
         formatted_params.compute_covs()
-        return super().compute_state_seq(obs_seq, formatted_params)
+        return super().compute_state_seq(obs_seq, compute_up_to, formatted_params)
 
 class NonLinearHMM(HMM):
 
@@ -332,6 +335,34 @@ class NonLinearHMM(HMM):
                                     'range_params':args.range_emission_map_params}}, 
                                 'noise_dist':Student}
 
+        return NonLinearHMM(args.state_dim, 
+                            args.obs_dim, 
+                            transition_kernel_def, 
+                            emission_kernel_def, 
+                            prior_dist = Gaussian,
+                            num_particles = args.num_particles, 
+                            num_smooth_particles=args.num_smooth_particles)
+        
+    @staticmethod
+    def chaotic_rnn_with_nonlinear_emission(args):
+        nonlinear_transition_map_forward = partial(Maps.chaotic_map, 
+                                        grid_size=args.grid_size, 
+                                        gamma=args.gamma,
+                                        tau=args.tau)
+        if args.injective:
+            nonlinear_map_forward = partial(Maps.neural_map, layers=args.emission_map_layers, slope=args.slope)
+        else: 
+            nonlinear_map_forward = partial(Maps.neural_map_noninjective, layers=args.emission_map_layers, slope=args.slope)
+
+        transition_kernel_def = {'map':{'map_type':'nonlinear',
+                                        'map_info' : {'homogeneous': True},
+                                        'map': nonlinear_transition_map_forward},
+                                'noise_dist':Gaussian}
+        
+        emission_kernel_def = {'map':{'map_type':'nonlinear',
+                                    'map_info' : {'homogeneous': True},
+                                    'map': nonlinear_map_forward},
+                            'noise_dist':Gaussian}
 
         return NonLinearHMM(args.state_dim, 
                             args.obs_dim, 
