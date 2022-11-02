@@ -93,14 +93,20 @@ class SVITrainer:
             self.loss = lambda key, data, compute_up_to, params: -self.elbo(key, data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
 
         else: 
-            if online:
-                self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize, num_samples)
-                self.get_montecarlo_keys = get_keys
-                self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))[0]
-            else:
-                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-                self.get_montecarlo_keys = get_keys
-                self.loss = lambda key, data, compute_up_to, params: -self.elbo(key, data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
+
+            if isinstance(self.p, LinearGaussianHMM) and isinstance(self.q, LinearGaussianHMM):
+                self.elbo = LinearGaussianELBO(self.p, self.q)
+                self.get_montecarlo_keys = get_dummy_keys
+                self.loss = lambda key, data, compute_up_to, params: -self.elbo(data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
+            else: 
+                if online:
+                    self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize, num_samples)
+                    self.get_montecarlo_keys = get_keys
+                    self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))[0]
+                else:
+                    self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+                    self.get_montecarlo_keys = get_keys
+                    self.loss = lambda key, data, compute_up_to, params: -self.elbo(key, data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
                 # if force_full_mc: 
                 #     self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                 #     self.get_montecarlo_keys = get_keys
@@ -245,7 +251,7 @@ class SVITrainer:
             best_elbos.append(best_elbo)
             print(f'Best ELBO {best_elbo:.3f} at epoch {best_epoch}')
         
-            if store_every is not None:
+            if store_every != 0:
                 selected_epochs = list(range(0, self.num_epochs, store_every))
                 all_params.append({epoch_nb:params[epoch_nb] for epoch_nb in selected_epochs})
 
@@ -258,8 +264,8 @@ class SVITrainer:
         print(f'Best fit is {best_optim+1}.')
         best_params = all_params[best_optim]
 
-        if store_every is not None: 
-            return best_params, all_avg_elbos[best_optim]
+        if store_every != 0: 
+            return all_params[best_optim], all_avg_elbos[best_optim]
         else: 
             return best_params, (best_optim, best_epochs, all_avg_elbos)
 

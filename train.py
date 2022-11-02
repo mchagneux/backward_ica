@@ -58,6 +58,7 @@ def main(args):
                                                             data=data, 
                                                             num_fits=args.num_fits,
                                                             log_dir=args.save_dir,
+                                                            store_every=args.store_every,
                                                             args=args)[0] # returns the best fit (based on the last value of the elbo)
     
     # utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), args.save_dir, plot=True, best_epochs_only=True)
@@ -73,19 +74,19 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='neural_backward_linear')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2022_10_26__17_13_18')
+    parser.add_argument('--model', type=str, default='linear')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_linear/2022_11_02__15_45_16')
 
     parser.add_argument('--sweep_sequences', action='store_true')
 
     parser.add_argument('--num_fits', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=50)
     parser.add_argument('--learning_rate', type=float, default=0.01)
-    parser.add_argument('--num_epochs', type=int, default=400)
+    parser.add_argument('--num_epochs', type=int, default=200)
     parser.add_argument('--num_samples', type=int, default=1)
     
     parser.add_argument('--optimizer', type=str, default='adamw')
-    parser.add_argument('--store_every', type=int, default=5)
+    parser.add_argument('--store_every', type=int, default=0)
     parser.add_argument('--seed', type=int, default=1)
 
     args = parser.parse_args()

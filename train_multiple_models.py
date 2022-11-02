@@ -2,21 +2,22 @@ import subprocess
 import os
 from datetime import datetime 
 
-p_model = 'chaotic_rnn'
+p_model = 'linear'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['neural_backward_linear' ,'johnson_backward']
+q_models = ['linear']
 
-num_epochs = 4000
+num_epochs = 200
 learning_rate = 0.01
 dims = '5 5'
-load_from = '../online_var_fil/outputs/2022-10-25_16-50-34_Train_run'
-batch_size = 1
-num_seqs = 1
-seq_length = 500
-num_samples_list = [10, 10]
-loaded_seq = True
+load_from = ''
+batch_size = 100
+num_seqs = 1000
+seq_length = 50
+num_samples_list = [0]
+loaded_seq = False
 sweep_sequences = False
+store_every = 5
 os.makedirs(base_dir, exist_ok=True)
 
 
@@ -43,6 +44,7 @@ processes = [subprocess.Popen(f'python train.py {sweep_sequences} \
                                     --batch_size {batch_size} \
                                     --learning_rate {learning_rate} \
                                     --num_epochs {num_epochs} \
+                                    --store_every {store_every} \
                                     --num_samples {num_samples}', 
                         shell=True) for model, num_samples in zip(q_models, num_samples_list)]
 

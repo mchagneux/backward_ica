@@ -84,8 +84,6 @@ class GeneralForwardELBO:
 
         return jnp.mean(mc_samples) / (compute_up_to + 1)
 
-
-
 class GeneralBackwardELBO:
 
     def __init__(self, p:HMM, q:BackwardSmoother, num_samples=200):
@@ -442,8 +440,6 @@ class OnlineGeneralBackwardELBOV3:
 
         return jnp.mean(tau), (samples_seq, weights_seq, filt_params_seq, backwd_params_seq)
 
-
-
 class OnlineBackwardLinearELBO:
 
     def __init__(self, p:HMM, q:LinearBackwardSmoother, normalizer, num_samples=200):
@@ -599,37 +595,47 @@ class LinearGaussianELBO:
         self.p = p
         self.q = q
         
-    def __call__(self, obs_seq, theta:HMM.Params, phi:HMM.Params):
+    def __call__(self, obs_seq, compute_up_to, theta:HMM.Params, phi:HMM.Params):
 
-        result = quadratic_term_from_log_gaussian(theta.prior) + get_tractable_emission_term(obs_seq[0], theta.emission)
+        def step(carry, x):
+                
+            state, kl_term = carry 
+            idx, obs = x
+
+            def false_fun(state, kl_term, obs):
+                return (state, kl_term), None 
+            
+            def true_fun(state, kl_term, obs):
+
+                q_backwd_params = self.q.backwd_params_from_state(state, phi)
+
+                kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_params) \
+                        + transition_term_integrated_under_backward(q_backwd_params, theta.transition) \
+                        + get_tractable_emission_term(obs, theta.emission)
 
 
-        q_filt_params = self.q.init_filt_params(obs_seq[0], phi)
+                kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_params.noise.scale.log_det) +  0.5 * self.p.state_dim
+                new_state = self.q.new_state(obs, state, phi)
+                return (new_state, kl_term), None
 
-        def V_step(state, obs):
-
-            q_filt_params, kl_term = state
-            q_backwd_params = self.q.new_backwd_params(q_filt_params, phi)
-
-            kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_params) \
-                    + transition_term_integrated_under_backward(q_backwd_params, theta.transition) \
-                    + get_tractable_emission_term(obs, theta.emission)
+            return lax.cond(idx <= compute_up_to, true_fun, false_fun, state, kl_term, obs)
 
 
-            kl_term.c += -constant_terms_from_log_gaussian(self.p.state_dim, q_backwd_params.noise.scale.log_det) +  0.5 * self.p.state_dim
-            q_filt_params = self.q.new_filt_params(obs, q_filt_params, phi)
-
-            return (q_filt_params, kl_term), q_backwd_params
+        kl_term = quadratic_term_from_log_gaussian(theta.prior) + get_tractable_emission_term(obs_seq[0], theta.emission)
+        state = self.q.init_state(obs_seq[0], phi)
     
-        (q_last_filt_params, result) = lax.scan(V_step, 
-                                                init=(q_filt_params, result), 
-                                                xs=obs_seq[1:])[0]
+    
+        (state, kl_term) = lax.scan(step, 
+                                init=(state, kl_term), 
+                                xs=(jnp.arange(1, len(obs_seq)), obs_seq[1:]))[0]
 
-
-        return expect_quadratic_term_under_gaussian(result, q_last_filt_params.out) \
-                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_params.out.scale.log_det) \
+        q_last_filt_params = self.q.filt_params_from_state(state, phi)
+        
+        kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_params) \
+                    - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_params.scale.log_det) \
                     + 0.5*self.p.state_dim
 
+        return kl_term / len(obs_seq)
 
 
 

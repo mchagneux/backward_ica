@@ -31,12 +31,18 @@ def main(args):
     jnp.save(os.path.join(args.exp_dir, 'obs_seqs.npy'), obs_seqs)
 
 
-    evidence_keys = jax.random.split(key_smc, args.num_seqs)
 
     if args.compute_oracle_evidence:
         print('Computing evidence...')
 
-        avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: p.likelihood_seq(key, obs_seq, theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
+        evidence_keys = jax.random.split(key_smc, args.num_seqs)
+
+        if args.model == 'linear':
+            evidence_func = lambda key, obs_seq, params: p.likelihood_seq(obs_seq, params)
+        else: 
+            evidence_func = p.likelihood_seq
+
+        avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: evidence_func(key, obs_seq, theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
 
         print('Oracle evidence:', avg_evidence)
 
@@ -53,7 +59,7 @@ if __name__ == '__main__':
     parser.add_argument('--load_from', type=str, default='')
     parser.add_argument('--transition_bias', type=bool, default=False)
     parser.add_argument('--emission_bias', type=bool, default=False)
-    parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
+    parser.add_argument('--compute_oracle_evidence',type=bool, default=True)
     parser.add_argument('--exp_dir', type=str, default='experiments/tests')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--loaded_seq', action='store_true', default=False)
