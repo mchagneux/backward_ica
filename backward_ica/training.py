@@ -86,6 +86,8 @@ class SVITrainer:
 
         self.optimizer = optax.chain(zero_grads_optimizer, base_optimizer)
         self.sweep_sequences = sweep_sequences
+        self.online = online
+        
 
         if isinstance(self.q, TwoFilterSmoother):
             self.elbo = GeneralForwardELBO(self.p, self.q, num_samples)
@@ -93,58 +95,25 @@ class SVITrainer:
             self.loss = lambda key, data, compute_up_to, params: -self.elbo(key, data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
 
         else: 
-
             if isinstance(self.p, LinearGaussianHMM) and isinstance(self.q, LinearGaussianHMM):
                 self.elbo = LinearGaussianELBO(self.p, self.q)
                 self.get_montecarlo_keys = get_dummy_keys
                 self.loss = lambda key, data, compute_up_to, params: -self.elbo(data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
             else: 
-                if online:
-                    self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize, num_samples)
-                    self.get_montecarlo_keys = get_keys
-                    self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))[0]
-                else:
-                    self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-                    self.get_montecarlo_keys = get_keys
-                    self.loss = lambda key, data, compute_up_to, params: -self.elbo(key, data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
-                # if force_full_mc: 
-                #     self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-                #     self.get_montecarlo_keys = get_keys
-                #     self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
-                # else:
-                #     # if isinstance(self.p, LinearGaussianHMM):
-                #     #     self.elbo = LinearGaussianELBO(self.p, self.q)
-                #     #     self.get_montecarlo_keys = get_dummy_keys
-                #     #     self.loss = lambda key, data, params: -self.elbo(data, self.p.format_params(self.theta_star), q.format_params(params))
-                #     # elif isinstance(self.q, LinearBackwardSmoother) and self.p.transition_kernel.map_type == 'linear':
-                #     #     self.elbo = BackwardLinearELBO(self.p, self.q, num_samples)
-                #     #     self.get_montecarlo_keys = get_keys
-                #     #     self.loss = lambda key, data, params: -self.elbo(key, data, self.p.format_params(self.theta_star), q.format_params(params))
-                #     else:
+                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+                self.get_montecarlo_keys = get_keys
+                self.loss = lambda key, data, compute_up_to, params: -self.elbo(key, data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
+        
+        if self.online: 
+            self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize)
+            self.get_montecarlo_keys = get_dummy_keys
+            self.loss = lambda key, data, compute_up_to, params: -self.elbo.batch_compute(key, data, self.p.format_params(self.theta_star), q.format_params(params))
 
-
-    def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None):
-
-
-        num_seqs = data.shape[0]
-        seq_length = len(data[0])
-
-        # theta = self.p.get_random_params(key_theta, args)
-        params = self.q.get_random_params(key_params, args)
-
-        params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
-                        params, 
-                        self.frozen_params)
-
-        opt_state = self.optimizer.init(params)
-        subkeys = self.get_montecarlo_keys(key_montecarlo, num_seqs, self.num_epochs)
-
-        timesteps = jnp.arange(0, seq_length)
 
         if not self.sweep_sequences: 
             def step(carry, x):
                 def batch_step(params, opt_state, batch, keys):
-                    neg_elbo_values, grads = vmap(value_and_grad(self.loss, argnums=3), in_axes=(0, 0, None, None))(keys, batch, seq_length-1, params)
+                    neg_elbo_values, grads = vmap(value_and_grad(self.loss, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
 
                     avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                     updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
@@ -178,7 +147,7 @@ class SVITrainer:
 
                     (params, opt_state, _, _), neg_elbo_values = jax.lax.scan(timestep_step, 
                                                                                 init=(params, opt_state, batch, keys), 
-                                                                                xs=timesteps)
+                                                                                xs=self.timesteps(batch.shape[1]))
                     
                     return params, opt_state, jnp.mean(neg_elbo_values)
 
@@ -190,6 +159,25 @@ class SVITrainer:
                 params, opt_state, avg_elbo_batch = batch_step(params, opt_state, batch_obs_seq, batch_keys)
 
                 return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
+
+        self.step = step
+
+    def timesteps(self, seq_length):
+        return jnp.arange(0, seq_length)
+
+    def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None):
+
+
+        num_seqs = data.shape[0]
+
+        params = self.q.get_random_params(key_params, args)
+
+        params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
+                        params, 
+                        self.frozen_params)
+
+        opt_state = self.optimizer.init(params)
+        subkeys = self.get_montecarlo_keys(key_montecarlo, num_seqs, self.num_epochs)
 
         avg_elbos = []
         all_params = []
@@ -204,7 +192,7 @@ class SVITrainer:
             data = jax.random.permutation(subkey_batcher, data)
         
 
-            (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(f=step,  
+            (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(f=self.step,  
                                                                         init=(data, params, opt_state, subkeys_epoch), 
                                                                         xs = batch_start_indices)
 

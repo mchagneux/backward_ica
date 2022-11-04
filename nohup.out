@@ -207,3 +207,6 @@ Done.
 WARNING:absl:No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
 TensorBoard caught SIGTERM; exiting...
 TensorBoard caught SIGTERM; exiting...
+Using float64.
+Evaluating ffbsi
+Done.

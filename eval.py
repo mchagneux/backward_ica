@@ -113,8 +113,8 @@ def main(args, method_name):
 
         phi = None
 
-    elif 'ffbsi' in method_name:
-        pass
+    elif 'ffbsi' in method_name or method_name == 'linear_0':
+        pass        
     else: 
         method_dir = os.path.join(args.exp_dir, method_name)
 
@@ -185,8 +185,9 @@ def main(args, method_name):
                                                                                             obs_seqs, 
                                                                                             theta_star, 
                                                                                             slices)[0]
+        elif method_name == 'linear_0':
+            means_q = jax.vmap(p.smooth_seq_at_multiple_timesteps, in_axes=(0,None,None))(obs_seqs, theta_star, slices)[0]
         else: 
-
             means_q = jax.vmap(q.smooth_seq_at_multiple_timesteps, in_axes=(0,None,None))(obs_seqs, phi, slices)[0]
 
         with open(os.path.join(eval_dir, 'eval.dill'), 'wb') as f:
@@ -198,7 +199,7 @@ if __name__ == '__main__':
     import argparse 
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp_dir',type=str, default='')
-    parser.add_argument('--models', type=str, nargs='+', default=['linear_10', 'linear_20', 'linear_50'])
+    parser.add_argument('--models', type=str, nargs='+', default=['linear_10','linear_15','linear_195'])
     parser.add_argument('--n_slices', type=int, default=250)     
     parser.add_argument('--rmse', action='store_true')
     parser.add_argument('--plot', action='store_true')

@@ -5,7 +5,7 @@ from datetime import datetime
 p_model = 'linear'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['linear']
+q_models = ['linear_online']
 
 num_epochs = 200
 learning_rate = 0.01
@@ -13,7 +13,7 @@ dims = '5 5'
 load_from = ''
 batch_size = 100
 num_seqs = 1000
-seq_length = 50
+seq_length = 500
 num_samples_list = [0]
 loaded_seq = False
 sweep_sequences = False
@@ -29,6 +29,7 @@ sweep_sequences = f'--sweep_sequences' if sweep_sequences else ''
 
 exp_dir = os.path.join(base_dir, date)
 os.makedirs(exp_dir, exist_ok=True)
+
 subprocess.run(f'python generate_data.py {loaded_seq} {load_from} \
                         --model {p_model} \
                         --dims {dims} \

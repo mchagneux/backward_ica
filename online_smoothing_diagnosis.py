@@ -20,67 +20,6 @@ normalizer = smc.exp_and_normalize
 # normalizer = lambda x: jnp.mean(jnp.exp(x))
 
 
-def plot():
-
-    get_colors = lambda n: list(map(lambda i: "#" + "%06x" % random.randint(0, 0xFFFFFF),range(n)))
-    colors = get_colors(num_indices)
-    for seq_nb in range(num_seqs):
-
-        samples_seq = samples_seqs[seq_nb]
-        backwd_params_seq = utils.tree_get_idx(seq_nb, backwd_params_seqs)
-
-        for time_idx in range(0, seq_length, seq_length // 5):
-            fig, axes = plt.subplots(state_dim, 1, figsize=(20,30))
-
-            samples_old = samples_seq[time_idx]
-            samples_new = samples_seq[time_idx+1]
-            key, subkey = jax.random.split(key, 2)
-
-            random_indices = jax.random.choice(subkey,
-                                            jnp.arange(0, len(samples_new)),
-                                            shape=(num_indices,),
-                                            replace=False)
-            for dim_nb in range(state_dim):
-
-                sns.histplot(samples_old[:,dim_nb],
-                            ax=axes[dim_nb],
-                            stat='density',
-                            label=f'$\\xi_t^j[{dim_nb}]$',
-                            color='grey')
-
-            for num_idx in range(num_indices):
-                random_idx = random_indices[num_idx]
-
-                new_sample_i = samples_new[random_idx]
-                # weights = weights_seq[time_idx][random_idx]
-
-                backwd_params = q.backwd_kernel.map(new_sample_i, utils.tree_get_idx(time_idx, backwd_params_seq))
-
-                for dim_nb in range(state_dim):
-                    samples_x = samples_old[:,dim_nb]
-                    range_x = jnp.linspace(samples_x.min(), samples_x.max(), 1000)
-                    mu, sigma = backwd_params.mean[dim_nb], backwd_params.scale.cov[dim_nb, dim_nb]
-                    backwd_pdf = lambda x: hmm.gaussian_pdf(x, mu, sigma)
-
-                    axes[dim_nb].plot(range_x,
-                                    backwd_pdf(range_x),
-                                    label=f'$q(x_t[{dim_nb}] | \\xi_{{t+1}}^{{{random_idx}}})$',
-                                    color=colors[num_idx])
-                    axes[dim_nb].legend()
-                # sns.histplot(weights, ax=axes[state_dim], label=f'$\\omega_t^{{{random_idx}}}j$', color=colors[num_idx])
-                # axes[state_dim].legend()
-
-
-            plt.suptitle(f'Sequence {seq_nb}, time {time_idx}, (difference online/offline ELBO {jnp.abs(online_mc_elbo_values[seq_nb] - offline_mc_elbo_values[seq_nb]):.2f})')
-            plt.autoscale(True)
-            plt.tight_layout()
-
-            # sns.pairplot(data=samples,
-            #                 diag_kws={'weights':weights},
-            #                 plot_kws={'weights':weights}, kind="kde")
-            plt.savefig(os.path.join(save_dir, f'seq_{seq_nb}_time_{time_idx}'))
-            plt.close()
-
 def compute_distances_filt_and_backwd(q:hmm.BackwardSmoother, samples_seq, filt_params_seq, backwd_params_seq):
     samples_seq = utils.tree_dropfirst(samples_seq)
     filt_params_seq = utils.tree_droplast(filt_params_seq)
@@ -92,7 +31,6 @@ def compute_distances_filt_and_backwd(q:hmm.BackwardSmoother, samples_seq, filt_
 
 
 def get_sampler_and_elbos(key, args, args_p, args_q):
-
 
     key, *subkeys = jax.random.split(key, 3)
     p, theta_star = utils.get_generative_model(args_p, subkeys[0])

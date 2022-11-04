@@ -11,11 +11,11 @@ import jax.numpy as jnp
 import jax
 exp_type = 'Sequence'
 
-exp_dirs = ['experiments/p_linear/2022_11_02__16_56_20']
+exp_dirs = ['experiments/p_linear_transition_with_nonlinear_emission/2022_10_31__14_14_47']
 
 exp_names = ['All subsequences', 'Whole sequence only']
             
-ref = 'states'
+ref = 'smc'
 
 date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
 
@@ -24,9 +24,11 @@ os.makedirs(eval_dir, exist_ok=True)
 
 evals_additive = dict()
 evals_marginals = dict()
-
-method_names = ['linear_5','linear_10','linear_50']
-
+method_names = [
+        "johnson_backward",
+        "neural_backward_linear",
+        "johnson_forward"
+    ]
 
 args = argparse.Namespace()
 args.exp_dirs = exp_dirs 
@@ -109,6 +111,9 @@ else:
                 if ref == 'smc':
                     with open(os.path.join(os.path.join(exp_dirs[0], 'evals', 'ffbsi'), f'eval.dill'), 'rb') as f: 
                         means_ref, _ , _ = dill.load(f)
+                elif ref == 'linear_0':
+                    with open(os.path.join(os.path.join(exp_dirs[0], 'evals', 'linear_0'), f'eval.dill'), 'rb') as f: 
+                        means_ref, _ , _ = dill.load(f)
                 marginals, additive = jax.vmap(compute_errors, in_axes=(0,0,None))(means_ref, means_q, slices)
                 marginals /= means_q[0].shape[-1]
                 additive /= means_q[0].shape[-1]
@@ -147,3 +152,6 @@ plt.savefig(os.path.join(eval_dir,'Marginal_error'))
 plt.savefig(os.path.join(eval_dir,'Marginal_error.pdf'), format='pdf')
 
 plt.close()
+
+
+training_curve_file = ''
