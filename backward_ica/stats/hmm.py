@@ -194,6 +194,11 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         LinearBackwardSmoother.__init__(self, state_dim)
 
+    def empty_state(self):
+        return State(out=(jnp.empty((self.state_dim,)), 
+                        jnp.empty((self.state_dim, self.state_dim))), 
+                    hidden=jnp.empty_like(jnp.empty((self.state_dim,))))
+
     def init_state(self, obs, params):
 
         mean, cov = Kalman.init(obs, params.prior, params.emission)

@@ -27,6 +27,10 @@ class BackwardSmoother(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
+    def empty_state(self):
+        raise NotImplementedError
+        
+    @abstractmethod
     def init_state(self, obs, params):
         raise NotImplementedError
     

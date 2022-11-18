@@ -106,7 +106,7 @@ class SVITrainer:
         
         if self.online: 
             self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize)
-            self.get_montecarlo_keys = get_dummy_keys
+            self.get_montecarlo_keys = get_keys
             self.loss = lambda key, data, compute_up_to, params: -self.elbo.batch_compute(key, data, self.p.format_params(self.theta_star), q.format_params(params))
 
 

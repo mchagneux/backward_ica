@@ -155,16 +155,19 @@ class GeneralBackwardELBO:
 
 class OnlineGeneralBackwardELBO:
 
-    def __init__(self, p:HMM, q:BackwardSmoother, normalizer, num_samples=200):
+    def __init__(self, p:HMM, q:BackwardSmoother, normalizer=None, num_samples=200):
 
         self.p = p
         self.q = q
         self.num_samples = num_samples
-        self.normalizer = normalizer
+        if normalizer is None: 
+            self.normalizer = lambda x: jnp.mean(x) / self.num_samples
+        else: 
+            self.normalizer = normalizer
 
     def samples_and_log_probs(self, key, q_filt_params):
-        samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_params.out)
-        log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_params.out)
+        samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_params)
+        log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_params)
         return samples, log_probs
 
 
@@ -207,8 +210,8 @@ class OnlineGeneralBackwardELBO:
                 return log_weight, component
             log_weights, components = vmap(sum_component)(samples, log_probs, tau)
 
-            normalized_weights = self.normalizer(log_weights)
-            return jnp.sum(normalized_weights * components)
+            weights = self.normalizer(log_weights)
+            return jnp.sum(weights * components)
             
         new_tau = vmap(update_component_tau)(new_samples, new_log_probs) 
 
@@ -219,19 +222,19 @@ class OnlineGeneralBackwardELBO:
         init_tau = jnp.empty((self.num_samples,))
         init_samples = jnp.empty((self.num_samples, self.p.state_dim)) 
         init_log_probs = jnp.empty((self.num_samples,))
-        init_state = self.q.init_state(jnp.empty((self.p.obs_dim,)), 
-                                        self.q.format_params(self.q.get_random_params(jax.random.PRNGKey(0))))
+        init_state = self.q.empty_state()
+
         return init_state, init_tau, init_samples, init_log_probs
 
 
     def compute(self, state, tau, samples, log_probs, key, idx, obs, theta, phi):
 
-        (state, tau, samples, log_probs) = lax.cond(idx > 0, 
+        (state, tau, samples, log_probs) = lax.cond(idx != 0, 
                                                     self._update, 
                                                     self._init,
                                                     state, tau, samples, log_probs, key, obs, theta, phi)
         
-        return (state, tau, samples, log_probs), jnp.mean(tau) / (idx + 1)
+        return (state, tau, samples, log_probs), None
     
 
     def batch_compute(self, key, obs_seq, theta, phi):
@@ -241,9 +244,9 @@ class OnlineGeneralBackwardELBO:
             state, tau, samples, log_probs = carry
             key, idx, obs = x
             return self.compute(state, tau, samples, log_probs, key, idx, obs, theta, phi)
-        return lax.scan(_step, 
+        return jnp.mean(lax.scan(_step, 
                         init=self.init(),
-                        xs=(key_seq, idx_seq, obs_seq))
+                        xs=(key_seq, idx_seq, obs_seq))[0][1])
 
         
 
