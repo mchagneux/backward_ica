@@ -51,6 +51,8 @@ def main(args):
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
 
+    print('Online ELBO:', args.online)
+
     params = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
                                                             data=data, 
                                                             num_fits=args.num_fits,
@@ -75,7 +77,7 @@ if __name__ == '__main__':
     parser.add_argument('--exp_dir', type=str, default='experiments/p_linear/2022_11_03__16_07_11')
 
     parser.add_argument('--sweep_sequences', action='store_true')
-    parser.add_argument('--online', action='store_true', default=True)
+    parser.add_argument('--online', action='store_true')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--learning_rate', type=float, default=0.01)
@@ -88,7 +90,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    args.full_mc = 'full_mc' in args.model # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
+
+
+    args.full_mc = '_mc' in args.model # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
     args.frozen_params  = args.model.split('__')[1:] # list of parameter groups which are not learnt
     args.save_dir = os.path.join(args.exp_dir, args.model)
     os.makedirs(args.save_dir, exist_ok=True)
@@ -99,5 +103,8 @@ if __name__ == '__main__':
     utils.save_args(args, 'args', args.save_dir)
     args_p = utils.load_args('args', args.exp_dir)
     args.state_dim, args.obs_dim = args_p.state_dim, args_p.obs_dim
+    if args.model.split('_')[0] == 'linear': 
+        args.model = 'linear'
+
     main(args)
 

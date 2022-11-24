@@ -1,4 +1,5 @@
-from backward_ica.elbos import *
+from backward_ica.offline_elbos import *
+from backward_ica.online_smoothing import *
 from backward_ica.stats.hmm import * 
 from backward_ica.variational.models import *
 
@@ -95,7 +96,7 @@ class SVITrainer:
             self.loss = lambda key, data, compute_up_to, params: -self.elbo(key, data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
 
         else: 
-            if isinstance(self.p, LinearGaussianHMM) and isinstance(self.q, LinearGaussianHMM):
+            if isinstance(self.p, LinearGaussianHMM) and isinstance(self.q, LinearGaussianHMM) and (not force_full_mc):
                 self.elbo = LinearGaussianELBO(self.p, self.q)
                 self.get_montecarlo_keys = get_dummy_keys
                 self.loss = lambda key, data, compute_up_to, params: -self.elbo(data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
@@ -105,7 +106,7 @@ class SVITrainer:
                 self.loss = lambda key, data, compute_up_to, params: -self.elbo(key, data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
         
         if self.online: 
-            self.elbo = OnlineGeneralBackwardELBO(self.p, self.q, exp_and_normalize)
+            self.elbo = OnlineParisELBO(p=self.p, q=self.q, normalizer=None, num_samples=num_samples)
             self.get_montecarlo_keys = get_keys
             self.loss = lambda key, data, compute_up_to, params: -self.elbo.batch_compute(key, data, self.p.format_params(self.theta_star), q.format_params(params))
 
@@ -118,11 +119,13 @@ class SVITrainer:
                     avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                     updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
                     params = optax.apply_updates(params, updates)
+
                     return params, \
                         opt_state, \
                         -jnp.mean(neg_elbo_values)
 
                 data, params, opt_state, subkeys_epoch = carry
+
                 batch_start = x
                 batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
                 batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)

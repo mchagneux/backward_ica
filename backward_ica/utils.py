@@ -15,8 +15,10 @@ from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 import numpy as np
 import pandas as pd
+import jax
 from jaxlib.xla_extension import DeviceArray
 # Containers for parameters of various objects 
+
 
 # @partial(jit, static_argnums=(1,))
 def moving_window(a, size: int):
@@ -32,7 +34,42 @@ _conditionnings = {'diagonal':lambda param, d: jnp.diag(param),
                 'init_sym_def_pos': lambda x,d:x}
 
 
+def get_keys(key, num_seqs, num_epochs):
+    keys = jax.random.split(key, num_seqs * num_epochs)
+    keys = jnp.array(keys).reshape(num_epochs, num_seqs,-1)
+    return keys
+
+def get_dummy_keys(key, num_seqs, num_epochs): 
+    return jnp.empty((num_epochs, num_seqs, 1))
+
+
 ## config routines and model selection
+
+
+
+def elbo_h_0_forward(x_0, y_0, p, theta, **kwargs):
+    return p.emission_kernel.logpdf(y_0, x_0, theta.emission) \
+            + p.prior_dist.logpdf(x_0, theta.prior)
+
+def elbo_h_t_forward(x_tm1, x_t, y_t, p, q, theta, log_q_tm1_x_tm1, log_q_t_x_t, q_tm1_t_params, **kwargs):
+    return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
+            + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
+            - q.backwd_kernel.logpdf(x_tm1, x_t, q_tm1_t_params) \
+            + log_q_tm1_x_tm1 \
+            - log_q_t_x_t
+
+            
+elbo_forward_functionals = lambda p, q: (partial(elbo_h_0_forward, p=p), 
+                                        partial(elbo_h_t_forward, p=p, q=q), 
+                                        ())
+
+def state_smoothing_h_0(x_0, **kwargs):
+    return x_0 
+
+def state_smoothing_h_t(x_tm1, x_t, **kwargs):
+    return x_t
+
+state_smoothing_functionals = lambda p, q: (state_smoothing_h_0, state_smoothing_h_t, (p.state_dim,))
 
 def get_defaults(args):
     import math
@@ -48,7 +85,7 @@ def get_defaults(args):
         args.transition_matrix_conditionning = 'diagonal'
         if not(hasattr(args, 'transition_bias')):
             args.transition_bias = False
-        args.range_transition_map_params = [0.9,0.99] # range of the components of the transition matrix
+        args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
 
     else:
         args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
@@ -88,6 +125,7 @@ def get_defaults(args):
 
     return args
 
+
 def enable_x64(use_x64=True):
     """
     Changes the default array type to use 64 bit precision as in NumPy.
@@ -98,6 +136,7 @@ def enable_x64(use_x64=True):
         use_x64 = os.getenv("JAX_ENABLE_X64", 0)
     config.update("jax_enable_x64", use_x64)
     if use_x64: print('Using float64.')
+
 def set_platform(platform=None):
     """
     Changes platform to CPU, GPU, or TPU. This utility only takes
@@ -359,6 +398,11 @@ def exp_and_normalize(x):
     return x / x.sum()
 
 
+
+def normalize(x):
+    w = jnp.exp(x)
+
+    return w / w.sum()
 
 
 def params_to_dict(params):

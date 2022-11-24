@@ -4,14 +4,6 @@ from .stats.hmm import *
 from .utils import *
 from backward_ica.stats import BackwardSmoother, TwoFilterSmoother
 
-def get_keys(key, num_seqs, num_epochs):
-    keys = jax.random.split(key, num_seqs * num_epochs)
-    keys = jnp.array(keys).reshape(num_epochs, num_seqs,-1)
-    return keys
-
-def get_dummy_keys(key, num_seqs, num_epochs): 
-    return jnp.empty((num_epochs, num_seqs, 1))
-
 
 class GeneralForwardELBO:
 
@@ -93,6 +85,7 @@ class GeneralBackwardELBO:
         self.num_samples = num_samples
 
     def __call__(self, key, obs_seq, compute_up_to, theta:HMM.Params, phi):
+
         theta.compute_covs()
 
         def _monte_carlo_sample(key, obs_seq, state_seq):
@@ -112,7 +105,7 @@ class GeneralBackwardELBO:
                         sample = self.q.filt_dist.sample(key, filt_params)
                         term = -self.q.filt_dist.logpdf(sample, filt_params) \
                                 + self.p.emission_kernel.logpdf(obs, sample, theta.emission)
-                        return sample, term 
+                        return sample, term
 
                     def other_terms(key, next_sample, obs, idx):
                         
@@ -153,102 +146,31 @@ class GeneralBackwardELBO:
 
         return jnp.mean(mc_samples) / (compute_up_to + 1)
 
-class OnlineGeneralBackwardELBO:
+# class OfflineAdditiveSmoothing:
 
-    def __init__(self, p:HMM, q:BackwardSmoother, normalizer=None, num_samples=200):
+#     def __init__(self, p:HMM, q:BackwardSmoother, functional, num_samples):
 
-        self.p = p
-        self.q = q
-        self.num_samples = num_samples
-        if normalizer is None: 
-            self.normalizer = lambda x: jnp.mean(x) / self.num_samples
-        else: 
-            self.normalizer = normalizer
-
-    def samples_and_log_probs(self, key, q_filt_params):
-        samples = vmap(self.q.filt_dist.sample, in_axes=(0,None))(random.split(key, self.num_samples), q_filt_params)
-        log_probs = vmap(self.q.filt_dist.logpdf, in_axes=(0,None))(samples, q_filt_params)
-        return samples, log_probs
+#         self.p = p 
+#         self.q = q 
+#         self.num_samples = num_samples 
+#         self.functional = functional
 
 
-    def init_functional(self, sample, obs, theta):
-        return self.p.emission_kernel.logpdf(obs, sample, theta.emission) \
-                + self.p.prior_dist.logpdf(sample, theta.prior)
+#     def __call__(self, key, obs_seq, compute_up_to, theta, phi):
+
+#         state_seq = self.q.compute_state_seq(obs_seq, compute_up_to, phi)
+
+#         def _compute(key, obs_seq, state_seq):
+
+#             def step(carry, x):
+
+#                 key, obs, idx = x
+
+#                 def false_fun(key, next_sample, obs, idx):
+#                     return next_sample, 0.0            
 
 
-    def additive_functional(self, sample, log_prob, obs, new_log_prob, new_sample, q_backwd_params, theta):
-        return self.p.transition_kernel.logpdf(new_sample, sample, theta.transition) \
-                + self.p.emission_kernel.logpdf(obs, new_sample, theta.emission) \
-                - self.q.backwd_kernel.logpdf(sample, new_sample, q_backwd_params) \
-                + log_prob \
-                - new_log_prob
 
-    def _init(self, state, tau, samples, log_probs, key, obs, theta, phi):
-
-        init_state = self.q.init_state(obs, phi)
-        samples, log_probs = self.samples_and_log_probs(key, self.q.filt_params_from_state(init_state, phi))
-        tau = vmap(self.init_functional, in_axes=(0,None,None))(samples, obs, theta)
-        return init_state, tau, samples, log_probs
-
-    def _update(self, state, tau, samples, log_probs, key, obs, theta, phi):
-
-        backwd_params = self.q.backwd_params_from_state(state, phi)
-
-        new_state = self.q.new_state(obs, state, phi)
-        new_samples, new_log_probs = self.samples_and_log_probs(key, self.q.filt_params_from_state(new_state, phi))
-
-        def update_component_tau(new_sample, new_log_prob):
-            def sum_component(sample, log_prob, tau_component):
-                log_weight = self.q.backwd_kernel.logpdf(sample, new_sample, backwd_params) - log_prob
-                component = tau_component + self.additive_functional(sample, 
-                                                            log_prob, 
-                                                            obs, 
-                                                            new_log_prob, 
-                                                            new_sample, 
-                                                            backwd_params, 
-                                                            theta)
-                return log_weight, component
-            log_weights, components = vmap(sum_component)(samples, log_probs, tau)
-
-            weights = self.normalizer(log_weights)
-            return jnp.sum(weights * components)
-            
-        new_tau = vmap(update_component_tau)(new_samples, new_log_probs) 
-
-        return new_state, new_tau, new_samples, new_log_probs
-
-
-    def init(self):
-        init_tau = jnp.empty((self.num_samples,))
-        init_samples = jnp.empty((self.num_samples, self.p.state_dim)) 
-        init_log_probs = jnp.empty((self.num_samples,))
-        init_state = self.q.empty_state()
-
-        return init_state, init_tau, init_samples, init_log_probs
-
-
-    def compute(self, state, tau, samples, log_probs, key, idx, obs, theta, phi):
-
-        (state, tau, samples, log_probs) = lax.cond(idx != 0, 
-                                                    self._update, 
-                                                    self._init,
-                                                    state, tau, samples, log_probs, key, obs, theta, phi)
-        
-        return (state, tau, samples, log_probs), None
-    
-
-    def batch_compute(self, key, obs_seq, theta, phi):
-        key_seq = jax.random.split(key, len(obs_seq))
-        idx_seq = jnp.arange(0, len(obs_seq))
-        def _step(carry, x):
-            state, tau, samples, log_probs = carry
-            key, idx, obs = x
-            return self.compute(state, tau, samples, log_probs, key, idx, obs, theta, phi)
-        return jnp.mean(lax.scan(_step, 
-                        init=self.init(),
-                        xs=(key_seq, idx_seq, obs_seq))[0][1])
-
-        
 
 
 class LinearGaussianELBO:
@@ -299,8 +221,6 @@ class LinearGaussianELBO:
 
         return kl_term / len(obs_seq)
 
-
-
 def check_linear_gaussian_elbo(p:LinearGaussianHMM, num_seqs, seq_length):
     key_params, key_gen = jax.random.split(jax.random.PRNGKey(0), 2)
     theta = p.get_random_params(key_params)
@@ -330,11 +250,4 @@ def check_general_elbo(mc_key, p:LinearGaussianHMM, num_seqs, seq_length, num_sa
     evidence_elbo = vmap(lambda key, seq: elbo(key, seq, theta, theta))(mc_keys, seqs)
     print('ELBO sanity check:',jnp.mean(jnp.abs(evidence_elbo - evidence_reference)))
 
-    # time0 = time() 
-    # print('Grad:', grad_elbo(mc_keys, seqs, theta, theta))
-    # print('Timing:', time() - time0)
-
-    # evidence_elbo = vmap(lambda key, seq: elbo(key, seq, theta, theta))(mc_keys, seqs)
-    # # print('ELBO:', evidence_elbo)
-    # print('ELBO sanity check:',jnp.mean(jnp.abs(evidence_elbo - evidence_reference)))
 
