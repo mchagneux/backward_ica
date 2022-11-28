@@ -168,7 +168,8 @@ true_elbo = LinearGaussianELBO(p,q)(obs_seq, len(obs_seq)-1, p.format_params(the
 
 offline_values = get_offline_estimator(theta, phi)(keys, obs_seq)
 
-functional = online_elbo_functional(p,q)
+# functional = online_elbo_functional(p,q)
+functional = state_smoothing_functional(p, q)
 
 online_IS_values = get_online_estimator(theta, phi, functional, 'IS')(keys, obs_seq)
 online_normalized_IS_values = get_online_estimator(theta, phi, functional, 'normalized IS')(keys, obs_seq)

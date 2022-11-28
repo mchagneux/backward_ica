@@ -151,6 +151,8 @@ def update_IS(carry_tm1, input_t:HMM, p:HMM, q:BackwardSmoother, h, num_samples,
                 'theta':carry_tm1['theta'],
                 'params_backwd':params_q_tm1_t}
 
+    h = partial(h, models={'p':p, 'q':q})
+
     def compute_tau_t(data_t):
 
         def compute_sum_term(data_tm1):
@@ -158,9 +160,10 @@ def update_IS(carry_tm1, input_t:HMM, p:HMM, q:BackwardSmoother, h, num_samples,
             importance_log_weight = q.backwd_kernel.logpdf(data_tm1['x'], data_t['x'], params_q_tm1_t) \
                                     - data_tm1['log_q_x']
 
-            data = {'tm1':data_tm1, 't': data_t}
+            data = {'tm1':data_tm1, 
+                    't': data_t}
 
-            sum_term = data_tm1['tau'] + h(models={'p':p, 'q':q}, data=data)
+            sum_term = data_tm1['tau'] + h(data)
 
             return importance_log_weight, sum_term
 
@@ -206,14 +209,16 @@ def update_PaRIS(carry_tm1, input_t:HMM, p:HMM, q:BackwardSmoother, h, num_sampl
 
     state_t = q.new_state(y_t, state_tm1, phi)
 
+    h = partial(h, models={'p':p, 'q':q})
 
     def compute_tau_t(data_t):
 
         def compute_sum_term(data_tm1_ancestors):
 
-            data = {'tm1':data_tm1_ancestors, 't': data_t}
+            data = {'tm1':data_tm1_ancestors, 
+                    't': data_t}
 
-            sum_term = data_tm1_ancestors['tau'] + h(models={'p':p, 'q':q}, data=data)
+            sum_term = data_tm1_ancestors['tau'] + h(data)
 
             return sum_term 
 
