@@ -18,8 +18,6 @@ import copy
 def xtanh(slope):
     return lambda x: jnp.tanh(x) + slope*x
 
-
-
 def get_generative_model(args, key_for_random_params=None):
 
     if args.model == 'linear':
@@ -44,7 +42,6 @@ def get_generative_model(args, key_for_random_params=None):
         return p
 
 
-        
 class HMM: 
 
     @register_pytree_node_class

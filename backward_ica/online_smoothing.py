@@ -1,4 +1,3 @@
-from abc import ABCMeta, abstractmethod
 import jax
 from jax import vmap, lax, numpy as jnp
 from .stats.hmm import *
@@ -6,9 +5,16 @@ from .utils import *
 from backward_ica.stats import BackwardSmoother
 
 
-class OnlineVariationalAdditiveSmoothing(metaclass=ABCMeta):
+class OnlineVariationalAdditiveSmoothing:
 
-    def __init__(self, p:HMM, q:BackwardSmoother, functionals, normalizer=None, num_samples=200):
+    def __init__(self, 
+                p:HMM, 
+                q:BackwardSmoother, 
+                init_func, 
+                update_func, 
+                additive_functional, 
+                normalizer=None, 
+                num_samples=200):
 
         self.p = p
         self.q = q
@@ -19,159 +25,245 @@ class OnlineVariationalAdditiveSmoothing(metaclass=ABCMeta):
         else: 
             self.normalizer = normalizer
 
-        self.h_0, self.h_t, self.stat_shape = functionals(p, q)
+        self.additive_functional:AdditiveFunctional = additive_functional
 
-        self.init_carry = self.init()
+        self._init_func = partial(init_func, 
+                                p=p, 
+                                q=q, 
+                                h_0=self.additive_functional.init, 
+                                num_samples=num_samples)
 
-    def init(self):
+        self._update_func = partial(update_func, 
+                                    p=p, 
+                                    q=q, 
+                                    normalizer=self.normalizer, 
+                                    h=self.additive_functional.update, 
+                                    num_samples=num_samples)
 
-        dummy_tau = jnp.empty((self.num_samples, *self.stat_shape))
+    def init_carry(self):
+
+        dummy_tau = jnp.empty((self.num_samples, *self.additive_functional.out_shape))
         dummy_x = jnp.empty((self.num_samples, self.p.state_dim)) 
-        dummy_log_q = jnp.empty((self.num_samples,))
+        dummy_y = jnp.empty((self.p.obs_dim,))
+        dummy_log_q_x = jnp.empty((self.num_samples,))
         dummy_state = self.q.empty_state()
 
-        return dummy_state, dummy_tau, dummy_x, dummy_log_q
+        return {'state':dummy_state, 
+                'y':dummy_y,
+                'log_q_x':dummy_log_q_x, 
+                'x':dummy_x, 
+                'tau':dummy_tau}
 
-
-    def samples_and_log_probs(self, key, q_params):
-        samples = vmap(partial(self.q.filt_dist.sample, params=q_params))(random.split(key, self.num_samples))
-        log_probs = vmap(partial(self.q.filt_dist.logpdf, params=q_params))(samples)
-        return samples, log_probs
-
-    def _init(self, key_0, dummy_state, dummy_tau, dummy_x, dummy_log_q, y_0, theta, phi):
-
-        state_0 = self.q.init_state(y_0, phi)
-        x_0, log_q_x_0 = self.samples_and_log_probs(key_0, 
-                                                    self.q.filt_params_from_state(state_0, phi))
-
-        tau_0 = vmap(partial(self.h_0, y_0=y_0, theta=theta, log_q_x_0=log_q_x_0))(x_0)
-
-        return state_0, tau_0, x_0, log_q_x_0
-
-    @abstractmethod
-    def _update(self, key_t, state_tm1, tau_tm1, x_tm1, log_q_tm1_x_tm1, y_t, theta, phi):
-        raise NotImplementedError
-    
-    def compute(self, t, key_t, state_tm1, tau_tm1, x_tm1, log_q_tm1_x_tm1, y_t, theta, phi):
-
-        (state_t, tau_t, x_t, log_q_t_x_t) = lax.cond(t != 0, 
-                                                    self._update, 
-                                                    self._init,
-                                                    key_t, state_tm1, tau_tm1, x_tm1, log_q_tm1_x_tm1, y_t, theta, phi)
+    def _init(self, carry, input):
+        return self._init_func(carry, input)
         
-        return (state_t, tau_t, x_t, log_q_t_x_t), None
+    def _update(self, carry, input):
+        return self._update_func(carry, input)
+    
+    def compute(self, carry, input):
+
+        carry = lax.cond(input['t'] != 0, 
+                        self._update, 
+                        self._init,
+                        carry, input)
+        
+        return carry, None
     
     def batch_compute(self, key, obs_seq, theta, phi):
 
-        keys = jax.random.split(key, len(obs_seq))
-        timesteps = jnp.arange(0, len(obs_seq))
+        theta.compute_covs()
+        phi.compute_covs()
+
+        T = len(obs_seq) - 1 # T + 1 observations
+        keys = jax.random.split(key, T+1) # T+1 keys 
+        timesteps = jnp.arange(0, T+1) # [0:T]
 
         def _step(carry, x):
-            state_tm1, tau_tm1, x_tm1, log_q_tm1_x_tm1 = carry
             t, key_t, y_t = x
-            return self.compute(t, key_t, state_tm1, tau_tm1, x_tm1, log_q_tm1_x_tm1, y_t, theta, phi)
+            input_t = {'t':t, 'key':key_t, 'y':y_t}
+            carry_t, output_t = self.compute(carry, input_t)
+            carry_t['theta'] = theta
+            carry_t['phi'] = phi
+            return carry_t, output_t
         
+
+        carry_m1 = self.init_carry()
+        carry_m1['theta'] = theta
+        carry_m1['phi'] = phi
+
         tau_T = lax.scan(_step, 
-                        init=self.init_carry,
-                        xs=(timesteps, keys, obs_seq))[0][1] 
+                        init=carry_m1,
+                        xs=(timesteps, keys, obs_seq))[0]['tau']
                         
-        return jnp.mean(tau_T, axis=0) / len(obs_seq)
-
-class OnlineISAdditiveSmoothing(OnlineVariationalAdditiveSmoothing):
-
-    def __init__(self, p:HMM, q:BackwardSmoother, functionals, normalizer=None, num_samples=200):
-
-        super().__init__(p, q, functionals, normalizer, num_samples)
+        return jnp.mean(tau_T, axis=0) / (T+1)
 
 
-    def _update(self, key_t, state_tm1, tau_tm1, x_tm1, log_q_tm1_x_tm1, y_t, theta, phi):
+def samples_and_log_probs(dist, key, params_dist, num_samples):
+    samples = vmap(dist.sample, in_axes=(0, None))(random.split(key, num_samples), params_dist)
+    log_probs = vmap(dist.logpdf, in_axes=(0, None))(samples, params_dist)
+    return samples, log_probs
 
-        q_tm1_t_params = self.q.backwd_params_from_state(state_tm1, phi)
-
-        def compute_tau_t(x_t, log_q_t_x_t):
-            def compute_sum_term(x_tm1, log_q_tm1_x_tm1, tau_tm1):
-
-                importance_log_weight = self.q.backwd_kernel.logpdf(x_tm1, x_t, q_tm1_t_params) \
-                                        - log_q_tm1_x_tm1
-
-                sum_term = tau_tm1 + self.h_t(x_tm1=x_tm1, 
-                                                x_t=x_t, 
-                                                y_t=y_t,
-                                                log_q_tm1_x_tm1=log_q_tm1_x_tm1,
-                                                log_q_t_x_t=log_q_t_x_t,
-                                                theta=theta,
-                                                phi=phi,
-                                                q_tm1_t_params=q_tm1_t_params)
-
-                return importance_log_weight, sum_term
-
-            importance_log_weights, sum_terms = vmap(compute_sum_term)(x_tm1, log_q_tm1_x_tm1, tau_tm1)
-
-            normalized_importance_weights = self.normalizer(importance_log_weights)
-            return normalized_importance_weights @ sum_terms
-            
-        state_t = self.q.new_state(y_t, state_tm1, phi)
-
-        x_t, log_q_t_x_t = self.samples_and_log_probs(key_t, 
-                                                    self.q.filt_params_from_state(state_t, phi))
+def init_standard(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
 
-        tau_t = vmap(compute_tau_t)(x_t, log_q_t_x_t) 
+    y_0 = input_0['y']
+    key_0 = input_0['key']
 
-        return state_t, tau_t, x_t, log_q_t_x_t
+    phi = carry_m1['phi']
+
+    state_0 = q.init_state(y_0, carry_m1['phi'])
+
+    x_0, log_q_x_0 = samples_and_log_probs(q.filt_dist, 
+                                            key_0, 
+                                            q.filt_params_from_state(state_0, phi), 
+                                            num_samples)
+
+    data_0 = {'x':x_0,
+            'log_q_x':log_q_x_0,
+            'state':state_0,
+            'y':y_0}
+
+    data = {'tm1': carry_m1, 't':data_0}
+
+    tau_0 = named_vmap(partial(h_0, models={'p':p, 'q':q}), 
+                    axes_names={'t':{'x':0}}, 
+                    input_dict=data)
+
+    data_0['tau'] = tau_0
     
-class OnlinePaRISAdditiveSmoothing(OnlineVariationalAdditiveSmoothing):
+    return data_0
 
-    def __init__(self, p:HMM, q:BackwardSmoother, functionals, normalizer=None, num_samples=200):
-
-        super().__init__(p, q, functionals, normalizer, num_samples)
-        self.num_paris_samples = 2 
+def update_IS(carry_tm1, input_t:HMM, p:HMM, q:BackwardSmoother, h, num_samples, normalizer):
 
 
-    def _update(self, key_t, state_tm1, tau_tm1, x_tm1, log_q_tm1_x_tm1, y_t, theta, phi):
+    state_tm1 = carry_tm1['state']
+    phi = carry_tm1['phi']
 
-        q_tm1_t_params = self.q.backwd_params_from_state(state_tm1, phi)
+    params_q_tm1_t = q.backwd_params_from_state(state_tm1, phi)
 
-        def compute_tau_t(key, x_t, log_q_t_x_t):
+    key_t, y_t = input_t['key'], input_t['y']
 
-            def compute_sum_term(x_tm1, log_q_tm1_x_tm1, tau_tm1):
-                sum_term = tau_tm1 + self.h_t(x_tm1=x_tm1, 
-                                                x_t=x_t, 
-                                                y_t=y_t,
-                                                log_q_tm1_x_tm1=log_q_tm1_x_tm1,
-                                                log_q_t_x_t=log_q_t_x_t,
-                                                theta=theta,
-                                                phi=phi,
-                                                q_tm1_t_params=q_tm1_t_params)
-                return sum_term 
+    state_t = q.new_state(y_t, state_tm1, phi)
 
+    data_tm1 = {'x':carry_tm1['x'],
+                'log_q_x':carry_tm1['log_q_x'],
+                'tau':carry_tm1['tau'],
+                'theta':carry_tm1['theta'],
+                'params_backwd':params_q_tm1_t}
 
-            log_q_tm1_t_x_t = vmap(partial(self.q.backwd_kernel.logpdf, 
-                                            state=x_t, 
-                                            params=q_tm1_t_params))(x_tm1)
+    def compute_tau_t(data_t):
 
-            normalized_q_tm1_t_x_t = self.normalizer(log_q_tm1_t_x_t - log_q_tm1_x_tm1)
+        def compute_sum_term(data_tm1):
 
-            ancestor_indices = jax.random.choice(key, 
-                                                a=self.num_samples, 
-                                                shape=(self.num_paris_samples,), 
-                                                p=normalized_q_tm1_t_x_t)
+            importance_log_weight = q.backwd_kernel.logpdf(data_tm1['x'], data_t['x'], params_q_tm1_t) \
+                                    - data_tm1['log_q_x']
 
-            sum_terms = vmap(compute_sum_term)(x_tm1[ancestor_indices], 
-                                            log_q_tm1_x_tm1[ancestor_indices], 
-                                            tau_tm1[ancestor_indices])
+            data = {'tm1':data_tm1, 't': data_t}
 
-            return jnp.mean(sum_terms, axis=0)
+            sum_term = data_tm1['tau'] + h(models={'p':p, 'q':q}, data=data)
+
+            return importance_log_weight, sum_term
+
+        importance_log_weights, sum_terms = named_vmap(compute_sum_term, 
+                                                        axes_names={'x':0, 'log_q_x':0, 'tau':0}, 
+                                                        input_dict=data_tm1)
+
+        normalized_importance_weights = normalizer(importance_log_weights)
+
+        return normalized_importance_weights @ sum_terms
+        
+
+    
+    x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
+                                            key_t, 
+                                            q.filt_params_from_state(state_t, phi),
+                                            num_samples)
+
+    data_t = {'state':state_t, 
+            'x':x_t, 
+            'y':y_t,
+            'log_q_x':log_q_t_x_t}
             
-        state_t = self.q.new_state(y_t, state_tm1, phi)
+    tau_t = named_vmap(compute_tau_t, axes_names={'x':0,'log_q_x':0}, input_dict=data_t)
 
-        key_new_samples, key_paris = random.split(key_t, 2)
+    carry_t = {'state':state_t, 
+            'x':x_t, 
+            'y':y_t,
+            'tau': tau_t,
+            'log_q_x':log_q_t_x_t}
 
-        x_t, log_q_t_x_t = self.samples_and_log_probs(key_new_samples, 
-                                                    self.q.filt_params_from_state(state_t, phi))
+    return carry_t
+    
+def update_PaRIS(carry_tm1, input_t:HMM, p:HMM, q:BackwardSmoother, h, num_samples, normalizer, num_paris_samples):
 
-        tau_t = vmap(compute_tau_t)(random.split(key_paris, self.num_samples), 
-                                    x_t, 
-                                    log_q_t_x_t) 
 
-        return state_t, tau_t, x_t, log_q_t_x_t
+    state_tm1 = carry_tm1['state']
+    phi = carry_tm1['phi']
+
+    params_q_tm1_t = q.backwd_params_from_state(state_tm1, phi)
+
+    key_t, y_t = input_t['key'], input_t['y']
+
+    state_t = q.new_state(y_t, state_tm1, phi)
+
+
+    def compute_tau_t(data_t):
+
+        def compute_sum_term(data_tm1_ancestors):
+
+            data = {'tm1':data_tm1_ancestors, 't': data_t}
+
+            sum_term = data_tm1_ancestors['tau'] + h(models={'p':p, 'q':q}, data=data)
+
+            return sum_term 
+
+
+        log_q_tm1_t_x_t = vmap(partial(q.backwd_kernel.logpdf, 
+                                        state=data_t['x'], 
+                                        params=params_q_tm1_t))(carry_tm1['x'])
+
+        normalized_q_tm1_t_x_t = normalizer(log_q_tm1_t_x_t - carry_tm1['log_q_x'])
+
+        ancestor_indices = jax.random.choice(data_t['key_ancestors'], 
+                                            a=num_samples, 
+                                            shape=(num_paris_samples,), 
+                                            p=normalized_q_tm1_t_x_t)
+
+
+        data_tm1_ancestors = {'x':carry_tm1['x'][ancestor_indices], 
+                            'log_q_x':carry_tm1['log_q_x'][ancestor_indices], 
+                            'tau':carry_tm1['tau'][ancestor_indices],
+                            'params_backwd':params_q_tm1_t,
+                            'theta':carry_tm1['theta']}
+
+        sum_terms = named_vmap(compute_sum_term, 
+                            axes_names={'x':0, 'tau':0, 'log_q_x':0}, 
+                            input_dict=data_tm1_ancestors)
+
+        return jnp.mean(sum_terms, axis=0)
+        
+    state_t = q.new_state(y_t, state_tm1, phi)
+
+    key_q_t, *keys_ancestors = jax.random.split(key_t, num_samples + 1)
+
+    x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
+                                            key_q_t, 
+                                            q.filt_params_from_state(state_t, phi),
+                                            num_samples)
+
+    data_t = {'x': x_t, 
+            'log_q_x':log_q_t_x_t, 
+            'key_ancestors': jnp.array(keys_ancestors),
+            'y':y_t}
+
+    tau_t = named_vmap(compute_tau_t, 
+                    axes_names={'x':0, 'log_q_x':0, 'key_ancestors':0}, 
+                    input_dict=data_t)
+
+    carry_t = {'x': x_t, 
+            'state':state_t,
+            'log_q_x':log_q_t_x_t, 
+            'tau':tau_t,
+            'y':y_t}
+
+    return carry_t

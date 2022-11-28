@@ -1,12 +1,13 @@
 import jax 
 from jax import numpy as jnp
+from jax import config as config
 import seaborn as sns 
 from backward_ica.stats.hmm import LinearGaussianHMM
 from backward_ica.utils import * 
 from datetime import datetime 
 import os 
 from backward_ica.offline_elbos import GeneralBackwardELBO, LinearGaussianELBO
-from backward_ica.online_smoothing import OnlinePaRISAdditiveSmoothing, OnlineISAdditiveSmoothing
+from backward_ica.online_smoothing import OnlineVariationalAdditiveSmoothing, init_standard, update_IS, update_PaRIS
 
 import backward_ica.stats.hmm as hmm
 import backward_ica.stats as stats
@@ -17,6 +18,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import math
 
+# config.update('jax_disable_jit',True)
+
 enable_x64(True)
 
 date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
@@ -25,14 +28,14 @@ os.makedirs(output_dir, exist_ok=True)
 
 
 parser = argparse.ArgumentParser()
-parser.set_defaults(seed=0, 
+parser.set_defaults(seed=5, 
                     load_p_from='',
                     load_q_from='',
                     at_epoch=None,
                     num_replicas=100,
                     seq_length=50,
                     state_dim=2, 
-                    obs_dim=2,
+                    obs_dim=5,
                     transition_matrix_conditionning='diagonal',
                     range_transition_map_params=(0,1),
                     default_prior_base_scale = math.sqrt(1e-2),
@@ -114,27 +117,46 @@ def get_offline_estimator(theta, phi):
 
     return jax.vmap(offline_elbo, in_axes=(0,None))
 
-def get_online_estimator(theta, phi, functionals, version):
+
+def get_online_estimator(theta, phi, additive_functional, version):
     
     if version == 'IS':
 
-        online_elbo = partial(OnlineISAdditiveSmoothing(p, q, functionals, None, args.num_samples).batch_compute,
+        online_elbo = partial(OnlineVariationalAdditiveSmoothing(p=p, 
+                                                                q=q, 
+                                                                init_func=init_standard, 
+                                                                update_func=update_IS, 
+                                                                additive_functional=additive_functional,
+                                                                num_samples=args.num_samples,
+                                                                normalizer=None).batch_compute,
                             theta=p.format_params(theta),
                             phi=q.format_params(phi))
     
     elif version == 'normalized IS':
 
-        online_elbo = partial(OnlineISAdditiveSmoothing(p, q, functionals, exp_and_normalize, args.num_samples).batch_compute,
+        online_elbo = partial(OnlineVariationalAdditiveSmoothing(p=p, 
+                                                                q=q, 
+                                                                init_func=init_standard, 
+                                                                update_func=update_IS, 
+                                                                additive_functional=additive_functional,
+                                                                num_samples=args.num_samples,
+                                                                normalizer=exp_and_normalize).batch_compute,
                             theta=p.format_params(theta),
                             phi=q.format_params(phi))
-                            
 
     elif version == 'PaRIS':
         num_samples = int(jnp.sqrt(args.num_samples ** 3) / 2)
         
-        online_elbo = partial(OnlinePaRISAdditiveSmoothing(p, q, functionals, exp_and_normalize, num_samples).batch_compute,
+        online_elbo = partial(OnlineVariationalAdditiveSmoothing(p=p, 
+                                                                q=q, 
+                                                                init_func=init_standard, 
+                                                                update_func=partial(update_PaRIS, num_paris_samples=2), 
+                                                                additive_functional=additive_functional,
+                                                                num_samples=num_samples,
+                                                                normalizer=exp_and_normalize).batch_compute,
                             theta=p.format_params(theta),
                             phi=q.format_params(phi))
+
     return jax.vmap(online_elbo, in_axes=(0,None))
 
 
@@ -144,12 +166,13 @@ keys = jnp.array(keys)
 true_elbo = LinearGaussianELBO(p,q)(obs_seq, len(obs_seq)-1, p.format_params(theta), q.format_params(phi))
 
 
-functionals = elbo_forward_functionals
 offline_values = get_offline_estimator(theta, phi)(keys, obs_seq)
 
-online_IS_values = get_online_estimator(theta, phi, functionals, 'IS')(keys, obs_seq)
-online_normalized_IS_values = get_online_estimator(theta, phi, functionals, 'normalized IS')(keys, obs_seq)
-online_PaRIS_values = get_online_estimator(theta, phi, functionals, 'PaRIS')(keys, obs_seq)
+functional = online_elbo_functional(p,q)
+
+online_IS_values = get_online_estimator(theta, phi, functional, 'IS')(keys, obs_seq)
+online_normalized_IS_values = get_online_estimator(theta, phi, functional, 'normalized IS')(keys, obs_seq)
+online_PaRIS_values = get_online_estimator(theta, phi, functional, 'PaRIS')(keys, obs_seq)
 
 
 offline_errors = pd.DataFrame((offline_values - true_elbo) / jnp.abs(true_elbo))

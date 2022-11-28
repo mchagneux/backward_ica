@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from jax import numpy as jnp, vmap, config, random, jit, scipy as jsp, lax
+from jax import numpy as jnp, vmap, config, random, jit, scipy as jsp, lax, tree_util
 from functools import update_wrapper, partial
 from jax.tree_util import register_pytree_node_class, tree_map
 from jax.scipy.linalg import solve_triangular
@@ -17,6 +17,8 @@ import numpy as np
 import pandas as pd
 import jax
 from jaxlib.xla_extension import DeviceArray
+import collections.abc
+
 # Containers for parameters of various objects 
 
 
@@ -24,6 +26,9 @@ from jaxlib.xla_extension import DeviceArray
 def moving_window(a, size: int):
     starts = jnp.arange(len(a) - size + 1)
     return vmap(lambda start: lax.dynamic_slice_in_dim(a, start, size))(starts)
+
+
+
 
 
 
@@ -46,30 +51,93 @@ def get_dummy_keys(key, num_seqs, num_epochs):
 ## config routines and model selection
 
 
+def elbo_h_0_online(data, models):
 
-def elbo_h_0_forward(x_0, y_0, p, theta, **kwargs):
+    p = models['p']
+
+    x_0 = data['t']['x']
+    y_0 = data['t']['y']
+    theta = data['tm1']['theta']
+
     return p.emission_kernel.logpdf(y_0, x_0, theta.emission) \
             + p.prior_dist.logpdf(x_0, theta.prior)
 
-def elbo_h_t_forward(x_tm1, x_t, y_t, p, q, theta, log_q_tm1_x_tm1, log_q_t_x_t, q_tm1_t_params, **kwargs):
+elbo_h_0_offline = elbo_h_0_online
+
+def elbo_h_t_online(data, models):
+
+    p = models['p']
+    q = models['q']
+
+    x_t = data['t']['x']
+    log_q_t_x_t = data['t']['log_q_x']
+
+    y_t = data['t']['y']
+    
+    x_tm1 = data['tm1']['x']
+    log_q_tm1_x_tm1 = data['tm1']['log_q_x']
+    theta = data['tm1']['theta']
+    params_q_tm1_t = data['tm1']['params_backwd']
+    
+
     return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
             + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
-            - q.backwd_kernel.logpdf(x_tm1, x_t, q_tm1_t_params) \
+            - q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) \
             + log_q_tm1_x_tm1 \
             - log_q_t_x_t
 
-            
-elbo_forward_functionals = lambda p, q: (partial(elbo_h_0_forward, p=p), 
-                                        partial(elbo_h_t_forward, p=p, q=q), 
-                                        ())
+def state_smoothing_h_t(data, models):
+    return data['t']['x']
 
-def state_smoothing_h_0(x_0, **kwargs):
-    return x_0 
+# def elbo_h_t_offline(x_tm1, x_t, y_t, p, q, theta, q_tm1_t_params, **kwargs):
+#     return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
+#             + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
+#             - q.backwd_kernel.logpdf(x_tm1, x_t, q_tm1_t_params)
 
-def state_smoothing_h_t(x_tm1, x_t, **kwargs):
-    return x_t
+# def elbo_h_T_offline(x_tm1, x_t, y_t, p, q, theta, log_q_t_x_t, q_tm1_t_params, **kwargs):
+#     return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
+#             + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
+#             - q.backwd_kernel.logpdf(x_tm1, x_t, q_tm1_t_params) \
+#             - log_q_t_x_t
 
-state_smoothing_functionals = lambda p, q: (state_smoothing_h_0, state_smoothing_h_t, (p.state_dim,))
+
+class AdditiveFunctional:
+
+    def __init__(self, h_t, out_shape, h_0=None, h_T=None):
+        
+        self.out_shape = out_shape
+        
+        self.update = h_t 
+        self.init = h_t if h_0 is None else h_0
+        self.end = h_t if h_T is None else h_T
+
+
+
+online_elbo_functional = lambda p, q: AdditiveFunctional(h_t=elbo_h_t_online, 
+                                                        out_shape=(), 
+                                                        h_0=elbo_h_0_online)
+
+state_smoothing_functional = lambda p, q: AdditiveFunctional(h_t=state_smoothing_h_t, 
+                                                            out_shape=(p.state_dim,))
+
+
+def nested_dict_update(d, u):
+    for k, v in u.items():
+        if isinstance(v, collections.abc.Mapping):
+            d[k] = nested_dict_update(d.get(k, {}), v)
+        else:
+            d[k] = v
+    return d
+
+
+def named_vmap(f, axes_names, input_dict):    
+
+    in_axes = nested_dict_update(tree_util.tree_map(lambda x: None, input_dict), 
+                                axes_names)
+
+    return jax.vmap(f, in_axes=(in_axes,))(input_dict)
+
+
 
 def get_defaults(args):
     import math
