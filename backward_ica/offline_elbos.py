@@ -82,7 +82,7 @@ class GeneralForwardELBO:
         return jnp.mean(mc_samples) / (compute_up_to + 1)
 
 
-class GeneralBackwardELBO:
+class OfflineVariationalAdditiveSmoothing:
 
     def __init__(self, p: HMM, q: BackwardSmoother, functional, num_samples=200):
 
@@ -111,9 +111,10 @@ class GeneralBackwardELBO:
 
                 data_t = {'x':x_t, 'params_q':params_q_t}
             
-                tau_t = self.functional.end(models={'p':self.p, 'q':self.q}, data=data_t)
+                tau_t = self.functional.end(models={'p':self.p, 'q':self.q}, 
+                                            data={'t':data_t})
 
-                carry_t = {'tau':tau_t, 'x':x_t, 'y': input_t['y']}
+                carry_t = {'x':x_t, 'y': input_t['y'], 'tau': tau_t}
 
                 return carry_t, None
                 
@@ -129,7 +130,9 @@ class GeneralBackwardELBO:
                     key_t = input_t['key']
                     state_t = input_t['state']
                     y_t = input_t['y']
+
                     params_q_t_tp1 = self.q.backwd_params_from_state(state_t, phi)
+
                     x_t = self.q.backwd_kernel.sample(key_t, x_tp1, params_q_t_tp1)
 
                     data_tp1 = {'x': x_tp1, 'y':y_tp1, 'theta': theta}
@@ -139,9 +142,9 @@ class GeneralBackwardELBO:
                             'y': y_t}
 
                     tau_t = carry_tp1['tau'] + self.functional.init(models={'p':self.p, 'q':self.q}, 
-                                                                    data={'tp1':data_tp1, 't': data_t})
+                                                        data={'tp1':data_tp1, 't': data_t})
 
-                    carry_t = {'tau': tau_t, 'x':x_t, 'y':input_t['y']}
+                    carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t}
 
                     return carry_t, None
 
@@ -153,6 +156,7 @@ class GeneralBackwardELBO:
 
                     key_t = input_t['key']
                     state_t = input_t['state']
+
                     params_q_t_tp1 = self.q.backwd_params_from_state(state_t, phi)
                     x_t = self.q.backwd_kernel.sample(key_t, x_tp1, params_q_t_tp1)
 
@@ -160,9 +164,9 @@ class GeneralBackwardELBO:
                     data_t = {'x': x_t, 'params_backwd':params_q_t_tp1}
 
                     tau_t = carry_tp1['tau'] + self.functional.update(models={'p':self.p, 'q':self.q}, 
-                                                                    data={'tp1':data_tp1, 't': data_t})
+                                                    data={'tp1':data_tp1, 't': data_t})
 
-                    carry_t = {'tau': tau_t, 'x':x_t, 'y':input_t['y']}
+                    carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t}
 
                     return carry_t, None
 
@@ -170,7 +174,7 @@ class GeneralBackwardELBO:
                                 t_strictly_greater_than_0, t_equals_0, 
                                 carry_tp1, input_t)
 
-            return lax.cond(input_t['y'] < T, 
+            return lax.cond(input_t['t'] < T, 
                             t_strictly_lower_than_T, t_equals_T, 
                             carry_tp1, input_t)
 
@@ -179,16 +183,15 @@ class GeneralBackwardELBO:
 
             
             return lax.cond(input_t['t'] <= T, 
-                            t_strictly_greater_than_T, t_smaller_or_equal_to_T, 
+                            t_smaller_or_equal_to_T, t_strictly_greater_than_T, 
                             carry_tp1, input_t)
 
 
         t_seq = jnp.arange(0, len(obs_seq))
 
-        state_seq = self.q.compute_state_seq(obs_seq, compute_up_to=T, phi=phi)
-
-
-
+        state_seq = self.q.compute_state_seq(obs_seq, 
+                                            compute_up_to=T, 
+                                            formatted_params=phi)
         def evaluate_one_path(key):
 
             inputs = {'t': t_seq,
@@ -196,67 +199,19 @@ class GeneralBackwardELBO:
                     'y': obs_seq, 
                     'key': jax.random.split(key, len(obs_seq))}
 
-            dummy_carry = {'tau': jnp.empty((*self.functional.out_shape,)),
-                            'x': jnp.empty((self.p.state_dim,)),
-                            'y': jnp.empty((self.p.obs_dim,))}
+            dummy_carry = {'x': jnp.empty((self.p.state_dim,)),
+                            'y': jnp.empty((self.p.obs_dim,)),
+                            'tau':jnp.empty((*self.functional.out_shape,))}
             
             return lax.scan(compute, 
-                                init=dummy_carry, 
-                                xs=inputs, reverse=True)[0]['tau']
+                            init=dummy_carry, 
+                            xs=inputs, reverse=True)[0]['tau']
 
         tau = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
         
-        return jnp.mean(tau, axis=0)
+        return jnp.mean(tau, axis=0) / len(obs_seq)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# class OfflineAdditiveSmoothing:
-
-#     def __init__(self, p:HMM, q:BackwardSmoother, functional, num_samples):
-
-#         self.p = p
-#         self.q = q
-#         self.num_samples = num_samples
-#         self.functional = functional
-
-
-#     def __call__(self, key, obs_seq, compute_up_to, theta, phi):
-
-#         state_seq = self.q.compute_state_seq(obs_seq, compute_up_to, phi)
-
-#         def _compute(key, obs_seq, state_seq):
-
-#             def step(carry, x):
-
-#                 key, obs, idx = x
-
-#                 def false_fun(key, next_sample, obs, idx):
-#                     return next_sample, 0.0
-
+GeneralBackwardELBO = lambda p, q, num_samples: OfflineVariationalAdditiveSmoothing(p, q, offline_elbo_functional(p,q), num_samples)
 
 class LinearGaussianELBO:
 
@@ -332,10 +287,10 @@ def check_general_elbo(mc_key, p: LinearGaussianHMM, num_seqs, seq_length, num_s
     mc_keys = jax.random.split(mc_key, num_seqs)
     elbo = GeneralBackwardELBO(p, p, num_samples)
 
-    evidence_reference = vmap(lambda seq: p.likelihood_seq(seq, theta))(seqs)
+    evidence_reference = vmap(lambda seq: p.likelihood_seq(seq, theta))(seqs) / seq_length
 
     theta = p.format_params(theta)
     evidence_elbo = vmap(lambda key, seq: elbo(
-        key, seq, theta, theta))(mc_keys, seqs)
+        key, seq, len(seq) - 1, theta, theta))(mc_keys, seqs)
     print('ELBO sanity check:', jnp.mean(
         jnp.abs(evidence_elbo - evidence_reference)))

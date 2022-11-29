@@ -62,8 +62,6 @@ def elbo_h_0_online(data, models):
     return p.emission_kernel.logpdf(y_0, x_0, theta.emission) \
             + p.prior_dist.logpdf(x_0, theta.prior)
 
-elbo_h_0_offline = elbo_h_0_online
-
 def elbo_h_t_online(data, models):
 
     p = models['p']
@@ -86,27 +84,65 @@ def elbo_h_t_online(data, models):
             + log_q_tm1_x_tm1 \
             - log_q_t_x_t
 
+
+
+def elbo_h_0_offline(data, models): 
+
+    p = models['p']
+    q = models['q']
+
+    x_tp1 = data['tp1']['x']
+    y_tp1 = data['tp1']['y']
+    theta = data['tp1']['theta']
+
+    x_t = data['t']['x']
+    y_t = data['t']['y']
+    params_q_t_tp1 = data['t']['params_backwd']
+    
+
+    return p.prior_dist.logpdf(x_t, theta.prior) \
+        + p.transition_kernel.logpdf(x_tp1, x_t, theta.transition) \
+        + p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission) \
+        + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
+        - q.backwd_kernel.logpdf(x_t, x_tp1, params_q_t_tp1)
+
+def elbo_h_t_offline(data, models):
+
+    p = models['p']
+    q = models['q']
+
+    x_tp1 = data['tp1']['x']
+    y_tp1 = data['tp1']['y']
+    theta = data['tp1']['theta']
+
+    x_t = data['t']['x']
+    params_q_t_tp1 = data['t']['params_backwd']
+    
+
+    return p.transition_kernel.logpdf(x_tp1, x_t, theta.transition) \
+            + p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission) \
+            - q.backwd_kernel.logpdf(x_t, x_tp1, params_q_t_tp1)
+
+def elbo_h_T_offline(data, models):
+
+    q = models['q']
+
+    x_t = data['t']['x']
+    params_q_t = data['t']['params_q']
+    
+    return -q.filt_dist.logpdf(x_t, params_q_t)
+
+
+
 def state_smoothing_h_t(data, models):
     return data['t']['x']
-
-# def elbo_h_t_offline(x_tm1, x_t, y_t, p, q, theta, q_tm1_t_params, **kwargs):
-#     return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
-#             + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
-#             - q.backwd_kernel.logpdf(x_tm1, x_t, q_tm1_t_params)
-
-# def elbo_h_T_offline(x_tm1, x_t, y_t, p, q, theta, log_q_t_x_t, q_tm1_t_params, **kwargs):
-#     return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
-#             + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
-#             - q.backwd_kernel.logpdf(x_tm1, x_t, q_tm1_t_params) \
-#             - log_q_t_x_t
-
 
 
 def samples_and_log_probs(dist, key, params_dist, num_samples):
     samples = vmap(dist.sample, in_axes=(0, None))(random.split(key, num_samples), params_dist)
     log_probs = vmap(dist.logpdf, in_axes=(0, None))(samples, params_dist)
     return samples, log_probs
-    
+
 class AdditiveFunctional:
 
     def __init__(self, h_t, out_shape, h_0=None, h_T=None):
@@ -122,6 +158,12 @@ class AdditiveFunctional:
 online_elbo_functional = lambda p, q: AdditiveFunctional(h_t=elbo_h_t_online, 
                                                         out_shape=(), 
                                                         h_0=elbo_h_0_online)
+                                                        
+offline_elbo_functional = lambda p, q: AdditiveFunctional(h_0=elbo_h_0_offline, 
+                                                        h_t=elbo_h_t_offline, 
+                                                        h_T=elbo_h_T_offline, 
+                                                        out_shape=())
+
 
 state_smoothing_functional = lambda p, q: AdditiveFunctional(h_t=state_smoothing_h_t, 
                                                             out_shape=(p.state_dim,))

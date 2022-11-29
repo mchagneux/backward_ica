@@ -6,7 +6,7 @@ from backward_ica.stats.hmm import LinearGaussianHMM
 from backward_ica.utils import * 
 from datetime import datetime 
 import os 
-from backward_ica.offline_elbos import GeneralBackwardELBO, LinearGaussianELBO
+from backward_ica.offline_elbos import LinearGaussianELBO, OfflineVariationalAdditiveSmoothing
 from backward_ica.online_smoothing import OnlineVariationalAdditiveSmoothing, init_standard, update_IS, update_PaRIS
 
 import backward_ica.stats.hmm as hmm
@@ -107,9 +107,9 @@ key, key_seq = jax.random.split(key, 2)
 state_seq, obs_seq = p.sample_seq(key_seq, theta, args.seq_length)
 
 
-def get_offline_estimator(theta, phi):
+def get_offline_estimator(theta, phi, additive_functional):
 
-    offline_elbo = lambda key, obs_seq: GeneralBackwardELBO(p, q, args.num_samples)(key, 
+    offline_elbo = lambda key, obs_seq: OfflineVariationalAdditiveSmoothing(p, q, additive_functional, args.num_samples)(key, 
                                                                                     obs_seq, 
                                                                                     len(obs_seq)-1, 
                                                                                     p.format_params(theta), 
@@ -165,15 +165,15 @@ keys = jnp.array(keys)
 
 true_elbo = LinearGaussianELBO(p,q)(obs_seq, len(obs_seq)-1, p.format_params(theta), q.format_params(phi))
 
+offline_additive_functional = offline_elbo_functional(p,q)
+offline_values = get_offline_estimator(theta, phi, offline_additive_functional)(keys, obs_seq)
 
-offline_values = get_offline_estimator(theta, phi)(keys, obs_seq)
+online_additive_functional = online_elbo_functional(p,q)
+# online_additive_functional = state_smoothing_functional(p, q)
 
-# functional = online_elbo_functional(p,q)
-functional = state_smoothing_functional(p, q)
-
-online_IS_values = get_online_estimator(theta, phi, functional, 'IS')(keys, obs_seq)
-online_normalized_IS_values = get_online_estimator(theta, phi, functional, 'normalized IS')(keys, obs_seq)
-online_PaRIS_values = get_online_estimator(theta, phi, functional, 'PaRIS')(keys, obs_seq)
+online_IS_values = get_online_estimator(theta, phi, online_additive_functional, 'IS')(keys, obs_seq)
+online_normalized_IS_values = get_online_estimator(theta, phi, online_additive_functional, 'normalized IS')(keys, obs_seq)
+online_PaRIS_values = get_online_estimator(theta, phi, online_additive_functional, 'PaRIS')(keys, obs_seq)
 
 
 offline_errors = pd.DataFrame((offline_values - true_elbo) / jnp.abs(true_elbo))

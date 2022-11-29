@@ -3,10 +3,12 @@ from jax.experimental.maps import xmap
 import time
 from backward_ica.stats.hmm import LinearGaussianHMM
 from backward_ica.utils import *
+from backward_ica.offline_elbos import check_general_elbo, check_linear_gaussian_elbo
 import operator
 from functools import reduce
 # jax.config.update('jax_disable_jit', True)
 
+enable_x64(True)
 
 
 
@@ -21,13 +23,13 @@ from functools import reduce
 # other = {'c': 50, 'd':jnp.zeros((20,))}
 # print(named_vmap(f, {'a'}))
 
-def f(dict_input):
-    return dict_input['a0']['a1'] * dict_input['a0']['a2']
+# def f(dict_input):
+#     return dict_input['a0']['a1'] * dict_input['a0']['a2']
 
-test = {'a0':{'a1':jnp.arange(0,10), 
-            'a2':2.3 * jnp.ones((100,))}}
+# test = {'a0':{'a1':jnp.arange(0,10), 
+#             'a2':2.3 * jnp.ones((100,))}}
 
-print(named_vmap(f, {'a0':{'a1':0}}, test))
+# print(named_vmap(f, {'a0':{'a1':0}}, test))
 
 # print(test['a0']['a1'])
 
@@ -42,15 +44,17 @@ print(named_vmap(f, {'a0':{'a1':0}}, test))
 
 
 
-# key = jax.random.PRNGKey(0)
+key = jax.random.PRNGKey(0)
 
 
-# p = LinearGaussianHMM(2, 2, 'diagonal', (0,1), True, True)
+p = LinearGaussianHMM(2, 2, 'diagonal', (0,1), True, True)
 # q = LinearGaussianHMM(2, 2, 'diagonal', (0,1), True, True)
 
+check_linear_gaussian_elbo(p, 2, 50)
 
+key, key_theta, key_phi = jax.random.split(key, 3)
 
-# key, key_theta, key_phi = jax.random.split(key, 3)
+check_general_elbo(key, p, 2, 50, 100)
 
 # theta = p.get_random_params(key_theta)
 # phi = q.get_random_params(key_phi)
