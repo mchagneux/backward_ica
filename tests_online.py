@@ -6,14 +6,14 @@ from backward_ica.stats.hmm import LinearGaussianHMM
 from backward_ica.utils import * 
 from datetime import datetime 
 import os 
-from backward_ica.offline_elbos import LinearGaussianELBO, OfflineVariationalAdditiveSmoothing
+from backward_ica.offline_smoothing import LinearGaussianELBO, OfflineVariationalAdditiveSmoothing
 from backward_ica.online_smoothing import OnlineVariationalAdditiveSmoothing, init_standard, update_IS, update_PaRIS
 
 import backward_ica.stats.hmm as hmm
 import backward_ica.stats as stats
 import backward_ica.variational as variational
 
-
+from backward_ica.stats.kalman import Kalman
 import pandas as pd 
 import matplotlib.pyplot as plt
 import math
@@ -28,9 +28,10 @@ os.makedirs(output_dir, exist_ok=True)
 
 
 parser = argparse.ArgumentParser()
-parser.set_defaults(seed=5, 
+parser.set_defaults(seed=0, 
                     load_p_from='',
                     load_q_from='',
+                    functional='x',
                     at_epoch=None,
                     num_replicas=100,
                     seq_length=50,
@@ -50,12 +51,25 @@ args = parser.parse_args()
 save_args(args, 'args', os.path.join(output_dir))
 
 
-key = jax.random.PRNGKey(args.seed)
 
-key, key_theta, key_phi = jax.random.split(key, 3)
+def get_additive_functionals(p, q, theta, phi, functional_name='elbo'):
 
+    if functional_name == 'elbo':
+        offline_functional = offline_elbo_functional(p, q)
+        online_functional = online_elbo_functional(p, q)
+        oracle = lambda obs_seq: LinearGaussianELBO(p,q)(obs_seq, len(obs_seq)-1, p.format_params(theta), q.format_params(phi))
 
-def get_models(args):
+    elif functional_name == 'x':
+        offline_functional = state_smoothing_functional(p, q)
+        online_functional = state_smoothing_functional(p, q)
+        oracle = lambda obs_seq: jnp.sum(Kalman.smooth_seq(obs_seq, q.format_params(phi))[0], axis=0) / len(obs_seq)
+
+    else: 
+        raise NotImplementedError
+
+    return online_functional, offline_functional, lambda obs_seq: jnp.linalg.norm(oracle(obs_seq), ord=1)
+
+def get_models(args, key_theta, key_phi):
 
     if args.load_p_from != '':
         p_args = load_args('args', args.load_p_from)
@@ -101,22 +115,15 @@ def get_models(args):
 
     return p,theta,q,phi
 
-p, theta, q, phi = get_models(args)
-
-key, key_seq = jax.random.split(key, 2)
-state_seq, obs_seq = p.sample_seq(key_seq, theta, args.seq_length)
-
-
 def get_offline_estimator(theta, phi, additive_functional):
 
-    offline_elbo = lambda key, obs_seq: OfflineVariationalAdditiveSmoothing(p, q, additive_functional, args.num_samples)(key, 
+    offline_estimator = lambda key, obs_seq: jnp.linalg.norm(OfflineVariationalAdditiveSmoothing(p, q, additive_functional, args.num_samples)(key, 
                                                                                     obs_seq, 
                                                                                     len(obs_seq)-1, 
                                                                                     p.format_params(theta), 
-                                                                                    q.format_params(phi))
+                                                                                    q.format_params(phi)), ord=1)
 
-    return jax.vmap(offline_elbo, in_axes=(0,None))
-
+    return jax.vmap(offline_estimator, in_axes=(0,None))
 
 def get_online_estimator(theta, phi, additive_functional, version):
     
@@ -157,29 +164,40 @@ def get_online_estimator(theta, phi, additive_functional, version):
                             theta=p.format_params(theta),
                             phi=q.format_params(phi))
 
-    return jax.vmap(online_elbo, in_axes=(0,None))
+    return jax.vmap(lambda key, obs_seq: jnp.linalg.norm(online_elbo(key, obs_seq), ord=1), in_axes=(0,None))
+
+
+
+key = jax.random.PRNGKey(args.seed)
+
+key, key_theta, key_phi = jax.random.split(key, 3)
+
+p, theta, q, phi = get_models(args, key_theta, key_phi)
+
+key, key_seq = jax.random.split(key, 2)
+_ , obs_seq = p.sample_seq(key_seq, theta, args.seq_length)
+
+
+online_additive_functional, offline_additive_functional, oracle = get_additive_functionals(p, q, theta, phi, args.functional)
+
+true_value = oracle(obs_seq)
 
 
 key, *keys = jax.random.split(key, args.num_replicas + 1)
 keys = jnp.array(keys)
 
-true_elbo = LinearGaussianELBO(p,q)(obs_seq, len(obs_seq)-1, p.format_params(theta), q.format_params(phi))
-
-offline_additive_functional = offline_elbo_functional(p,q)
 offline_values = get_offline_estimator(theta, phi, offline_additive_functional)(keys, obs_seq)
 
-online_additive_functional = online_elbo_functional(p,q)
-# online_additive_functional = state_smoothing_functional(p, q)
 
 online_IS_values = get_online_estimator(theta, phi, online_additive_functional, 'IS')(keys, obs_seq)
 online_normalized_IS_values = get_online_estimator(theta, phi, online_additive_functional, 'normalized IS')(keys, obs_seq)
 online_PaRIS_values = get_online_estimator(theta, phi, online_additive_functional, 'PaRIS')(keys, obs_seq)
 
 
-offline_errors = pd.DataFrame((offline_values - true_elbo) / jnp.abs(true_elbo))
-online_IS_errors = pd.DataFrame((online_IS_values - true_elbo) / jnp.abs(true_elbo))
-online_normalized_IS_errors = pd.DataFrame((online_normalized_IS_values - true_elbo) / jnp.abs(true_elbo))
-online_PaRIS_errors = pd.DataFrame((online_PaRIS_values - true_elbo) / jnp.abs(true_elbo))
+offline_errors = pd.DataFrame((offline_values - true_value) / jnp.abs(true_value))
+online_IS_errors = pd.DataFrame((online_IS_values - true_value) / jnp.abs(true_value))
+online_normalized_IS_errors = pd.DataFrame((online_normalized_IS_values - true_value) / jnp.abs(true_value))
+online_PaRIS_errors = pd.DataFrame((online_PaRIS_values - true_value) / jnp.abs(true_value))
 
 
 errors = pd.concat([offline_errors, online_IS_errors, online_normalized_IS_errors, online_PaRIS_errors], axis=1)
@@ -188,8 +206,8 @@ errors.columns = ['Offline', 'Online IS', 'Online normalized IS', 'Online PaRIS'
 
 errors.plot(kind='box')
 plt.xlabel('Method')
-plt.ylabel('Relative error to true ELBO')
+plt.ylabel('Relative error to true functional')
 
-plt.suptitle(f'N={args.num_samples}\nT={args.seq_length}\nd_x={args.state_dim}\nd_y={args.obs_dim}')
+plt.suptitle(f'N={args.num_samples}\nT={args.seq_length}\nd_x={args.state_dim}\nd_y={args.obs_dim}\nfunctional:{args.functional}')
 plt.savefig(os.path.join(output_dir, 'errors'))
 

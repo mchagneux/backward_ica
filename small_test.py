@@ -3,7 +3,7 @@ from jax.experimental.maps import xmap
 import time
 from backward_ica.stats.hmm import LinearGaussianHMM
 from backward_ica.utils import *
-from backward_ica.offline_elbos import check_general_elbo, check_linear_gaussian_elbo
+from backward_ica.offline_smoothing import check_general_elbo, check_linear_gaussian_elbo
 import operator
 from functools import reduce
 # jax.config.update('jax_disable_jit', True)

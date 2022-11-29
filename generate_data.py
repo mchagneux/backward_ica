@@ -4,7 +4,7 @@ import os
 import backward_ica.utils as utils
 import backward_ica.stats.hmm as hmm
 import backward_ica.stats as stats
-from backward_ica.offline_elbos import check_linear_gaussian_elbo
+from backward_ica.offline_smoothing import check_linear_gaussian_elbo
 
 def main(args):
     

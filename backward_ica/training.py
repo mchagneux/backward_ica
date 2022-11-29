@@ -1,4 +1,4 @@
-from backward_ica.offline_elbos import *
+from backward_ica.offline_smoothing import *
 from backward_ica.online_smoothing import *
 from backward_ica.stats.hmm import * 
 from backward_ica.variational.models import *
