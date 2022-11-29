@@ -138,6 +138,22 @@ def state_smoothing_h_t(data, models):
     return data['t']['x']
 
 
+
+def x1_x2_functional_online_0(data, models):
+    return jnp.zeros((models['p'].state_dim,))
+
+def x1_x2_functional_online_t(data, models):
+    return data['tm1']['x'] * data['t']['x']
+
+def x1_x2_functional_offline_T(data, models):
+    return jnp.zeros((models['p'].state_dim,))
+
+def x1_x2_functional_offline_t(data, models):
+    return data['t']['x'] * data['tp1']['x']
+
+
+
+
 def samples_and_log_probs(dist, key, params_dist, num_samples):
     samples = vmap(dist.sample, in_axes=(0, None))(random.split(key, num_samples), params_dist)
     log_probs = vmap(dist.logpdf, in_axes=(0, None))(samples, params_dist)
@@ -167,6 +183,15 @@ offline_elbo_functional = lambda p, q: AdditiveFunctional(h_0=elbo_h_0_offline,
 
 state_smoothing_functional = lambda p, q: AdditiveFunctional(h_t=state_smoothing_h_t, 
                                                             out_shape=(p.state_dim,))
+
+online_x1_x2_functional = lambda p, q: AdditiveFunctional(h_0=x1_x2_functional_online_0, 
+                                                        out_shape=(p.state_dim,),
+                                                        h_t=x1_x2_functional_online_t)
+
+            
+offline_x1_x2_functional = lambda p, q: AdditiveFunctional(h_T=x1_x2_functional_offline_T, 
+                                                        out_shape=(p.state_dim,),
+                                                        h_t=x1_x2_functional_offline_t)                                            
 
 
 def nested_dict_update(d, u):
@@ -318,8 +343,13 @@ def tree_get_idx(idx, tree):
     return tree_map(lambda a: a[idx], tree)
 
 def tree_get_slice(start, stop, tree):
-    '''Get idx row from each leaf of tuple'''
-    return tree_map(lambda a: lax.dynamic_slice_in_dim(a, start, stop-start), tree)
+
+    slice_args = lambda a, start, stop: lax.cond(stop!=-1, 
+                                                lambda a, start, stop: (start, stop-start), 
+                                                lambda a, start, stop: (start, a.shape[0] - start),
+                                                a, start, stop)
+
+    return tree_map(lambda a: lax.dynamic_slice_in_dim(a, *slice_args(a, start, stop)), tree)
 
 
 ## quadratic forms and Gaussian subroutines 
@@ -556,22 +586,7 @@ def plot_relative_errors_1D(ax, pred_means, pred_covs, color='black', alpha=0.2,
     ax.plot(time_axis, pred_means, linestyle='dashed', c=color, label=label)
     ax.fill_between(time_axis, lower, upper, alpha=alpha, color=color, hatch=hatch)
 
-def plot_relative_errors_2D(ax, true_sequence, pred_means, pred_covs, limit=False):
-    # up_to = 64
-    true_sequence, pred_means, pred_covs = true_sequence.squeeze(), pred_means.squeeze(), pred_covs.squeeze()
-    if limit: true_sequence, pred_means, pred_covs = true_sequence[:limit], pred_means[:limit], pred_covs[:limit]
-    # time_axis = range(len(true_sequence))
-    ax.scatter(true_sequence[:,0], true_sequence[:,1], c='r')
-    for mean, cov in zip(pred_means, pred_covs):
-        confidence_ellipse(mean, cov, ax, c='b')
-
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
-    ax.legend()
-
-
 ## serializations 
-
 def save_args(args, name, save_dir):
     with open(os.path.join(save_dir, f'{name}.json'), 'w') as f:
         args_dict = vars(args)
@@ -608,463 +623,3 @@ def load_train_logs(save_dir):
     with open(os.path.join(save_dir, 'train_logs'), 'rb') as f: 
         train_logs = dill.load(f)
     return train_logs
-        
-
-# def plot_to_image(figure):
-#     """Converts the matplotlib plot specified by 'figure' to a PNG image and
-#     returns it. The supplied figure is closed and inaccessible after this call."""
-#     # Save the plot to a PNG in memory.
-#     buf = io.BytesIO()
-#     plt.savefig(buf, format='png')
-#     # Closing the figure prevents it from being displayed directly inside
-#     # the notebook.
-#     plt.close(figure)
-#     buf.seek(0)
-#     # Convert PNG buffer to TF image
-#     image = tf.image.decode_png(buf.getvalue(), channels=4)
-#     # Add the batch dimension
-#     image = tf.expand_dims(image, 0)
-#     return image
-
-
-
-## OLD 
-def plot_training_curves(best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence, save_dir, plot_only, best_epochs_only):
-    plt.rcParams.update({'font.size': 10.35})
-
-    colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
-
-    num_fits = len(avg_elbos)
-    for fit_nb in range(num_fits):
-
-        if best_epochs_only: stored_epoch_nbs_for_fit = [stored_epoch_nbs[fit_nb]]
-        else: stored_epoch_nbs_for_fit = stored_epoch_nbs[0][fit_nb]
-        ydata = avg_elbos[fit_nb][1:]
-        plt.plot(range(len(ydata)), ydata, label='$\mathcal{L}(\\theta,\\phi)$', c='black')
-        plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
-        idx_color = 0
-        for epoch_nb in stored_epoch_nbs_for_fit:
-            if plot_only is not None:
-                if epoch_nb in plot_only:
-                    plt.axvline(x=epoch_nb, linestyle='dashed', c=colors[idx_color])
-                    idx_color+=1
-            else: 
-                plt.axvline(x=epoch_nb, linestyle='dashed', c=colors[idx_color])
-                idx_color+=1               
-
-        plt.xlabel('Epoch') 
-        # plt.legend()
-        
-        if fit_nb == best_fit_idx: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}(best).pdf'), format='pdf')
-        else: plt.savefig(os.path.join(save_dir, f'training_curve_fit_{fit_nb}.pdf'), format='pdf')
-        plt.clf()
-
-def superpose_training_curves(avg_evidence, avg_elbos_list, method_names, save_dir, start_index=0):
-    colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
-    for nb, (avg_elbos, method_name) in enumerate(zip(avg_elbos_list, method_names)):
-        plt.plot(range(start_index, len(avg_elbos)+start_index), avg_elbos, label=f'{method_name}', c=colors[nb])
-    plt.axhline(y=avg_evidence, c='black', label = '$log p_{\\theta}(x)$', linestyle='dotted')
-    plt.xlabel('Epoch') 
-    plt.legend()
-    
-    plt.show()
-    plt.savefig(os.path.join(save_dir, 'comparison_of_training_curves.pdf'), format='pdf')
-    plt.clf()
-
-def plot_example_smoothed_states(p, q, theta, phi, state_seqs, obs_seqs, seq_nb, figname, *args):
-
-    fig, (ax0, ax1) = plt.subplots(1,2, sharey=True, figsize=(20,10))
-    plot_relative_errors_1D(ax0, state_seqs[seq_nb], *p.smooth_seq(obs_seqs[seq_nb], theta, *args))
-    ax0.set_title('True params')
-
-    plot_relative_errors_1D(ax1, state_seqs[seq_nb], *q.smooth_seq(obs_seqs[seq_nb], phi, *args))
-    ax1.set_title('Fitted params')
-
-    plt.tight_layout()
-    plt.autoscale(True)
-    plt.savefig(figname)
-    plt.clf()
-
-def plot_smoothing_wrt_seq_length_linear(key, ref_smoother, approx_smoother, ref_params, approx_params, seq_length, step, ref_smoother_name, approx_smoother_name):
-    timesteps = range(2, seq_length, step)
-
-    compute_ref_filt_seq = lambda obs_seq: ref_smoother.compute_filt_params_seq(obs_seq, ref_params)
-    compute_ref_backwd_seq = lambda filt_seq: ref_smoother.compute_backwd_params_seq(filt_seq, ref_params)
-
-    compute_approx_filt_seq = lambda obs_seq: approx_smoother.compute_filt_params_seq(obs_seq, approx_params)
-    compute_approx_backwd_seq = lambda filt_seq: approx_smoother.compute_backwd_params_seq(filt_seq, approx_params)
-    
-    ref_compute_marginals = ref_smoother.compute_marginals
-    approx_compute_marginals = approx_smoother.compute_marginals
-
-    def results_for_single_seq(state_seq, obs_seq):
-
-        ref_filt_seq, approx_filt_seq = compute_ref_filt_seq(obs_seq), compute_approx_filt_seq(obs_seq)
-        ref_backwd_seq, approx_backwd_seq = compute_ref_backwd_seq(ref_filt_seq), compute_approx_backwd_seq(approx_filt_seq)
-        kalman_wrt_states, vi_wrt_states, vi_vs_kalman = [], [], []
-
-        def result_up_to_length(length):
-
-            ref_smoothed_means = ref_compute_marginals(tree_get_idx(length, ref_filt_seq), tree_get_slice(0,length-1, ref_backwd_seq))[0]
-            approx_smoothed_means = approx_compute_marginals(tree_get_idx(length, approx_filt_seq), tree_get_slice(0,length-1, approx_backwd_seq))[0]
-            
-            kalman_wrt_states = jnp.abs(jnp.sum(ref_smoothed_means - state_seq[:length], axis=0))
-            vi_wrt_states = jnp.abs(jnp.sum(approx_smoothed_means - state_seq[:length], axis=0))
-            vi_vs_kalman = jnp.abs(jnp.sum(approx_smoothed_means - ref_smoothed_means, axis=0))
-
-            return kalman_wrt_states, vi_wrt_states, vi_vs_kalman
-        
-        for length in timesteps: 
-            result = result_up_to_length(length)
-            kalman_wrt_states.append(result[0])
-            vi_wrt_states.append(result[1])
-            vi_vs_kalman.append(result[2])
-
-        ref_smoothed_means = ref_compute_marginals(tree_get_idx(-1, ref_filt_seq), ref_backwd_seq)[0]
-        approx_smoothed_means = approx_compute_marginals(tree_get_idx(-1, approx_filt_seq), approx_backwd_seq)[0]
-        vi_vs_kalman_marginals = jnp.abs(ref_smoothed_means - approx_smoothed_means)[jnp.array(timesteps)]
-
-        return kalman_wrt_states, vi_wrt_states, vi_vs_kalman, vi_vs_kalman_marginals
-
-
-    state_seqs, obs_seqs = vmap(ref_smoother.sample_seq, in_axes=(0,None,None))(random.split(key, 2), ref_params, seq_length)
-
-    fig, (ax0, ax1, ax2, ax3) = plt.subplots(1,4, figsize=(20,10))
-
-    
-    for seq_nb, (state_seq, obs_seq) in tqdm(enumerate(zip(state_seqs, obs_seqs))):
-        kalman_wrt_states, vi_wrt_states, vi_vs_kalman, vi_vs_kalman_marginals = results_for_single_seq(state_seq, obs_seq)
-        ax0.plot(timesteps, kalman_wrt_states, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-        ax1.plot(timesteps, vi_wrt_states, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-        ax2.plot(timesteps, vi_vs_kalman, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-        ax3.plot(timesteps, vi_vs_kalman_marginals, label = f'Sequence {seq_nb}', linestyle='dotted', marker='.')
-
-    
-    ax0.set_title(f'{ref_smoother_name} vs states (additive)')
-    ax0.set_xlabel('Sequence length')
-    ax0.legend()
-
-    ax1.set_title(f'{approx_smoother_name} vs states (additive)')
-    ax1.set_xlabel('Sequence length')
-    ax1.legend()
-
-
-    ax2.set_title(f'{approx_smoother_name} vs {ref_smoother_name} (additive)')
-    ax2.set_xlabel('Sequence length')
-    ax2.legend()
-
-
-    ax3.set_title(f'{approx_smoother_name} vs {ref_smoother_name} (marginals)')
-    ax3.set_xlabel('Sequence length')
-    ax3.legend()
-    plt.autoscale(True)
-    plt.tight_layout()
-
-def multiple_length_ffbsi_smoothing(key, obs_seqs, smoother, params, timesteps):
-    
-    params = smoother.format_params(params)
-    params.compute_covs()
-    compute_filt_params_seq = jit(lambda key, obs_seq: smoother.compute_filt_params_seq(key, obs_seq, params))
-    compute_marginals = lambda key, filt_seq: smoother.compute_marginals(key, filt_seq, params)
-
-
-    def results_for_single_seq(key_filt, key_back, obs_seq):
-
-        filt_seq = compute_filt_params_seq(key_filt, obs_seq)
-
-        results = []
-        
-        for length in tqdm(timesteps): 
-            paths = compute_marginals(key_back, tree_get_slice(0, length, filt_seq))
-            results.append(jnp.mean(paths, axis=0))
-
-        paths = compute_marginals(key_back, filt_seq)
-        results.append((jnp.mean(paths, axis=0), jnp.var(paths, axis=0)))
-
-
-        return results
-
-    results = []
-    for obs_seq in tqdm(obs_seqs):
-        key, key_filt, key_back = random.split(key, 3)
-
-        results.append(results_for_single_seq(key_filt, key_back, obs_seq))
-
-
-
-    return results 
-
-def multiple_length_linear_backward_smoothing(obs_seqs, smoother, params, timesteps):
-    
-    params = smoother.format_params(params)
-    compute_filt_params_seq = lambda obs_seq: smoother.compute_filt_params_seq(obs_seq, params)
-    compute_backwd_params_seq = lambda filt_seq: smoother.compute_backwd_params_seq(filt_seq, params)
-    compute_marginals = smoother.compute_marginals
-
-    def results_for_single_seq(obs_seq):
-
-        filt_seq = compute_filt_params_seq(obs_seq)
-        backwd_seq = compute_backwd_params_seq(filt_seq)
-
-        results = []
-        
-        for length in tqdm(timesteps): 
-            marginal_means = compute_marginals(tree_get_idx(length-1, filt_seq), tree_get_slice(0, length-1, backwd_seq)).mean
-            results.append(marginal_means)
-
-        marginals = compute_marginals(tree_get_idx(-1, filt_seq), backwd_seq)
-        results.append((marginals.mean, marginals.scale.cov))
-
-
-        return results
-
-    results = []
-    for obs_seq in tqdm(obs_seqs):
-        results.append(results_for_single_seq(obs_seq))
-
-
-
-    return results 
-
-def plot_multiple_length_smoothing(ref_state_seqs, ref_results, approx_results, timesteps, ref_name, approx_name, save_dir):
-
-    plt.rcParams.update({'font.size': 10.35})
-    colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
-
-    fig, ((ax0, ax1, ax2), (ax3, ax4, ax5)) = plt.subplots(2,3, figsize=(20,15))
-    xaxis = list(timesteps) + [len(ref_state_seqs[0])]
-
-    
-    for seq_nb, (ref_state_seq, ref_results_seq) in enumerate(zip(ref_state_seqs, ref_results)):
-        ref_vs_states_additive =  []
-        for i, length in enumerate(timesteps):
-            ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[i] - ref_state_seq[:length], axis=0)))
-        ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[-1][0] - ref_state_seq, axis=0)))
-
-        ax0.plot(xaxis, ref_vs_states_additive, linestyle='dotted', marker='.', c='k')
-
-    handles = []
-    for idx, (name, approx_results_of_method) in enumerate(approx_results.items()):
-        c = colors[idx]
-        for seq_nb, (ref_state_seq, ref_results_seq, approx_results_seq) in enumerate(zip(ref_state_seqs, ref_results, approx_results_of_method)):
-            approx_vs_states_additive = []
-            ref_vs_approx_additive = []
-
-            for i, length in enumerate(timesteps):
-                approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_state_seq[:length], axis=0)))
-                ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_results_seq[i], axis=0)))
-
-            approx_vs_states_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_state_seq, axis=0)))
-            ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_results_seq[-1][0], axis=0)))
-            ref_vs_approx_marginals = jnp.abs(ref_results_seq[-1][0] - approx_results_seq[-1][0])
-
-            ax1.plot(xaxis, approx_vs_states_additive, linestyle='dotted', marker='.', c=c, label=f'{name}')
-            ax2.plot(xaxis, ref_vs_approx_additive, linestyle='dotted', marker='.', c=c, label=f'{name}')
-            handle, = ax3.plot(ref_vs_approx_marginals, linestyle='dotted', marker='.', c=c, label=f'{name}')
-        handles.append(handle)
-
-    # ax0.set_title(f'{ref_name} vs states (additive)')
-    ax0.set_xlabel('$n$')
-
-    # ax1.set_title(f'{approx_name} vs states (additive)')
-    ax1.set_xlabel('$n$')
-
-    # ax2.set_title(f'{approx_name} vs {ref_name} (additive)')
-    ax2.set_xlabel('$n$')
-
-    # ax3.set_title(f'{approx_name} vs {ref_name} (marginals)')
-    ax3.set_xlabel('$n$')
-
-    plot_relative_errors_1D(ax4, ref_state_seqs[0], *ref_results[0][-1])
-    ax4.set_title(f'{ref_name} smoothing')
-
-    plot_relative_errors_1D(ax5, ref_state_seqs[0], *approx_results_of_method[0][-1])
-    ax5.set_title(f'{name} smoothing')
-
-    ax4.legend()
-    ax5.legend()
-
-
-    extent = ax0.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    fig.savefig(os.path.join(save_dir,'smoothing_theta_star_vs_states.pdf'), bbox_inches=extent.expanded(2, 2), format='pdf')
-
-    # Save just the portion _inside_ the second axis's boundaries
-    extent = ax2.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    fig.savefig(os.path.join(save_dir,'additive.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
-
-    extent = ax3.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    fig.savefig(os.path.join(save_dir,'marginal.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
-
-    extent = ax4.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    fig.savefig(os.path.join(save_dir,'smoothing_theta_star.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
-
-    extent = ax5.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    fig.savefig(os.path.join(save_dir,'smoothing_best_phi.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'smoothing_results.pdf'), format='pdf')
-    plt.clf()
-
-def compare_multiple_length_smoothing(ref_dir, eval_dirs, train_dirs, pretty_names, save_dir):
-    
-    plt.rcParams.update({'font.size': 20})
-
-    
-    train_logs = [load_train_logs(train_dir) for train_dir in train_dirs]
-    
-    avg_evidence = train_logs[0][-1]
-    avg_elbos_list = [train_log[2][train_log[0]] for train_log in train_logs]
-
-    superpose_training_curves(avg_evidence, avg_elbos_list, pretty_names, save_dir, start_index=0)
-
-
-    colors = ['g','b','r', 'c', 'm', 'y', 'k']
-    markers = ['*', '.', 'x','-']
-
-    eval_args = load_args('eval_args', eval_dirs[0])
-    key = random.PRNGKey(eval_args.seed)
-
-    train_args = load_args('train_args', train_dirs[0])
-
-    set_defaults(train_args)
-
-    p = hmm.NonLinearHMM(state_dim=train_args.state_dim, 
-                            obs_dim=train_args.obs_dim, 
-                            transition_matrix_conditionning=train_args.transition_matrix_conditionning,
-                            range_transition_map_params=train_args.range_transition_map_params,
-                            layers=train_args.emission_map_layers,
-                            slope=train_args.slope,
-                            transition_bias=train_args.transition_bias,
-                            injective=train_args.injective) # specify the structure of the true model
-
-    theta_star = load_params('theta', train_args.save_dir)
-    key_gen, _ = random.split(key,2)
-    state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, theta_star, eval_args.num_seqs, eval_args.seq_length)
-
-    timesteps = range(2, eval_args.seq_length, eval_args.step)
-    print(obs_seqs[0][list(timesteps)[0]])
-
-    ref_results = load_smoothing_results(ref_dir)
-    approx_results = {pretty_name:load_smoothing_results(eval_dir) for pretty_name, eval_dir in zip(pretty_names, eval_dirs)}
-    fig, (ax0, ax1, ax2) = plt.subplots(3, figsize=(20,20))
-    xaxis = list(timesteps) + [len(state_seqs[0])]
-    mse = dict()
-    mse['ffbsi'] = []
-    for seq_nb, (ref_state_seq, ref_results_seq) in enumerate(zip(state_seqs, ref_results)):
-        ref_vs_states_additive =  []
-        for i, length in enumerate(timesteps):
-            ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[i] - ref_state_seq[:length], axis=0)))
-        ref_vs_states_additive.append(jnp.abs(jnp.sum(ref_results_seq[-1][0] - ref_state_seq, axis=0)))
-
-        marginal_errors = ref_results_seq[-1][0] - ref_state_seq
-        mse_seq = marginal_errors.flatten()**2
-        mse['ffbsi'].append((jnp.mean(mse_seq).tolist(),jnp.var(mse_seq).tolist()))
-        ax0.plot(xaxis, ref_vs_states_additive, linestyle='dotted', marker='.', c='k')
-
-    handles = []
-    for idx, (method_name, approx_results_for_method) in enumerate(approx_results.items()):
-        mse[method_name] = []
-        c = colors[idx]
-        m = markers[idx]
-        for seq_nb, (ref_state_seq, ref_results_seq, approx_results_seq) in enumerate(zip(state_seqs, ref_results, approx_results_for_method)):
-            ref_vs_approx_additive = []
-
-            for i, length in enumerate(timesteps):
-                ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i], axis=0) - jnp.sum(ref_results_seq[i], axis=0)))
-                # ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[i] - ref_state_seq[:length], axis=0)))
-
-            ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0], axis=0) - jnp.sum(ref_results_seq[-1][0], axis=0)))
-            # ref_vs_approx_additive.append(jnp.abs(jnp.sum(approx_results_seq[-1][0] - ref_state_seq, axis=0)))
-
-            marginals = approx_results_seq[-1][0] - ref_state_seq
-            # ref_vs_approx_marginals = jnp.abs(ref_state_seq - approx_results_seq[-1][0])
-            mse_seq = marginals.flatten()**2
-            mse[method_name].append(ref_vs_approx_additive[-1].tolist())
-            handle, = ax1.plot(xaxis, ref_vs_approx_additive, linestyle='dotted', marker=m, c=c, label=f'{method_name}')
-            ax2.scatter(range(len(marginals)), mse_seq, c=c, label=f'{method_name}', marker=m)
-
-        handles.append(handle)
-
-    # ax1.legend(handles=handles)
-    # ax2.legend(handles=handles)
-
-    # ax0.set_title(f'FFBSi gt vs states (additive)')
-    ax0.set_xlabel('$n$')
-
-    # ax1.set_title(f'Learnt models vs ground truth smoothing (additive)')
-    ax1.set_xlabel('$n$')
-
-    # ax2.set_title(f'Learnt models vs ground truth smoothing (marginals)')
-    ax2.set_xlabel('$n$')
-
-
-
-    # extent = ax0.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    # fig.savefig(os.path.join(save_dir,'smoothing_theta_star_vs_states.pdf'), bbox_inches=extent.expanded(2, 2), format='pdf')
-
-    # Save just the portion _inside_ the second axis's boundaries
-    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    fig.savefig(os.path.join(save_dir,'additive.pdf'), bbox_inches=extent.expanded(1.261, 1.3), format='pdf')
-
-    extent = ax2.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    fig.savefig(os.path.join(save_dir,'marginal.pdf'), bbox_inches=extent.expanded(1.261, 1.3), format='pdf')
-
-    # extent = ax4.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    # fig.savefig(os.path.join(save_dir,'smoothing_theta_star.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
-
-    # extent = ax5.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    # fig.savefig(os.path.join(save_dir,'smoothing_best_phi.pdf'), bbox_inches=extent.expanded(1.261, 1.2), format='pdf')
-
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'smoothing_results.pdf'), format='pdf')
-    plt.clf()
-
-    fig, (ax0, ax1, ax2, ax3, ax4) = plt.subplots(5,1, figsize=(20,20))
-    limit = 100
-    
-
-    # plot_relative_errors_1D(ax0, state_seqs[0], *ref_results[0][-1], limit)
-    # ax0.set_title(f'FFBSi')
-
-    # plot_relative_errors_1D(ax1, state_seqs[0], *approx_results[pretty_names[0]][0][-1], limit)
-    # ax1.set_title(f'{pretty_names[0]}')
-
-    # plot_relative_errors_1D(ax2, state_seqs[0], *approx_results[pretty_names[1]][0][-1], limit)
-    # ax2.set_title(f'{pretty_names[1]}')
-
-    # plot_relative_errors_1D(ax3, state_seqs[0], *approx_results[pretty_names[2]][0][-1], limit)
-    # ax3.set_title(f'{pretty_names[2]}')
-    with open(os.path.join(save_dir, 'mse_values.json'), 'w') as f:
-        json.dump(mse, f, indent=4)
-    # plot_relative_errors_1D(ax4, state_seqs[0], *approx_results['ffbsi_em_2022_05_18__17_59_59'][0][-1])
-    # ax4.set_title(f'FFBSi EM')
-
-    plt.savefig(os.path.join(save_dir, 'smoothing_visualizations.pdf'), format='pdf')
-
-def confidence_ellipse(mean, cov, ax, c, n_std=1.96):
-
-
-    pearson = cov[0, 1]/np.sqrt(cov[0, 0] * cov[1, 1])
-    # Using a special case to obtain the eigenvalues of this
-    # two-dimensionl dataset.
-    ell_radius_x = np.sqrt(1 + pearson)
-    ell_radius_y = np.sqrt(1 - pearson)
-    ellipse = Ellipse((0, 0), width=ell_radius_x * 2, height=ell_radius_y * 2, facecolor=c)
-    # Calculating the stdandard deviation of x from
-    # the squareroot of the variance and multiplying
-    # with the given number of standard deviations.
-    scale_x = np.sqrt(cov[0, 0]) * n_std
-    mean_x = mean[0]
-    # calculating the stdandard deviation of y ...
-    scale_y = np.sqrt(cov[1, 1]) * n_std
-    mean_y = mean[1]
-
-    transf = transforms.Affine2D() \
-        .rotate_deg(45) \
-        .scale(scale_x, scale_y) \
-        .translate(mean_x, mean_y)
-
-    ellipse.set_transform(transf + ax.transData)
-    ax.scatter(mean_x, mean_y, color=c)
-    return ax.add_patch(ellipse)

@@ -50,11 +50,21 @@ key = jax.random.PRNGKey(0)
 p = LinearGaussianHMM(2, 2, 'diagonal', (0,1), True, True)
 # q = LinearGaussianHMM(2, 2, 'diagonal', (0,1), True, True)
 
-check_linear_gaussian_elbo(p, 2, 50)
+# check_linear_gaussian_elbo(p, 2, 50)
 
 key, key_theta, key_phi = jax.random.split(key, 3)
 
-check_general_elbo(key, p, 2, 50, 100)
+
+theta = p.get_random_params(key_theta)
+
+
+_, obs_seq = p.sample_seq(key, theta, 50)
+
+joint_marginals = p.smooth_seq(obs_seq, theta, lag=1)
+
+test = 0
+
+# check_general_elbo(key, p, 2, 50, 100)
 
 # theta = p.get_random_params(key_theta)
 # phi = q.get_random_params(key_phi)

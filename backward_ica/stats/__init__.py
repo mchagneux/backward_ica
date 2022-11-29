@@ -186,13 +186,11 @@ class LinearBackwardSmoother(BackwardSmoother):
 
         return marginals
 
-    def compute_fixed_lag_marginals(self, filt_params_seq, backwd_params_seq, lag):
+    def compute_joint_marginals(self, filt_params_seq, backwd_params_seq, lag):
         
-        def _compute_fixed_lag_marginal(init, x):
+        def _compute_joint_marginal(filt_params, backward_params_subseq):
 
-            lagged_filt_params, backwd_params_subseq = x
-
-            lagged_filt_params_mean, lagged_filt_params_cov = lagged_filt_params.mean, lagged_filt_params.scale.cov
+            lagged_filt_params_mean, lagged_filt_params_cov = filt_params.mean, filt_params.scale.cov
 
             @jit
             def _marginal_step(current_marginal, backwd_params):
@@ -200,18 +198,17 @@ class LinearBackwardSmoother(BackwardSmoother):
                 smoothed_mean, smoothed_cov = current_marginal
                 mean = A_back @ smoothed_mean + a_back
                 cov = A_back @ smoothed_cov @ A_back.T + cov_back
-                return (mean, cov), None
+                return (mean, cov), Gaussian.Params(mean=mean, scale=Scale(cov=cov))
 
-            marginal = lax.scan(_marginal_step, 
+            marginals = lax.scan(_marginal_step, 
                                     init=(lagged_filt_params_mean, lagged_filt_params_cov), 
-                                    xs=backwd_params_subseq, 
-                                    reverse=True)[0]
+                                    xs=backward_params_subseq, 
+                                    reverse=True)[1]
 
-            return None, Gaussian.Params(mean=marginal[0], scale=Scale(cov=marginal[1]))
+            return tree_append(marginals, filt_params)
 
-        return lax.scan(_compute_fixed_lag_marginal, 
-                            init=None, 
-                            xs=(tree_get_slice(lag, None, filt_params_seq), tree_get_strides(lag, backwd_params_seq)))[1]
+        return vmap(_compute_joint_marginal)(tree_get_slice(lag, -1, filt_params_seq), 
+                                            tree_get_strides(stride=lag, tree=backwd_params_seq))
 
     def filt_seq(self, obs_seq, params):
         formatted_params = self.format_params(params)
@@ -230,11 +227,12 @@ class LinearBackwardSmoother(BackwardSmoother):
 
         if lag is None: 
             marginals = self.compute_marginals(tree_get_idx(-1, filt_params_seq), backwd_params_seq)
+            return marginals.mean, marginals.scale.cov     
         else: 
-            marginals = self.compute_fixed_lag_marginals(filt_params_seq, backwd_params_seq, lag)
+            marginals = self.compute_joint_marginals(filt_params_seq, backwd_params_seq, lag)
+            return marginals
 
-        return marginals.mean, marginals.scale.cov     
-
+    
     def smooth_seq_at_multiple_timesteps(self, obs_seq, params, slices):
         formatted_params = self.format_params(params)
 

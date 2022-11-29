@@ -31,7 +31,7 @@ parser = argparse.ArgumentParser()
 parser.set_defaults(seed=0, 
                     load_p_from='',
                     load_q_from='',
-                    functional='x',
+                    functional='x1x2',
                     at_epoch=None,
                     num_replicas=100,
                     seq_length=50,
@@ -44,7 +44,7 @@ parser.set_defaults(seed=0,
                     default_emission_base_scale = math.sqrt(1e-2),
                     transition_bias=True,
                     emission_bias=True,
-                    num_samples=20)
+                    num_samples=100)
 
 args = parser.parse_args()
 
@@ -52,7 +52,7 @@ save_args(args, 'args', os.path.join(output_dir))
 
 
 
-def get_additive_functionals(p, q, theta, phi, functional_name='elbo'):
+def get_additive_functionals(p, q:LinearGaussianHMM, theta, phi, functional_name='elbo'):
 
     if functional_name == 'elbo':
         offline_functional = offline_elbo_functional(p, q)
@@ -64,6 +64,10 @@ def get_additive_functionals(p, q, theta, phi, functional_name='elbo'):
         online_functional = state_smoothing_functional(p, q)
         oracle = lambda obs_seq: jnp.sum(Kalman.smooth_seq(obs_seq, q.format_params(phi))[0], axis=0) / len(obs_seq)
 
+    elif functional_name == 'x1x2':
+        offline_functional = offline_x1_x2_functional(p, q)
+        online_functional = online_x1_x2_functional(p, q)
+        oracle = lambda obs_seq: jnp.prod(q.smooth_seq(obs_seq, phi, lag=1).mean, axis=1) / len(obs_seq)
     else: 
         raise NotImplementedError
 
