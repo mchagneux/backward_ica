@@ -101,6 +101,12 @@ def state_smoothing_h_t(data, models):
 #             - log_q_t_x_t
 
 
+
+def samples_and_log_probs(dist, key, params_dist, num_samples):
+    samples = vmap(dist.sample, in_axes=(0, None))(random.split(key, num_samples), params_dist)
+    log_probs = vmap(dist.logpdf, in_axes=(0, None))(samples, params_dist)
+    return samples, log_probs
+    
 class AdditiveFunctional:
 
     def __init__(self, h_t, out_shape, h_0=None, h_T=None):

@@ -98,10 +98,7 @@ class OnlineVariationalAdditiveSmoothing:
         return jnp.mean(tau_T, axis=0) / (T+1)
 
 
-def samples_and_log_probs(dist, key, params_dist, num_samples):
-    samples = vmap(dist.sample, in_axes=(0, None))(random.split(key, num_samples), params_dist)
-    log_probs = vmap(dist.logpdf, in_axes=(0, None))(samples, params_dist)
-    return samples, log_probs
+
 
 def init_standard(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
