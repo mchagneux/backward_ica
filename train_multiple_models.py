@@ -11,7 +11,7 @@ num_epochs = 250
 learning_rate = 0.01
 dims = '5 5'
 load_from = ''
-batch_size = 10
+batch_size = 100
 num_seqs = 100
 seq_length = 50
 num_samples_list = [10,10]
@@ -42,14 +42,16 @@ subprocess.run(f'python generate_data.py {loaded_seq} {load_from} \
 
 
 processes = [subprocess.Popen(f'python train.py {sweep_sequences} {online} \
-                                    --model {model} \
-                                    --exp_dir {exp_dir} \
-                                    --batch_size {batch_size} \
-                                    --learning_rate {learning_rate} \
-                                    --num_epochs {num_epochs} \
-                                    --store_every {store_every} \
-                                    --num_samples {num_samples}', 
-                        shell=True) for model, num_samples, online in zip(q_models, num_samples_list, online_list)]
+                                --model {model} \
+                                --exp_dir {exp_dir} \
+                                --batch_size {batch_size} \
+                                --learning_rate {learning_rate} \
+                                --num_epochs {num_epochs} \
+                                --store_every {store_every} \
+                                --num_samples {num_samples}', 
+                            shell=True) for model, num_samples, online in zip(q_models, 
+                                                                        num_samples_list, 
+                                                                        online_list)]
 
          
 tensorboard_process = subprocess.Popen(f'tensorboard --logdir {exp_dir}', shell=True)

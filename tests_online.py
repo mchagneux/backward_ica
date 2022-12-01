@@ -6,7 +6,8 @@ from backward_ica.stats.hmm import LinearGaussianHMM
 from backward_ica.utils import * 
 from datetime import datetime 
 import os 
-from backward_ica.offline_smoothing import LinearGaussianELBO, OfflineVariationalAdditiveSmoothing
+from backward_ica.offline_smoothing import LinearGaussianELBO, \
+                                        OfflineVariationalAdditiveSmoothing
 from backward_ica.online_smoothing import OnlineVariationalAdditiveSmoothing, init_standard, update_IS, update_PaRIS
 
 import backward_ica.stats.hmm as hmm
@@ -20,7 +21,7 @@ import math
 
 # config.update('jax_disable_jit',True)
 
-enable_x64(True)
+enable_x64(False)
 
 date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
 output_dir = os.path.join('experiments','online', date)
@@ -52,7 +53,11 @@ save_args(args, 'args', os.path.join(output_dir))
 
 
 
-def get_additive_functionals(p, q:LinearGaussianHMM, theta, phi, functional_name='elbo'):
+def get_additive_functionals(p, 
+                            q:LinearGaussianHMM, 
+                            theta, 
+                            phi, 
+                            functional_name='elbo'):
 
     if functional_name == 'elbo':
         offline_functional = offline_elbo_functional(p, q)
@@ -67,7 +72,10 @@ def get_additive_functionals(p, q:LinearGaussianHMM, theta, phi, functional_name
     elif functional_name == 'x1x2':
         offline_functional = offline_x1_x2_functional(p, q)
         online_functional = online_x1_x2_functional(p, q)
-        oracle = lambda obs_seq: jnp.prod(q.smooth_seq(obs_seq, phi, lag=1).mean, axis=1) / len(obs_seq)
+        def oracle(obs_seq):
+            bivariate_marginals = q.smooth_seq(obs_seq, phi, lag=1)
+            bivariate_means = bivariate_marginals.mean 
+            return jnp.sum(jnp.prod(bivariate_means, axis=1), axis=0) / len(obs_seq)
     else: 
         raise NotImplementedError
 
@@ -207,6 +215,8 @@ online_PaRIS_errors = pd.DataFrame((online_PaRIS_values - true_value) / jnp.abs(
 errors = pd.concat([offline_errors, online_IS_errors, online_normalized_IS_errors, online_PaRIS_errors], axis=1)
 
 errors.columns = ['Offline', 'Online IS', 'Online normalized IS', 'Online PaRIS']
+
+errors.to_csv(os.path.join(output_dir, 'errors.csv'))
 
 errors.plot(kind='box')
 plt.xlabel('Method')

@@ -61,6 +61,7 @@ class SVITrainer:
                 learning_rate, 
                 num_epochs, 
                 batch_size, 
+                seq_length,
                 num_samples=1, 
                 force_full_mc=False,
                 frozen_params=None,
@@ -74,10 +75,14 @@ class SVITrainer:
         self.p = p 
         
         self.theta_star = theta_star
+        self.formatted_theta_star = self.p.format_params(theta_star)
         self.frozen_params = frozen_params
+        if online: 
+            learning_rate = learning_rate / seq_length
 
         self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
         self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
+
 
         base_optimizer = optax.apply_if_finite(optax.masked(getattr(optax, optimizer)(learning_rate), 
                                                             self.trainable_params), 
@@ -99,49 +104,52 @@ class SVITrainer:
             if isinstance(self.p, LinearGaussianHMM) and isinstance(self.q, LinearGaussianHMM) and (not force_full_mc):
                 self.elbo = LinearGaussianELBO(self.p, self.q)
                 self.get_montecarlo_keys = get_dummy_keys
-                self.loss = lambda key, data, compute_up_to, params: -self.elbo(data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
+                self.loss = lambda key, data, compute_up_to, params: -self.elbo(
+                                                                        data, 
+                                                                        compute_up_to, 
+                                                                        self.p.format_params(self.theta_star), 
+                                                                        q.format_params(params))
             else: 
                 self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                 self.get_montecarlo_keys = get_keys
-                self.loss = lambda key, data, compute_up_to, params: -self.elbo(key, data, compute_up_to, self.p.format_params(self.theta_star), q.format_params(params))
-        
+                self.loss = lambda key, data, compute_up_to, params: -self.elbo(
+                                                                        key, 
+                                                                        data, 
+                                                                        compute_up_to, 
+                                                                        self.p.format_params(self.theta_star), 
+                                                                        q.format_params(params))
+    
         if self.online: 
-            self.elbo = OnlineParisELBO(p=self.p, q=self.q, normalizer=None, num_samples=num_samples)
+
+            self.elbo = OnlineISELBO(p=self.p, q=self.q, num_samples=num_samples)
             self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, compute_up_to, params: -self.elbo.batch_compute(key, data, self.p.format_params(self.theta_star), q.format_params(params))
 
+            def loss_update(elbo_carry, key, data, timestep, params):
+                carry = elbo_carry
+                carry['phi'] = self.q.format_params(params)
+                carry['theta'] = self.formatted_theta_star
 
-        if not self.sweep_sequences: 
-            def step(carry, x):
-                def batch_step(params, opt_state, batch, keys):
-                    neg_elbo_values, grads = vmap(value_and_grad(self.loss, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
+                input = {'t':timestep, 
+                        'key': key, 
+                        'y':data}
+                carry, result = self.elbo.compute(carry, input)
+                return -result, carry 
 
-                    avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
-                    updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
-                    params = optax.apply_updates(params, updates)
+            self.loss_update = loss_update
+            self.loss_init = self.elbo.init_carry
 
-                    return params, \
-                        opt_state, \
-                        -jnp.mean(neg_elbo_values)
-
-                data, params, opt_state, subkeys_epoch = carry
-
-                batch_start = x
-                batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
-                batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
-
-                params, opt_state, avg_elbo_batch = batch_step(params, opt_state, batch_obs_seq, batch_keys)
-
-                return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
-
-        else: 
+        if self.sweep_sequences: 
             def step(carry, x):
                 def batch_step(params, opt_state, batch, keys):
                     def timestep_step(carry, x):
                         params, opt_state, batch, keys = carry 
                         timestep = x
                         neg_elbo_values, grads = vmap(value_and_grad(self.loss, argnums=3), 
-                                                        in_axes=(0,0,None,None))(keys, batch, timestep, params)
+                                                        in_axes=(0,0,None,None))(
+                                                                            keys, 
+                                                                            batch, 
+                                                                            timestep, 
+                                                                            params)
 
                         avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                         updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
@@ -163,7 +171,82 @@ class SVITrainer:
 
                 return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
 
+        elif self.online: 
+            init_elbo_carry = vmap(self.loss_init, 
+                                    axis_size=self.batch_size)()
+            def step(carry, x):
+                def batch_step(params, opt_state, batch, keys):
+                    def timestep_step(carry, x):
+                        elbo_carry, params, opt_state = carry 
+                        t, keys_t, obs_batch_t = x
+                        (neg_elbo_values, elbo_carry), grads = vmap(value_and_grad(
+                                                                                self.loss_update, 
+                                                                                argnums=4, 
+                                                                                has_aux=True), 
+                                                                    in_axes=(0,0,0,None,None))(
+                                                                                    elbo_carry, 
+                                                                                    keys_t, 
+                                                                                    obs_batch_t, 
+                                                                                    t,
+                                                                                    params)
+
+                        avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
+                        updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
+                        params = optax.apply_updates(params, updates)
+                        return (elbo_carry, params, opt_state), -jnp.mean(neg_elbo_values)
+
+
+                    keys = vmap(partial(jax.random.split, num=batch.shape[1]))(keys)
+                    (_ , params, opt_state), neg_elbo_values = jax.lax.scan(
+                                                                f=timestep_step, 
+                                                                init=(init_elbo_carry, 
+                                                                    params, 
+                                                                    opt_state), 
+                                                                xs=(self.timesteps(batch.shape[1]), 
+                                                                    jnp.transpose(keys, (1,0,2)), 
+                                                                    jnp.transpose(batch, (1,0,2))))
+                    
+                    return params, opt_state, jnp.mean(neg_elbo_values)
+
+                data, params, opt_state, subkeys_epoch = carry
+                batch_start = x
+                batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
+                batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
+
+                params, opt_state, avg_elbo_batch = batch_step(
+                                                            params, 
+                                                            opt_state, 
+                                                            batch_obs_seq, 
+                                                            batch_keys)
+
+                return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
+
+        else: 
+            def step(carry, x):
+                def batch_step(params, opt_state, batch, keys):
+                    neg_elbo_values, grads = vmap(value_and_grad(self.loss, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
+
+                    avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
+                    updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
+                    params = optax.apply_updates(params, updates)
+
+                    return params, \
+                        opt_state, \
+                        -jnp.mean(neg_elbo_values)
+
+                data, params, opt_state, subkeys_epoch = carry
+
+                batch_start = x
+                batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
+                batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
+
+                params, opt_state, avg_elbo_batch = batch_step(params, opt_state, batch_obs_seq, batch_keys)
+
+                return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
+            
+
         self.step = step
+
 
     def timesteps(self, seq_length):
         return jnp.arange(0, seq_length)
@@ -196,8 +279,12 @@ class SVITrainer:
         
 
             (_ , params, opt_state, _), avg_elbo_batches = jax.lax.scan(f=self.step,  
-                                                                        init=(data, params, opt_state, subkeys_epoch), 
-                                                                        xs = batch_start_indices)
+                                                                        init=(
+                                                                            data, 
+                                                                            params, 
+                                                                            opt_state, 
+                                                                            subkeys_epoch), 
+                                                                        xs=batch_start_indices)
 
 
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)

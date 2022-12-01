@@ -47,22 +47,50 @@ enable_x64(True)
 key = jax.random.PRNGKey(0)
 
 
-p = LinearGaussianHMM(2, 2, 'diagonal', (0,1), True, True)
+# def f(dict_input, other_input, yet_another_input):
+#     return dict_input['0'] * other_input * yet_another_input
+
+
+# dict_input = {'0':jnp.ones((100,)), 
+#             '1': jnp.zeros((50,))}
+
+# other_input = 2.3*jnp.ones((100,))
+
+# yet_another_input = 5.6
+
+
+
+# test = jax.vmap(f, in_axes=(0,0,None))(dict_input, other_input, yet_another_input)
+
+
+# print(test)
+
+
+def empty_fun():
+    return {'a':20, 'b':jnp.ones((10,))}
+
+print(vmap(empty_fun, axis_size=20)())
+
+
+
+# p = LinearGaussianHMM(2, 2, 'diagonal', (0,1), True, True)
 # q = LinearGaussianHMM(2, 2, 'diagonal', (0,1), True, True)
 
 # check_linear_gaussian_elbo(p, 2, 50)
 
-key, key_theta, key_phi = jax.random.split(key, 3)
+# key, key_theta, key_phi = jax.random.split(key, 3)
 
 
-theta = p.get_random_params(key_theta)
+# theta = p.get_random_params(key_theta)
 
 
-_, obs_seq = p.sample_seq(key, theta, 50)
+# _, obs_seq = p.sample_seq(key, theta, 50)
 
-joint_marginals = p.smooth_seq(obs_seq, theta, lag=1)
+# joint_marginals = p.smooth_seq(obs_seq, theta, lag=1)
 
-test = 0
+# test = 0
+
+
 
 # check_general_elbo(key, p, 2, 50, 100)
 

@@ -67,7 +67,7 @@ class OnlineVariationalAdditiveSmoothing:
                         self._init,
                         carry, input)
         
-        return carry, None
+        return carry, jnp.mean(carry['tau'], axis=0) / (input['t'] + 1)
     
     def batch_compute(self, key, obs_seq, theta, phi):
 
@@ -194,7 +194,14 @@ def update_IS(carry_tm1, input_t:HMM, p:HMM, q:BackwardSmoother, h, num_samples,
 
     return carry_t
     
-def update_PaRIS(carry_tm1, input_t:HMM, p:HMM, q:BackwardSmoother, h, num_samples, normalizer, num_paris_samples):
+def update_PaRIS(carry_tm1, 
+                input_t:HMM, 
+                p:HMM, 
+                q:BackwardSmoother, 
+                h, 
+                num_samples, 
+                normalizer, 
+                num_paris_samples):
 
 
     state_tm1 = carry_tm1['state']
@@ -269,3 +276,34 @@ def update_PaRIS(carry_tm1, input_t:HMM, p:HMM, q:BackwardSmoother, h, num_sampl
             'y':y_t}
 
     return carry_t
+
+
+
+
+OnlineNormalizedISELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(          
+                                                    p, 
+                                                    q,
+                                                    init_standard,
+                                                    update_IS,
+                                                    online_elbo_functional(p,q),
+                                                    exp_and_normalize,
+                                                    num_samples)
+
+
+OnlineISELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(          
+                                                    p, 
+                                                    q,
+                                                    init_standard,
+                                                    update_IS,
+                                                    online_elbo_functional(p,q),
+                                                    None,
+                                                    num_samples)
+
+OnlineParisELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(          
+                                            p, 
+                                            q,
+                                            init_standard,
+                                            partial(update_PaRIS, num_paris_samples=2),
+                                            online_elbo_functional(p,q),
+                                            exp_and_normalize,
+                                            num_samples)

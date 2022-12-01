@@ -46,6 +46,7 @@ def main(args):
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
                         online=args.online,
+                        seq_length=data.shape[1],
                         sweep_sequences=args.sweep_sequences)
 
 
@@ -73,7 +74,7 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='linear')
+    parser.add_argument('--model', type=str, default='linear_online')
     parser.add_argument('--exp_dir', type=str, default='experiments/p_linear/2022_11_03__16_07_11')
 
     parser.add_argument('--sweep_sequences', action='store_true')
