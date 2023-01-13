@@ -240,16 +240,16 @@ def init_gradients(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_sample
     y_0 = input_0['y']
     key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
 
-    def compute_tau_component(key, unformatted_params):
+    theta = carry_m1['theta']
 
-        phi_0 = q.format_params(unformatted_params)
+    h = partial(h_0, models={'p':p, 'q':q})
 
+    def h_bar(unformatted_phi_0):
+
+        phi_0 = q.format_params(unformatted_phi_0)
         state_0 = q.init_state(y_0, phi_0)
-
         filt_params = q.filt_params_from_state(state_0, phi_0)
-
-        x_0 = q.filt_dist.sample(key, filt_params)
-
+        x_0 = jax.vmap(q.filt_dist.sample)(jax.random.split(key_0, num_samples), filt_params)
         log_q_x_0 = q.filt_dist.logpdf(x_0, filt_params)
 
         data_0 = {'x':x_0,
@@ -260,23 +260,17 @@ def init_gradients(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_sample
 
         data = {'tm1': carry_m1, 't':data_0}
 
-        tau_component = named_vmap(partial(h_0, models={'p':p, 'q':q}), 
-                        axes_names={'t':{'x':0}}, 
-                        input_dict=data)
+        return named_vmap(h, axes_names={'t':{'x':0}}, input_dict=data), state_0
 
-        return tau_component, (state_0, x_0, log_q_x_0)
+    jac_Omega_0, s_0 = jax.jacrev(h_bar, has_aux=True)(unformatted_phi_0)
+    Omega_0, _ = h_bar(unformatted_phi_0)
 
+    carry = {'stats':{'Omega':Omega_0, 'jac_Omega_0':jac_Omega_0}, 
+            's':s_0, 
+            'theta':theta,
+            'key':key_0}
 
-    (tau_0, (state_0, x_0, log_q_x_0)), Omega_0 = jax.vmap(jax.value_and_grad(
-                                                                        compute_tau_component, 
-                                                                        argnums=(1,)), 
-                                                        in_axes = (0, None))(
-                                                                        jax.random.split(key_0, num_samples), 
-                                                                        unformatted_phi_0)
-
-    carry = {'state':tree_get_idx(0, state_0), 
-                }
-    return (tau_0, Omega_0, tree_get_idx(0, state_0), x_0, log_q_x_0)
+    return carry
 
 def update_gradient_IS(
         carry_tm1, 
@@ -339,12 +333,12 @@ def update_gradient_IS(
         h_t, h_vjp = jax.vjp(partial(h_bar, key_t=key_t), unformatted_phi_t)
         unweighted_term = Omega_tm1 + h_t
         Omega_t = weights @ unweighted_term
+        w_t_jac_Omega_tm1 = tree_map(lambda x: x.T @ weights, jac_Omega_tm1)
 
+        jac_Omega_t = tree_map(lambda x,y,z: x + y + z, 
+                            weights_vjp(unweighted_term)[0], h_vjp(weights)[0], w_t_jac_Omega_tm1)
 
-        jac_Omega_t = tree_map(lambda x,y,z,w: x + y + z.T @ w, 
-                            weights_vjp(unweighted_term)[0], h_vjp(weights)[0], jac_Omega_tm1.T, weights)
-
-        return Omega_t, jac_Omega_t
+        return Omega_t, jac_Omega_t, s_t
                     
 
     Omega_t, jac_Omega_t, s_t = jax.vmap(update)(random.split(key_t, num_samples))
