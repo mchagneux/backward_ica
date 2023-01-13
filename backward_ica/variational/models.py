@@ -162,6 +162,10 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         print('-- in backwd:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.backwd,))))
         print('-- in filt:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.filt)))
     
+        
+    def empty_state(self):
+        params = self.format_params(self.get_random_params(jax.random.PRNGKey(0)))
+        return self.init_state(jnp.empty((self.obs_dim,)), params)
 
 @register_pytree_node_class
 @dataclass(init=True)
@@ -260,6 +264,13 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
     def compute_state_seq(self, obs_seq, compute_up_to, formatted_params):
         formatted_params.compute_covs()
         return super().compute_state_seq(obs_seq, compute_up_to, formatted_params)
+
+    def empty_state(self):
+        eta1 = jnp.empty((self.state_dim,))
+        eta2 = jnp.empty((self.state_dim, self.state_dim))
+        return Gaussian.Params.from_nat_params(eta1, eta2)
+        
+
 
 BackwdVar = namedtuple('BackwdVar', ['base', 'tilde'])
 
@@ -443,8 +454,6 @@ class JohnsonForward(JohnsonSmoother, TwoFilterSmoother):
 
         return vmap(lambda x:x.mean)(filt_params_seq), vmap(lambda x:x.scale.cov)(filt_params_seq)
         
-
-
 
 
 

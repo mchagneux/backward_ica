@@ -76,6 +76,7 @@ class BackwardSmoother(metaclass=ABCMeta):
 
         return tree_prepend(init_state, state_seq)
 
+    
     def compute_filt_params_seq(self, state_seq, formatted_params):
         return vmap(self.filt_params_from_state, in_axes=(0,None))(state_seq, formatted_params)
 

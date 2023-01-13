@@ -29,10 +29,6 @@ def moving_window(a, size: int):
 
 
 
-
-
-
-
 _conditionnings = {'diagonal':lambda param, d: jnp.diag(param),
                 'sym_def_pos': lambda param, d: mat_from_chol_vec(param, d) + jnp.eye(d),
                 None:lambda x, d:x,
@@ -68,21 +64,20 @@ def elbo_h_t_online(data, models):
     q = models['q']
 
     x_t = data['t']['x']
-    log_q_t_x_t = data['t']['log_q_x']
 
     y_t = data['t']['y']
     
     x_tm1 = data['tm1']['x']
-    log_q_tm1_x_tm1 = data['tm1']['log_q_x']
     theta = data['tm1']['theta']
     params_q_tm1_t = data['tm1']['params_backwd']
-    
+    params_q_tm1 = data['tm1']['params_filt']
+    params_q_t = data['t']['params_filt']
 
     return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
             + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
             - q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) \
-            + log_q_tm1_x_tm1 \
-            - log_q_t_x_t
+            + q.filt_dist.logpdf(x_t, params_q_t) \
+            - q.filt_dist.logpdf(x_tm1, params_q_tm1)
 
 
 
@@ -226,7 +221,7 @@ def get_defaults(args):
         args.transition_matrix_conditionning = 'diagonal'
         if not(hasattr(args, 'transition_bias')):
             args.transition_bias = False
-        args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
+        args.range_transition_map_params = [0.99,1] # range of the components of the transition matrix
 
     else:
         args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
@@ -251,11 +246,11 @@ def get_defaults(args):
 
     if 'neural_backward' in args.model:
         ## variational family
-        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (100,) # number of layers in the GRU which updates the variational filtering dist
         args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     elif 'johnson' in args.model:
-        args.update_layers = (8,8)
+        args.update_layers = (100,)
         args.anisotropic = 'anisotropic' in args.model
 
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 

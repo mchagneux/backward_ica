@@ -19,8 +19,9 @@ def main(args, method_name):
     os.makedirs(eval_dir, exist_ok=True)
     utils.save_args(args, 'args', eval_dir)
 
-    if method_name == 'johnson_backward':
+    if 'johnson_backward' in method_name:
         pretty_name = 'Conjugate Backward'
+        epoch_nb = 'best'
 
     elif method_name == 'johnson_forward':
         pretty_name = 'Conjugate Forward'
@@ -34,15 +35,18 @@ def main(args, method_name):
     elif method_name == 'ffbsi':
         pretty_name = 'FFBSi'
 
-    elif method_name.split('_')[0] == 'linear':
+    elif method_name.split('__')[0] == 'linear':
         pretty_name = 'Linear'
-        epoch_nb = int(method_name.split('_')[1])
-        method_name = 'linear'
+        if method_name.split('__')[1].isdigit():
+            epoch_nb = int(method_name.split('__')[1])
+        else: 
+            epoch_nb = 'best'
+        # method_name = 'linear'
 
 
     
 
-    metrics = True
+    metrics = False
     visualize_init = False
     lag = None
 
@@ -115,6 +119,7 @@ def main(args, method_name):
 
     elif 'ffbsi' in method_name or method_name == 'linear_0':
         pass        
+
     else: 
         method_dir = os.path.join(args.exp_dir, method_name)
 
@@ -198,9 +203,9 @@ if __name__ == '__main__':
 
     import argparse 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_dir',type=str, default='')
-    parser.add_argument('--models', type=str, nargs='+', default=['linear_10','linear_15','linear_195'])
-    parser.add_argument('--n_slices', type=int, default=250)     
+    parser.add_argument('--exp_dir',type=str, default='experiments/p_chaotic_rnn/2022_12_21__16_29_10')
+    parser.add_argument('--models', type=str, nargs='+', default=['external_campbell', 'johnson_backward'])
+    parser.add_argument('--n_slices', type=int, default=50)     
     parser.add_argument('--rmse', action='store_true')
     parser.add_argument('--plot', action='store_true')
     parser.add_argument('--num_seqs', type=int, default=1)
@@ -208,9 +213,9 @@ if __name__ == '__main__':
     parser.add_argument('--n_ffbsi', type=int, default=2000)
 
     args = parser.parse_args()
-    args.load_seq = False
-    args.plot = False 
-    args.filter_rmse = False 
+    args.load_seq = True
+    args.plot = True 
+    args.filter_rmse = True 
     for method_name in args.models:
         main(args,
             method_name)

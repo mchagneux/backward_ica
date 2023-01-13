@@ -7,7 +7,7 @@ import backward_ica.stats.hmm as hmm
 import backward_ica.variational as variational
 import backward_ica.stats as stats
 from backward_ica.training import SVITrainer, define_frozen_tree
-
+# jax.config.update('jax_disable_jit', True)
 
     
 def main(args):
@@ -69,43 +69,40 @@ if __name__ == '__main__':
     import argparse
     import os 
     from datetime import datetime
-
     date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='linear_online')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_linear/2022_11_03__16_07_11')
+    parser.add_argument('--model', type=str, default='linear__online')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_linear/2022_12_19__23_46_39')
 
     parser.add_argument('--sweep_sequences', action='store_true')
     parser.add_argument('--online', action='store_true')
     parser.add_argument('--num_fits', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=100)
+    parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--learning_rate', type=float, default=0.01)
     parser.add_argument('--num_epochs', type=int, default=200)
-    parser.add_argument('--num_samples', type=int, default=1)
+    parser.add_argument('--num_samples', type=int, default=10)
     
-    parser.add_argument('--optimizer', type=str, default='adamw')
+    parser.add_argument('--optimizer', type=str, default='adam')
     parser.add_argument('--store_every', type=int, default=0)
     parser.add_argument('--seed', type=int, default=1)
 
     args = parser.parse_args()
 
-
-
+    # args.online = True
     args.full_mc = '_mc' in args.model # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
-    args.frozen_params  = args.model.split('__')[1:] # list of parameter groups which are not learnt
+    args.frozen_params  = args.model.split('freeze__')[1:] # list of parameter groups which are not learnt
     args.save_dir = os.path.join(args.exp_dir, args.model)
     os.makedirs(args.save_dir, exist_ok=True)
 
-    
+    args.model = args.model.split('__')[0]
+
     args = utils.get_defaults(args)
 
     utils.save_args(args, 'args', args.save_dir)
     args_p = utils.load_args('args', args.exp_dir)
     args.state_dim, args.obs_dim = args_p.state_dim, args_p.obs_dim
-    if args.model.split('_')[0] == 'linear': 
-        args.model = 'linear'
 
     main(args)
 
