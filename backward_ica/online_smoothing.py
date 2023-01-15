@@ -46,7 +46,7 @@ class OnlineVariationalAdditiveSmoothing:
                                 out_shape=self.additive_functional.out_shape,
                                 state_dim=self.p.state_dim,
                                 obs_dim=self.p.obs_dim,
-                                dummy_state=self.q.dummy_state())
+                                dummy_state=self.q.empty_state())
 
                     
 
@@ -72,8 +72,6 @@ class OnlineVariationalAdditiveSmoothing:
     def batch_compute(self, key, obs_seq, theta, phi):
 
         theta.compute_covs()
-        phi = self.q.format_params(phi)
-        phi.compute_covs()
 
         T = len(obs_seq) - 1 # T + 1 observations
         keys = jax.random.split(key, T+1) # T+1 keys 
@@ -81,20 +79,19 @@ class OnlineVariationalAdditiveSmoothing:
 
         def _step(carry, x):
             t, key_t, y_t = x
-            input_t = {'t':t, 'key':key_t, 'y':y_t, 'phi':phi}
+            input_t = {'t':t, 'key':key_t, 'y':y_t, 'phi':phi}            
+            carry['theta'] = theta
             carry_t, output_t = self.compute(carry, input_t)
-            carry_t['theta'] = theta
             return carry_t, output_t
         
 
         carry_m1 = self.init_carry(phi)
-        carry_m1['theta'] = theta
 
-        tau_T = lax.scan(_step, 
+        stats = lax.scan(_step, 
                         init=carry_m1,
-                        xs=(timesteps, keys, obs_seq))[0]['tau']
+                        xs=(timesteps, keys, obs_seq), unroll=2)[0]['stats']
                         
-        return jnp.mean(tau_T, axis=0) / (T+1)
+        return tree_map(partial(jnp.mean, axis=0), stats)
 
 
 def init_carry(unformatted_params, state_dim, obs_dim, num_samples, out_shape, empty_state):
@@ -114,26 +111,7 @@ def init_carry(unformatted_params, state_dim, obs_dim, num_samples, out_shape, e
             'phi':unformatted_params,
             'tau':dummy_tau}
 
-
-def init_carry_gradients(unformatted_params, state_dim, obs_dim, num_samples, out_shape, empty_state):
-
-    dummy_tau = jnp.empty((num_samples, out_shape))
-    dummy_x = jnp.empty((num_samples, state_dim)) 
-    dummy_y = jnp.empty((obs_dim,))
-    dummy_log_q_x = jnp.empty((num_samples,))
-    dummy_state = empty_state
-    dummy_grads = jax.vmap(jax.grad(lambda x, params: x), argnums=(1,))(dummy_x, unformatted_params)
-
-    return {'state':dummy_state, 
-            'y':dummy_y,
-            'log_q_x':dummy_log_q_x, 
-            'x':dummy_x, 
-            'phi':unformatted_params,
-            'tau':dummy_tau,
-            'omega':dummy_grads}
-
-
-def init_standard(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
+def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
 
     y_0 = input_0['y']
@@ -234,45 +212,54 @@ def update_IS(
 
     return carry_t
 
-def init_gradients(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
+
+def init_carry_gradients(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
+
+    dummy_key = jax.random.PRNGKey(0)
+    dummy_Omega = jnp.empty((num_samples, *out_shape))
+    dummy_jac_Omega = jax.jacrev(lambda phi:dummy_Omega)(unformatted_params)
+
+    carry = {'s': dummy_state, 
+            'key':dummy_key, 
+            'stats':{'Omega':dummy_Omega, 'jac_Omega':dummy_jac_Omega}}
+
+    return carry
+
+def init_gradients_reparam(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
 
     y_0 = input_0['y']
     key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
-
-    theta = carry_m1['theta']
 
     h = partial(h_0, models={'p':p, 'q':q})
 
     def h_bar(unformatted_phi_0):
 
         phi_0 = q.format_params(unformatted_phi_0)
-        state_0 = q.init_state(y_0, phi_0)
-        filt_params = q.filt_params_from_state(state_0, phi_0)
-        x_0 = jax.vmap(q.filt_dist.sample)(jax.random.split(key_0, num_samples), filt_params)
-        log_q_x_0 = q.filt_dist.logpdf(x_0, filt_params)
+        s_0 = q.init_state(y_0, phi_0)
+        filt_params = q.filt_params_from_state(s_0, phi_0)
+
+        x_0 = jax.vmap(q.filt_dist.sample, in_axes=(0,None))(jax.random.split(key_0, num_samples), filt_params)
+        log_q_x_0 = jax.vmap(q.filt_dist.logpdf, in_axes=(0,None))(x_0, filt_params)
 
         data_0 = {'x':x_0,
                 'log_q_x':log_q_x_0,
-                'state':state_0,
-                'phi':phi_0,
                 'y':y_0}
 
         data = {'tm1': carry_m1, 't':data_0}
 
-        return named_vmap(h, axes_names={'t':{'x':0}}, input_dict=data), state_0
+        return named_vmap(h, axes_names={'t':{'x':0}}, input_dict=data), s_0
 
     jac_Omega_0, s_0 = jax.jacrev(h_bar, has_aux=True)(unformatted_phi_0)
     Omega_0, _ = h_bar(unformatted_phi_0)
 
-    carry = {'stats':{'Omega':Omega_0, 'jac_Omega_0':jac_Omega_0}, 
+    carry = {'stats':{'Omega':Omega_0, 'jac_Omega':jac_Omega_0}, 
             's':s_0, 
-            'theta':theta,
             'key':key_0}
 
     return carry
 
-def update_gradient_IS(
+def update_gradients_reparam_IS(
         carry_tm1, 
         input_t:HMM, 
         p:HMM, 
@@ -320,6 +307,7 @@ def update_gradient_IS(
             'theta':theta}
 
         data_tm1 = {
+            'theta':theta,
             'x':x_tm1, 
             'params_filt':params_q_tm1,
             'params_backwd':params_q_tm1_t}
@@ -348,8 +336,7 @@ def update_gradient_IS(
     carry_t = {'stats':{'Omega':Omega_t, 
                         'jac_Omega':jac_Omega_t}, 
                 's':s_t,
-                'key':key_t,
-                'theta':theta}
+                'key':key_t}
 
     return carry_t
     
@@ -441,7 +428,7 @@ def update_PaRIS(carry_tm1,
 OnlineNormalizedISELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(          
                                                     p, 
                                                     q,
-                                                    init_standard,
+                                                    init_IS,
                                                     update_IS,
                                                     online_elbo_functional(p,q),
                                                     exp_and_normalize,
@@ -451,17 +438,27 @@ OnlineNormalizedISELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoo
 OnlineISELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(          
                                                     p, 
                                                     q,
-                                                    init_standard,
+                                                    init_IS,
                                                     update_IS,
                                                     online_elbo_functional(p,q),
                                                     None,
                                                     num_samples)
 
 OnlineParisELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(          
+
                                             p, 
                                             q,
-                                            init_standard,
+                                            init_IS,
                                             partial(update_PaRIS, num_paris_samples=2),
                                             online_elbo_functional(p,q),
                                             exp_and_normalize,
                                             num_samples)
+
+
+ELBOGradsReparam = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(p, q, 
+                                                                init_carry_gradients, 
+                                                                init_gradients_reparam, 
+                                                                update_gradients_reparam_IS,
+                                                                online_elbo_functional(p,q),
+                                                                exp_and_normalize,
+                                                                num_samples)
