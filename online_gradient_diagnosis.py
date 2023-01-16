@@ -43,9 +43,9 @@ seq_length = 50
 key = jax.random.PRNGKey(5)
 
 
-path = 'experiments/online/grad_computation_eval'
+path = 'experiments/online/grad_computation_fixed_V_tm1'
 
-def experiment(key, exp_id):
+def experiment(key, exp_id, exp_name):
 
     oracle_elbo = LinearGaussianELBO(p, q)
     online_elbo = OnlineNormalizedISELBO(p, q, num_samples)
@@ -130,8 +130,8 @@ def experiment(key, exp_id):
     online_elbo_errors_2 = (online_elbos_2 - oracle_elbo) / jnp.abs(oracle_elbo)
     online_grad_elbo_errors_2 = (jnp.linalg.norm(online_grads_elbo_2, axis=1, ord=1) - norm_oracle_grad) / norm_oracle_grad
 
-    elbo_errors = pd.DataFrame(jnp.array([offline_elbo_errors, online_elbo_errors, online_elbo_errors_2]).T, columns=['Offline', 'Online', 'Online 2'])
-    grad_elbo_errors = pd.DataFrame(jnp.array([offline_grad_elbo_errors, online_grad_elbo_errors, online_grad_elbo_errors_2]).T, columns=['Offline', 'Online', 'Online 2'])
+    elbo_errors = pd.DataFrame(jnp.array([offline_elbo_errors, online_elbo_errors, online_elbo_errors_2]).T, columns=['Offline', 'Online', f'{exp_name}'])
+    grad_elbo_errors = pd.DataFrame(jnp.array([offline_grad_elbo_errors, online_grad_elbo_errors, online_grad_elbo_errors_2]).T, columns=['Offline', 'Online', f'{exp_name}'])
 
     elbo_errors.plot(kind='box')
     plt.savefig(os.path.join(path, f'elbo_errors_{exp_id}'))
@@ -139,9 +139,9 @@ def experiment(key, exp_id):
     grad_elbo_errors.plot(kind='box')
     plt.savefig(os.path.join(path, f'grad_elbo_errors_{exp_id}'))
 
-for exp_id in range(5):
+for exp_id in range(3):
     key, subkey = jax.random.split(key, 2)
-    experiment(subkey, exp_id)
+    experiment(subkey, exp_id, 'online V_tm1 fixed')
 
 # elbo_errors.plot(kind='box')
 # elbo, grad_elbo = oracle_elbo_and_grad_func(obs_seq)

@@ -206,14 +206,15 @@ def init_carry_gradients_reparam(unformatted_params, state_dim, obs_dim, num_sam
     dummy_jac_Omega = jax.jacrev(lambda phi:dummy_Omega)(unformatted_params)
 
     carry = {'key':dummy_key, 
-            'stats':{'Omega':dummy_Omega, 'jac_Omega':dummy_jac_Omega}}
+            'stats':{'Omega':dummy_Omega, 'jac_Omega':dummy_jac_Omega},
+            's': dummy_state}
 
     return carry
 
 def init_gradients_reparam(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
 
-    y_0 = input_0['y'][0]
+    y_0 = input_0['y']
     key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
 
     h = partial(h_0, models={'p':p, 'q':q})
@@ -231,14 +232,15 @@ def init_gradients_reparam(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, nu
 
         data = {'tm1': carry_m1, 't':data_0}
 
-        return h(data)
+        return h(data), s_0
 
-    Omega_0, jac_Omega_0 = jax.vmap(jax.value_and_grad(h_bar, argnums=0), in_axes=(None, 0))(
+    (Omega_0, s_0), jac_Omega_0  = jax.vmap(jax.value_and_grad(h_bar, argnums=0, has_aux=True), in_axes=(None, 0))(
                                                                             unformatted_phi_0, 
                                                                             jax.random.split(key_0, num_samples))
 
     carry = {'stats':{'Omega':Omega_0, 'jac_Omega':jac_Omega_0}, 
-            'key':key_0}
+            'key':key_0,
+            's':tree_get_idx(0, s_0)}
 
     return carry
 
@@ -253,18 +255,17 @@ def update_gradients_reparam(
 
     h = partial(h, models={'p':p, 'q':q})
 
-    t, key_t, y, unformatted_phi_t = input_t['t'], input_t['key'], input_t['y'], input_t['phi']
+    t, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['key'], input_t['y'], input_t['phi']
 
-    y_t = y[t]
     
-    base_key_tm1, stats_tm1, theta = carry_tm1['key'], carry_tm1['stats'], carry_tm1['theta']
+    base_key_tm1, stats_tm1, s_tm1, theta = carry_tm1['key'], carry_tm1['stats'], carry_tm1['s'], carry_tm1['theta']
 
     Omega_tm1 = stats_tm1['Omega'] # d-dimensional
     jac_Omega_tm1 = stats_tm1['jac_Omega'] # N x d dimensional
 
     def w_bar(unformatted_phi, key_t):
         phi = q.format_params(unformatted_phi)
-        s_tm1 = q.get_state(t-1, y, phi)
+        # s_tm1 = q.get_state(t-1, y, phi)
         s_t = q.new_state(y_t, s_tm1, phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         params_q_tm1 = q.filt_params_from_state(s_tm1, phi)
@@ -273,12 +274,12 @@ def update_gradients_reparam(
         x_t = q.filt_dist.sample(key_t, params_q_t)
 
         return normalizer(jax.vmap(lambda x_tm1: q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) \
-                                                            - q.filt_dist.logpdf(x_tm1, params_q_tm1))(x_tm1))
+                                                            - q.filt_dist.logpdf(x_tm1, params_q_tm1))(x_tm1)), s_t
 
     def h_bar(unformatted_phi, key_t):
         
         phi = q.format_params(unformatted_phi)
-        s_tm1 = q.get_state(t-1, y, phi)
+        # s_tm1 = q.get_state(t-1, y, phi)
         s_t = q.new_state(y_t, s_tm1, phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         params_q_tm1 = q.filt_params_from_state(s_tm1, phi)
@@ -303,24 +304,25 @@ def update_gradients_reparam(
 
     def update(key_t):
             
-        weights, weights_vjp = jax.vjp(partial(w_bar, key_t=key_t), unformatted_phi_t)
+        weights, weights_vjp, s_t = jax.vjp(partial(w_bar, key_t=key_t), unformatted_phi_t, has_aux=True)
         h_t, h_vjp = jax.vjp(partial(h_bar, key_t=key_t), unformatted_phi_t)
         unweighted_term = Omega_tm1 + h_t
         Omega_t = weights @ unweighted_term
         w_t_jac_Omega_tm1 = tree_map(lambda x: x.T @ weights, jac_Omega_tm1)
 
         jac_Omega_t = tree_map(lambda x,y,z: x + y + z, 
-                            weights_vjp(unweighted_term)[0], h_vjp(weights)[0], w_t_jac_Omega_tm1)
+                            weights_vjp(unweighted_term)[0], h_vjp(weights)[0],  w_t_jac_Omega_tm1)
 
-        return Omega_t, jac_Omega_t
+        return Omega_t, jac_Omega_t, s_t
                     
 
-    Omega_t, jac_Omega_t = jax.vmap(update)(random.split(key_t, num_samples))
+    Omega_t, jac_Omega_t, s_t = jax.vmap(update)(random.split(key_t, num_samples))
 
 
     carry_t = {'stats':{'Omega':Omega_t, 
                         'jac_Omega':jac_Omega_t}, 
-                'key':key_t}
+                'key':key_t,
+                's':tree_get_idx(0, s_t)}
 
     return carry_t
 
@@ -560,8 +562,7 @@ OnlineParisELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(
                                             exp_and_normalize,
                                             num_samples)
 
-
-ELBOGradsReparam = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(p, q,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+OnlineELBOAndGrads = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(p, q,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
                                                                 init_carry_gradients_reparam, 
                                                                 init_gradients_reparam, 
                                                                 update_gradients_reparam,
