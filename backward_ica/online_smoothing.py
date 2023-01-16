@@ -91,31 +91,31 @@ class OnlineVariationalAdditiveSmoothing:
                         init=carry_m1,
                         xs=(timesteps, keys))[0]['stats']
                         
-        return tree_map(partial(jnp.mean, axis=0), stats)
+        return tree_map(lambda x: jnp.mean(x, axis=0) / (T+1), stats)
 
 
-def init_carry(unformatted_params, state_dim, obs_dim, num_samples, out_shape, empty_state):
+def init_carry(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
 
 
-    dummy_tau = jnp.empty((num_samples, out_shape))
+    dummy_tau = jnp.empty((num_samples, *out_shape))
     dummy_x = jnp.empty((num_samples, state_dim)) 
     dummy_y = jnp.empty((obs_dim,))
     dummy_log_q_x = jnp.empty((num_samples,))
-    dummy_state = empty_state
 
 
     return {'state':dummy_state, 
             'y':dummy_y,
             'log_q_x':dummy_log_q_x, 
             'x':dummy_x, 
-            'phi':unformatted_params,
-            'tau':dummy_tau}
+            'stats':{'tau':dummy_tau}}
 
 def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
 
-    y_0 = input_0['y']
-    key_0, phi_0 = input_0['key'], input_0['phi']
+    y_0 = input_0['y'][0]
+    key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
+
+    phi_0 = q.format_params(unformatted_phi_0)
 
     state_0 = q.init_state(y_0, phi_0)
 
@@ -127,7 +127,6 @@ def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
     data_0 = {'x':x_0,
             'log_q_x':log_q_x_0,
             'state':state_0,
-            'phi':phi_0,
             'y':y_0}
 
     data = {'tm1': carry_m1, 't':data_0}
@@ -136,7 +135,7 @@ def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
                     axes_names={'t':{'x':0}}, 
                     input_dict=data)
 
-    data_0['tau'] = tau_0
+    data_0['stats'] = {'tau': tau_0}
     
     return data_0
 
@@ -151,63 +150,51 @@ def update_IS(
 
 
     state_tm1 = carry_tm1['state']
-    phi_tm1 = carry_tm1['phi']
 
-    params_q_tm1_t = q.backwd_params_from_state(state_tm1, phi_tm1)
 
-    key_t, y_t, phi_t = input_t['key'], input_t['y'], input_t['phi']
+    t, key_t, y, unformatted_phi_t = input_t['t'], input_t['key'], input_t['y'], input_t['phi']
+
+    phi_t = q.format_params(unformatted_phi_t)
+    params_q_tm1_t = q.backwd_params_from_state(state_tm1, phi_t)
+
+
+    y_t = y[t]
 
     state_t = q.new_state(y_t, state_tm1, phi_t)
 
-    data_tm1 = {'x':carry_tm1['x'],
-                'log_q_x':carry_tm1['log_q_x'],
-                'tau':carry_tm1['tau'],
-                'theta':carry_tm1['theta'],
-                'params_backwd':params_q_tm1_t}
+    tau_tm1 = carry_tm1['stats']['tau']
 
     h = partial(h, models={'p':p, 'q':q})
 
-    def compute_tau_t(data_t):
+    def update(x_t, log_q_t_x_t):
 
-        def compute_sum_term(data_tm1):
+        data_t = {'x':x_t,'log_q_x':log_q_t_x_t, 'y':y_t}
 
-            importance_log_weight = q.backwd_kernel.logpdf(data_tm1['x'], data_t['x'], params_q_tm1_t) \
-                                    - data_tm1['log_q_x']
-
-            data = {'tm1':data_tm1, 
-                    't': data_t}
-
-            sum_term = data_tm1['tau'] + h(data)
-
-            return importance_log_weight, sum_term
-
-        importance_log_weights, sum_terms = named_vmap(compute_sum_term, 
-                                                        axes_names={'x':0, 'log_q_x':0, 'tau':0}, 
-                                                        input_dict=data_tm1)
-
-        normalized_importance_weights = normalizer(importance_log_weights)
-
-        return normalized_importance_weights @ sum_terms
+        def weights(x_tm1, log_q_tm1_x_tm1):
+            return q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) - log_q_tm1_x_tm1
         
+        def _h(x_tm1, log_q_tm1_x_tm1):
+            data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'params_backwd': params_q_tm1_t, 'theta':carry_tm1['theta']}
+            data = {'t':data_t, 'tm1':data_tm1}
+            return h(data)
+        
+        w_tm1_t = jax.vmap(weights)(carry_tm1['x'], carry_tm1['log_q_x'])
 
+        h_tm1_t = jax.vmap(_h)(carry_tm1['x'], carry_tm1['log_q_x'])
+
+        return normalizer(w_tm1_t) @ (tau_tm1 + h_tm1_t)
     
     x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
                                             key_t, 
                                             q.filt_params_from_state(state_t, phi_t),
                                             num_samples)
-
-    data_t = {'state':state_t, 
-            'x':x_t, 
-            'y':y_t,
-            'log_q_x':log_q_t_x_t}
             
-    tau_t = named_vmap(compute_tau_t, axes_names={'x':0,'log_q_x':0}, input_dict=data_t)
+    tau_t = jax.vmap(update)(x_t, log_q_t_x_t)
 
     carry_t = {'state':state_t, 
             'x':x_t, 
             'y':y_t,
-            'phi':phi_t,
-            'tau': tau_t,
+            'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
 
     return carry_t
@@ -223,26 +210,10 @@ def init_carry_gradients_reparam(unformatted_params, state_dim, obs_dim, num_sam
 
     return carry
 
-
-
-def init_carry_gradients_fisher(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
-
-    dummy_x = jnp.empty((num_samples, state_dim))
-    dummy_Omega = jnp.empty((num_samples, *out_shape))
-    dummy_jac_Omega = jax.jacrev(lambda phi:dummy_Omega)(unformatted_params)
-
-    carry = {'s': dummy_state, 
-            'x':dummy_x, 
-            'stats':{'Omega':dummy_Omega, 'jac_Omega':dummy_jac_Omega}}
-
-    return carry
-
-
 def init_gradients_reparam(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
 
-    y = input_0['y']
-    y_0 = y[0]
+    y_0 = input_0['y'][0]
     key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
 
     h = partial(h_0, models={'p':p, 'q':q})
@@ -250,7 +221,7 @@ def init_gradients_reparam(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, nu
     def h_bar(unformatted_phi_0, key):
 
         phi_0 = q.format_params(unformatted_phi_0)
-        s_0 = q.get_state(0, y, phi_0)
+        s_0 = q.get_state(0, y_0, phi_0)
         filt_params = q.filt_params_from_state(s_0, phi_0)
 
         x_0 = q.filt_dist.sample(key, filt_params)
@@ -271,7 +242,7 @@ def init_gradients_reparam(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, nu
 
     return carry
 
-def update_gradients_reparam_IS(
+def update_gradients_reparam(
         carry_tm1, 
         input_t:HMM, 
         p:HMM, 
@@ -294,7 +265,7 @@ def update_gradients_reparam_IS(
     def w_bar(unformatted_phi, key_t):
         phi = q.format_params(unformatted_phi)
         s_tm1 = q.get_state(t-1, y, phi)
-        s_t = q.get_state(t, y, phi)
+        s_t = q.new_state(y_t, s_tm1, phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         params_q_tm1 = q.filt_params_from_state(s_tm1, phi)
         params_q_tm1_t = q.backwd_params_from_state(s_tm1, phi)
@@ -308,7 +279,7 @@ def update_gradients_reparam_IS(
         
         phi = q.format_params(unformatted_phi)
         s_tm1 = q.get_state(t-1, y, phi)
-        s_t = q.get_state(t, y, phi)
+        s_t = q.new_state(y_t, s_tm1, phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         params_q_tm1 = q.filt_params_from_state(s_tm1, phi)
         params_q_tm1_t = q.backwd_params_from_state(s_tm1, phi)
@@ -354,6 +325,19 @@ def update_gradients_reparam_IS(
     return carry_t
 
 
+
+def init_carry_gradients_fisher(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
+
+    dummy_x = jnp.empty((num_samples, state_dim))
+    dummy_Omega = jnp.empty((num_samples, *out_shape))
+    dummy_jac_Omega = jax.jacrev(lambda phi:dummy_Omega)(unformatted_params)
+
+    carry = {'s': dummy_state, 
+            'x':dummy_x, 
+            'stats':{'Omega':dummy_Omega, 'jac_Omega':dummy_jac_Omega}}
+
+    return carry
+
 def init_gradients_fisher(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
 
@@ -377,7 +361,6 @@ def init_gradients_fisher(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num
 
     return carry
 
-    
 def update_gradients_fisher(
         carry_tm1, 
         input_t:HMM, 
@@ -458,6 +441,9 @@ def update_gradients_fisher(
                 'key':key_t}
 
     return carry_t
+
+
+
 
 def update_PaRIS(carry_tm1, 
                 input_t:HMM, 
@@ -547,6 +533,7 @@ def update_PaRIS(carry_tm1,
 OnlineNormalizedISELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(          
                                                     p, 
                                                     q,
+                                                    init_carry,
                                                     init_IS,
                                                     update_IS,
                                                     online_elbo_functional(p,q),
@@ -577,7 +564,7 @@ OnlineParisELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(
 ELBOGradsReparam = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(p, q,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
                                                                 init_carry_gradients_reparam, 
                                                                 init_gradients_reparam, 
-                                                                update_gradients_reparam_IS,
-                                                                online_elbo_functional(p,q),
+                                                                update_gradients_reparam,
+                                                                online_elbo_functional_for_grad(p,q),
                                                                 exp_and_normalize,
                                                                 num_samples)

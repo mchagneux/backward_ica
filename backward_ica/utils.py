@@ -70,14 +70,37 @@ def elbo_h_t_online(data, models):
     x_tm1 = data['tm1']['x']
     theta = data['tm1']['theta']
     params_q_tm1_t = data['tm1']['params_backwd']
+
+    log_q_t_x_t = data['t']['log_q_x']
+    log_q_tm1_x_tm1 = data['tm1']['log_q_x']
+    
+    return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
+            + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
+            + log_q_tm1_x_tm1 \
+            - log_q_t_x_t \
+            - q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) \
+
+
+def elbo_h_t_online_for_grad(data, models):
+
+    p = models['p']
+    q = models['q']
+
+    x_t = data['t']['x']
+
+    y_t = data['t']['y']
+    
+    x_tm1 = data['tm1']['x']
+    theta = data['tm1']['theta']
+    params_q_tm1_t = data['tm1']['params_backwd']
     params_q_tm1 = data['tm1']['params_filt']
     params_q_t = data['t']['params_filt']
 
     return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
             + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
             - q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) \
-            + q.filt_dist.logpdf(x_t, params_q_t) \
-            - q.filt_dist.logpdf(x_tm1, params_q_tm1)
+            - q.filt_dist.logpdf(x_t, params_q_t) \
+            + q.filt_dist.logpdf(x_tm1, params_q_tm1)
 
 
 
@@ -169,7 +192,11 @@ class AdditiveFunctional:
 online_elbo_functional = lambda p, q: AdditiveFunctional(h_t=elbo_h_t_online, 
                                                         out_shape=(), 
                                                         h_0=elbo_h_0_online)
-                                                        
+
+online_elbo_functional_for_grad = lambda p, q: AdditiveFunctional(h_t=elbo_h_t_online_for_grad, 
+                                                        out_shape=(), 
+                                                        h_0=elbo_h_0_online)
+
 offline_elbo_functional = lambda p, q: AdditiveFunctional(h_0=elbo_h_0_offline, 
                                                         h_t=elbo_h_t_offline, 
                                                         h_T=elbo_h_T_offline, 
