@@ -35,6 +35,7 @@ q = LinearGaussianHMM(state_dim=d_x,
 
 num_samples = 100
 num_replicas = 50
+seq_length = 2
 
 oracle_elbo = LinearGaussianELBO(p, q)
 online_elbo_and_grads = ELBOGradsReparam(p, q, num_samples)
@@ -82,7 +83,7 @@ def offline_elbo_and_grad_func(key, obs_seq):
 
 key, key_seq = jax.random.split(key, 2)
 
-state_seq, obs_seq = p.sample_seq(key_seq, theta, 2)
+state_seq, obs_seq = p.sample_seq(key_seq, theta, seq_length)
 
 oracle_elbo, oracle_grad_elbo = oracle_elbo_and_grad_func(obs_seq)
 norm_oracle_grad = jnp.linalg.norm(oracle_grad_elbo, ord=1)

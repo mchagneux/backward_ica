@@ -77,6 +77,36 @@ class BackwardSmoother(metaclass=ABCMeta):
         return tree_prepend(init_state, state_seq)
 
     
+    def get_state(self, t, obs_seq, formatted_params):
+
+        timesteps = jnp.arange(0, len(obs_seq))
+        masks = timesteps <= t
+
+        def false_fun(t, obs, prev_state, params):
+            return prev_state
+
+        def true_fun(t, obs, prev_state, params):
+
+            def init(obs, prev_state, params):
+                return self.init_state(obs, params)
+            
+            def update(obs, prev_state, params):
+                return self.new_state(obs, prev_state, params)
+
+            return lax.cond(t > 0, update, init, obs, prev_state, params)
+
+        @jit
+        def _step(carry, x):
+            prev_state, params = carry
+            t, obs, mask = x
+            state = lax.cond(mask, true_fun, false_fun, 
+                            t, obs, prev_state, params)
+            return (state, params), state
+
+        state_seq = lax.scan(_step, init=(self.empty_state(), formatted_params), xs=(timesteps, obs_seq, masks))[1]
+
+        return tree_get_idx(t, state_seq)
+
     def compute_filt_params_seq(self, state_seq, formatted_params):
         return vmap(self.filt_params_from_state, in_axes=(0,None))(state_seq, formatted_params)
 
