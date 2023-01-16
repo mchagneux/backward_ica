@@ -1,24 +1,24 @@
 import subprocess
 import os
 from datetime import datetime 
-p_model = 'chaotic_rnn'
+p_model = 'linear'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['johnson_backward']
+q_models = ['linear__online', 'linear__offline']
 
 num_epochs = 2000
-learning_rate = 0.01
-dims = '5 5'
+learning_rate = 0.001
+dims = '2 2'
 load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
-loaded_seq = True
+loaded_seq = False
 
 batch_size = 1
 num_seqs = 1
-seq_length = 2000
+seq_length = 1000
 num_samples_list = [10]
 sweep_sequences = False 
 store_every = 0
-online_list = [False]
+online_list = [True,False]
 
 os.makedirs(base_dir, exist_ok=True) 
 

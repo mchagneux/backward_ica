@@ -73,8 +73,8 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='linear__online')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_linear/2022_12_19__23_46_39')
+    parser.add_argument('--model', type=str, default='linear')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_linear/2023_01_16__16_58_54')
 
     parser.add_argument('--sweep_sequences', action='store_true')
     parser.add_argument('--online', action='store_true')

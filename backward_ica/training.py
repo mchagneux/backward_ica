@@ -75,8 +75,7 @@ class SVITrainer:
         self.q.print_num_params()
         self.p = p 
         
-        self.theta_star = theta_star
-        self.formatted_theta_star = self.p.format_params(theta_star).compute_covs()
+        self.formatted_theta_star = self.p.format_params(theta_star)
         self.frozen_params = frozen_params
 
         if online: 
@@ -104,7 +103,7 @@ class SVITrainer:
                                                                     key, 
                                                                     data, 
                                                                     compute_up_to, 
-                                                                    self.p.format_params(self.theta_star), 
+                                                                    self.formatted_theta_star, 
                                                                     q.format_params(params))
 
         else: 
@@ -114,7 +113,7 @@ class SVITrainer:
                 self.loss = lambda key, data, compute_up_to, params: -self.elbo(
                                                                         data, 
                                                                         compute_up_to, 
-                                                                        self.p.format_params(self.theta_star), 
+                                                                        self.formatted_theta_star, 
                                                                         q.format_params(params))
             else: 
                 self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
@@ -123,7 +122,7 @@ class SVITrainer:
                                                                         key, 
                                                                         data, 
                                                                         compute_up_to, 
-                                                                        self.p.format_params(self.theta_star), 
+                                                                        self.formatted_theta_star, 
                                                                         q.format_params(params))
     
         if self.online: 
@@ -133,10 +132,9 @@ class SVITrainer:
                                     num_samples=num_samples)
             self.get_montecarlo_keys = get_keys
 
-            def online_update(elbo_carry, key, data, timestep, params):
-                jac_Omega_tm1 = elbo_carry['stats']['jac_Omega']
+            def online_update(carry, key, data, timestep, params):
+                jac_Omega_tm1 = carry['stats']['jac_Omega']
 
-                carry = elbo_carry
 
                 carry['theta'] = self.formatted_theta_star
 
@@ -147,13 +145,13 @@ class SVITrainer:
 
                 new_carry = self.elbo.compute(carry, input)[0]
 
-                Omega_t, jac_Omega_t = new_carry['Omega'], new_carry['jac_Omega']
+                Omega_t, jac_Omega_t = new_carry['stats']['Omega'], new_carry['stats']['jac_Omega']
 
-                neg_elbo_t = tree_map(lambda x: jnp.mean(x, axis=0) / (timestep + 1), Omega_t)
+                neg_elbo_t = tree_map(lambda x: -jnp.mean(x, axis=0) / (timestep + 1), Omega_t)
 
                 grad_neg_elbo_t = tree_map(lambda x,y: jnp.mean(x-y, axis=0) / (timestep+1), jac_Omega_tm1, jac_Omega_t)
                 
-                return elbo_carry, (neg_elbo_t, grad_neg_elbo_t)
+                return new_carry, (neg_elbo_t, grad_neg_elbo_t)
 
 
 
@@ -320,7 +318,7 @@ class SVITrainer:
                 with log_writer.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
-                        tf.summary.scalar('Minibatch ELBO', avg_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
+                        tf.summary.scalar('Minibatch ELBO', avg_elbo_batch[0], epoch_nb*len(batch_start_indices) + batch_nb)
 
             avg_elbos.append(avg_elbo_epoch)
             all_params.append(params)
