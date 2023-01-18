@@ -65,9 +65,7 @@ class SVITrainer:
                 num_samples=1, 
                 force_full_mc=False,
                 frozen_params=None,
-                online=False,
-                sweep_sequences=False,
-                pairs=False):
+                online=False):
 
         self.num_epochs = num_epochs
         self.batch_size = batch_size
@@ -92,9 +90,7 @@ class SVITrainer:
         zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
 
         self.optimizer = optax.chain(zero_grads_optimizer, base_optimizer)
-        self.sweep_sequences = sweep_sequences
         self.online = online
-        self.pairs = pairs
 
         if isinstance(self.q, TwoFilterSmoother):
             self.elbo = GeneralForwardELBO(self.p, self.q, num_samples)
@@ -124,74 +120,41 @@ class SVITrainer:
                                                                         compute_up_to, 
                                                                         self.formatted_theta_star, 
                                                                         q.format_params(params))
-    
-        if self.online: 
+        
+            if self.online: 
 
-            self.elbo = OnlineELBOAndGrads(p=self.p, 
-                                    q=self.q, 
-                                    num_samples=num_samples)
-            self.get_montecarlo_keys = get_keys
+                self.elbo = OnlineELBOAndGrads(p=self.p, 
+                                        q=self.q, 
+                                        num_samples=num_samples)
+                self.get_montecarlo_keys = get_keys
 
-            def online_update(carry, key, data, timestep, params):
-                jac_Omega_tm1 = carry['stats']['jac_Omega']
-
-
-                carry['theta'] = self.formatted_theta_star
-
-                input = {'key': key, 
-                        't':timestep, 
-                        'phi':params,
-                        'y':data}
-
-                new_carry = self.elbo.compute(carry, input)[0]
-
-                Omega_t, jac_Omega_t = new_carry['stats']['Omega'], new_carry['stats']['jac_Omega']
-
-                neg_elbo_t = tree_map(lambda x: -jnp.mean(x, axis=0) / (timestep + 1), Omega_t)
-
-                grad_neg_elbo_t = tree_map(lambda x,y: jnp.mean(x-y, axis=0) / (timestep+1), jac_Omega_tm1, jac_Omega_t)
-                
-                return new_carry, (neg_elbo_t, grad_neg_elbo_t)
+                def online_update(carry, key, data, timestep, params):
+                    jac_Omega_tm1 = carry['stats']['jac_Omega']
 
 
+                    carry['theta'] = self.formatted_theta_star
 
-            self.online_update = online_update
-            self.online_init = partial(self.elbo.init_carry, params=self.q.get_random_params(jax.random.PRNGKey(0)))
+                    input = {'key': key, 
+                            't':timestep, 
+                            'phi':params,
+                            'y':data}
 
-        if self.sweep_sequences and (not self.online): 
-            def step(carry, x):
-                def batch_step(params, opt_state, batch, keys):
-                    def timestep_step(carry, x):
-                        params, opt_state, batch, keys = carry 
-                        timestep = x
-                        neg_elbo_values, grads = vmap(value_and_grad(self.loss, argnums=3), 
-                                                        in_axes=(0,0,None,None))(
-                                                                            keys, 
-                                                                            batch, 
-                                                                            timestep, 
-                                                                            params)
+                    new_carry = self.elbo.compute(carry, input)[0]
 
-                        avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
-                        updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
-                        params = optax.apply_updates(params, updates)
-                        return (params, opt_state, batch, keys), -jnp.mean(neg_elbo_values)
+                    Omega_t, jac_Omega_t = new_carry['stats']['Omega'], new_carry['stats']['jac_Omega']
 
-                    (params, opt_state, _, _), neg_elbo_values = jax.lax.scan(timestep_step, 
-                                                                                init=(params, opt_state, batch, keys), 
-                                                                                xs=self.timesteps(batch.shape[1]))
+                    neg_elbo_t = tree_map(lambda x: -jnp.mean(x, axis=0) / (timestep + 1), Omega_t)
+
+                    grad_neg_elbo_t = tree_map(lambda x,y: jnp.mean(x-y, axis=0) / (timestep+1), jac_Omega_tm1, jac_Omega_t)
                     
-                    return params, opt_state, jnp.mean(neg_elbo_values)
+                    return new_carry, (neg_elbo_t, grad_neg_elbo_t)
 
-                data, params, opt_state, subkeys_epoch = carry
-                batch_start = x
-                batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
-                batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
 
-                params, opt_state, avg_elbo_batch = batch_step(params, opt_state, batch_obs_seq, batch_keys)
 
-                return (data, params, opt_state, subkeys_epoch), avg_elbo_batch
+                self.online_update = online_update
+                self.online_init = partial(self.elbo.init_carry, params=self.q.get_random_params(jax.random.PRNGKey(0)))
 
-        elif self.online:
+        if self.online:
 
             init_elbo_carry = vmap(self.online_init, 
                                     axis_size=self.batch_size)()

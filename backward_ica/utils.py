@@ -51,12 +51,13 @@ def elbo_h_0_online(data, models):
 
     p = models['p']
 
+    log_q_0_x_0 = data['t']['log_q_x']
     x_0 = data['t']['x']
     y_0 = data['t']['y']
     theta = data['tm1']['theta']
 
     return p.emission_kernel.logpdf(y_0, x_0, theta.emission) \
-            + p.prior_dist.logpdf(x_0, theta.prior)
+            + p.prior_dist.logpdf(x_0, theta.prior) - log_q_0_x_0
 
 def elbo_h_t_online(data, models):
 

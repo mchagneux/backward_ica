@@ -130,7 +130,7 @@ def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
     data = {'tm1': carry_m1, 't':data_0}
 
     tau_0 = named_vmap(partial(h_0, models={'p':p, 'q':q}), 
-                    axes_names={'t':{'x':0}}, 
+                    axes_names={'t':{'x':0,'log_q_x':0}}, 
                     input_dict=data)
 
     carry = {'x':x_0,
@@ -481,9 +481,9 @@ def init_gradients_F(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samp
     q_0_params = q.filt_params_from_state(s_0, phi_0)
 
     x_0 = jax.vmap(q.filt_dist.sample, in_axes=(0,None))(jax.random.split(key_0, num_samples), q_0_params)
-    unravel = ravel(tree_get_idx(0, carry_m1['stats']['F']))[1]
+    unravel = ravel(unformatted_phi_0)[1]
 
-    def log_q_0(unformatted_phi, x_0):
+    def _log_q_0(unformatted_phi, x_0):
         phi_0 = q.format_params(unformatted_phi)
         s_0 = q.init_state(y_0, phi_0)
         q_0_params = q.filt_params_from_state(s_0, phi_0)
@@ -492,11 +492,19 @@ def init_gradients_F(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samp
 
     h = partial(h_0, models={'p':p, 'q':q})
 
-    data = {'tm1': carry_m1,'t':{'x':x_0, 'y':y_0}}
-    H_0 = named_vmap(h, axes_names={'t':{'x':0}}, input_dict=data)
+    def _g_0(unformatted_phi, x_0):
+        log_q_0, grad_log_q_0 = jax.value_and_grad(_log_q_0, argnums=0)(unformatted_phi, x_0)
+        return log_q_0, ravel(grad_log_q_0)[0]
 
-    G_0 = jax.vmap(lambda x,y: ravel(jax.grad(log_q_0, argnums=0)(x,y))[0], in_axes=(None, 0))(unformatted_phi_0, x_0)
-    F_0 = jax.vmap(lambda x,y: x*y)(G_0, H_0)
+    log_q_0, g_0 = jax.vmap(_g_0, in_axes=(None,0))(unformatted_phi_0, x_0)
+
+    data = {'tm1': carry_m1,'t':{'x':x_0, 'y':y_0, 'log_q_x':log_q_0}}
+
+    H_0 = named_vmap(h, axes_names={'t':{'x':0, 'log_q_x':0}}, input_dict=data)
+
+    G_0 = g_0
+
+    F_0 = G_0 * H_0.reshape(-1,1)
 
     carry = {'stats':{'F':jax.vmap(unravel)(F_0), 'G':jax.vmap(unravel)(G_0), 'H':H_0},
             's':s_0, 
@@ -524,7 +532,7 @@ def update_gradients_F(
     G_tm1 = stats_tm1['G']
     F_tm1 = stats_tm1['F']
 
-    unravel = ravel(tree_get_idx(0, F_tm1))[1]
+    unravel = ravel(unformatted_phi_t)[1]
     
     G_tm1 = jax.vmap(lambda x: ravel(x)[0])(G_tm1)
     F_tm1 = jax.vmap(lambda x: ravel(x)[0])(F_tm1)
@@ -572,11 +580,11 @@ def update_gradients_F(
 
         H_t = w_t @ (H_tm1 + h_t)
 
-        G_t = jnp.sum(jax.vmap(lambda w,G,g: w*(G+g))(w_t, G_tm1, g_t), axis=0)
+        G_t = w_t.reshape(-1,1).T @ (G_tm1 + g_t)
 
-        F_t = jnp.sum(jax.vmap(lambda w,F,G,H,g,h: w*(F + g*H + h*G + g*h))(w_t, F_tm1, G_tm1, H_tm1, g_t, h_t), axis=0)
+        F_t = w_t.reshape(-1,1).T @ (F_tm1 + g_t * H_tm1.reshape(-1,1) + h_t.reshape(-1,1) * G_tm1 + g_t*h_t.reshape(-1,1))
 
-        return unravel(F_t), unravel(G_t), H_t
+        return unravel(F_t.squeeze()), unravel(G_t.squeeze()), H_t
 
     F_t, G_t, H_t = jax.vmap(update)(x_t)
 
@@ -585,22 +593,6 @@ def update_gradients_F(
             'x':x_t}
 
     return carry_t
-
-
-def init_carry_gradients_F(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
-
-    dummy_x = jnp.empty((num_samples, state_dim))
-    dummy_H = jnp.empty((num_samples, *out_shape))
-    dummy_F = jax.jacrev(lambda phi:dummy_H)(unformatted_params)
-    dummy_G = jax.jacrev(lambda phi:dummy_H)(unformatted_params)
-
-    carry = {'s': dummy_state, 
-            'x':dummy_x, 
-            'stats':{'H':dummy_H, 
-                    'F':dummy_F, 
-                    'G':dummy_G}}
-
-    return carry
 
 
 

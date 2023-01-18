@@ -6,6 +6,7 @@ from functools import partial
 from backward_ica.utils import enable_x64
 import os 
 from jax.tree_util import tree_map
+from jax.flatten_util import ravel_pytree as ravel
 d_x = 2
 d_y = 2
 import pandas as pd 
@@ -36,14 +37,22 @@ q = LinearGaussianHMM(state_dim=d_x,
 
 num_samples = 100
 num_replicas = 50
-seq_length = 50
+seq_length = 2
 
 
 
 key = jax.random.PRNGKey(5)
 
 
-path = 'experiments/online/grad_computation_fixed_V_tm1'
+path = 'experiments/online/online_additive'
+
+os.makedirs(path, exist_ok=True)
+
+def scalar_relative_error(oracle, estimate):
+    return (oracle - estimate) / jnp.abs(oracle)
+
+def cosine_similarity(oracle, estimate):
+    return (oracle @ estimate) / (jnp.linalg.norm(oracle, ord=2) * jnp.linalg.norm(estimate, ord=2))
 
 def experiment(key, exp_id, exp_name):
 
@@ -65,7 +74,7 @@ def experiment(key, exp_id, exp_name):
                                                     p.format_params(theta), 
                                                     q.format_params(phi)), 
                                                     argnums=1)(obs_seq, phi)
-        return elbo, jax.flatten_util.ravel_pytree(grad_elbo)[0]
+        return elbo, ravel(grad_elbo)[0]
 
 
 
@@ -76,7 +85,7 @@ def experiment(key, exp_id, exp_name):
                                                     q.format_params(phi)), 
                                                     argnums=1)(obs_seq, phi)
 
-        return elbo, jax.flatten_util.ravel_pytree(grad_elbo)[0]
+        return elbo, ravel(grad_elbo)[0]
 
 
 
@@ -87,7 +96,7 @@ def experiment(key, exp_id, exp_name):
                                                     phi)['tau'], 
                                                     argnums=1)(obs_seq, phi)
 
-        return elbo, jax.flatten_util.ravel_pytree(grad_elbo)[0]
+        return elbo, ravel(grad_elbo)[0]
 
 
     def online_elbo_and_grad_func_2(key, obs_seq):
@@ -96,7 +105,7 @@ def experiment(key, exp_id, exp_name):
                                                     phi)
         elbo, grad_elbo = stats['H'], stats['F']
 
-        return elbo, jax.flatten_util.ravel_pytree(grad_elbo)[0]
+        return elbo, ravel(grad_elbo)[0]
 
 
 
@@ -107,15 +116,11 @@ def experiment(key, exp_id, exp_name):
     state_seq, obs_seq = p.sample_seq(key_seq, theta, seq_length)
 
     oracle_elbo, oracle_grad_elbo = jax.jit(oracle_elbo_and_grad_func)(obs_seq)
-    norm_oracle_grad = jnp.linalg.norm(oracle_grad_elbo, ord=1)
     # print('Oracle ELBO', oracle_elbo)
     # print('Oracle grad norm ELBO', oracle_grad_elbo)
 
 
     # print('-----')
-    offline_elbos, offline_grads_elbo = jax.jit(jax.vmap(offline_elbo_and_grad_func, in_axes=(0,None)))(jax.random.split(key, num_replicas), obs_seq)
-    offline_elbo_errors = (offline_elbos - oracle_elbo) / jnp.abs(oracle_elbo)
-    offline_grad_elbo_errors = (jnp.linalg.norm(offline_grads_elbo, axis=1, ord=1) - norm_oracle_grad) / norm_oracle_grad
     # print('Offline ELBOs',offline_elbos)
     # print('Offline grad norm ELBO', offline_grads_elbo)
 
@@ -123,16 +128,20 @@ def experiment(key, exp_id, exp_name):
 
 
     online_elbos_2, online_grads_elbo_2 = jax.jit(jax.vmap(online_elbo_and_grad_func_2, in_axes=(0,None)))(jax.random.split(key, num_replicas), obs_seq)
-    online_elbo_errors_2 = (online_elbos_2 - oracle_elbo) / jnp.abs(oracle_elbo)
-    online_grad_elbo_errors_2 = (jnp.linalg.norm(online_grads_elbo_2, axis=1, ord=1) - norm_oracle_grad) / norm_oracle_grad
+    online_elbo_errors_2 = jax.vmap(scalar_relative_error, in_axes=(None,0))(oracle_elbo, online_elbos_2)
+    online_grad_elbo_errors_2 = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, online_grads_elbo_2)
+    
+    offline_elbos, offline_grads_elbo = jax.jit(jax.vmap(offline_elbo_and_grad_func, in_axes=(0,None)))(jax.random.split(key, num_replicas), obs_seq)
+    offline_elbo_errors = jax.vmap(scalar_relative_error, in_axes=(None,0))(oracle_elbo, offline_elbos)
+    offline_grad_elbo_errors = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, offline_grads_elbo)
 
     online_elbos, online_grads_elbo = jax.jit(jax.vmap(online_elbo_and_grad_func, in_axes=(0,None)))(jax.random.split(key, num_replicas), obs_seq)
-    online_elbo_errors = (online_elbos - oracle_elbo) / jnp.abs(oracle_elbo)
-    online_grad_elbo_errors = (jnp.linalg.norm(online_grads_elbo, axis=1, ord=1) - norm_oracle_grad) / norm_oracle_grad
+    online_elbo_errors = jax.vmap(scalar_relative_error, in_axes=(None,0))(oracle_elbo, online_elbos)
+    online_grad_elbo_errors = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, online_grads_elbo)
 
 
-    elbo_errors = pd.DataFrame(jnp.array([offline_elbo_errors, online_elbo_errors, online_elbo_errors_2]).T, columns=['Offline', 'Online', f'{exp_name}'])
-    grad_elbo_errors = pd.DataFrame(jnp.array([offline_grad_elbo_errors, online_grad_elbo_errors, online_grad_elbo_errors_2]).T, columns=['Offline', 'Online', f'{exp_name}'])
+    elbo_errors = pd.DataFrame(jnp.array([offline_elbo_errors, online_elbo_errors, online_elbo_errors_2]).T, columns=['Offline', 'Online backprop', f'{exp_name}'])
+    grad_elbo_errors = pd.DataFrame(jnp.array([offline_grad_elbo_errors, online_grad_elbo_errors, online_grad_elbo_errors_2]).T, columns=['Offline', 'Online backprop', f'{exp_name}'])
 
     elbo_errors.plot(kind='box')
     plt.savefig(os.path.join(path, f'elbo_errors_{exp_id}'))
@@ -142,7 +151,7 @@ def experiment(key, exp_id, exp_name):
 
 for exp_id in range(3):
     key, subkey = jax.random.split(key, 2)
-    experiment(subkey, exp_id, 'online')
+    experiment(subkey, exp_id, 'Online additive')
 
 # elbo_errors.plot(kind='box')
 # elbo, grad_elbo = oracle_elbo_and_grad_func(obs_seq)
