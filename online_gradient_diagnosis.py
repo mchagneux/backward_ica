@@ -1,5 +1,5 @@
 from backward_ica.stats.hmm import LinearGaussianHMM
-from backward_ica.online_smoothing import OnlineNormalizedISELBO, OnlineELBOAndGradsF
+from backward_ica.online_smoothing import OnlineNormalizedISELBO, OnlineELBOAndGradsF, OnlineELBOAndGradsReparam
 from backward_ica.offline_smoothing import LinearGaussianELBO, GeneralBackwardELBO
 import jax, jax.numpy as jnp
 from functools import partial
@@ -7,15 +7,14 @@ from backward_ica.utils import enable_x64
 import os 
 from jax.tree_util import tree_map
 from jax.flatten_util import ravel_pytree as ravel
-d_x = 2
-d_y = 2
+d_x = 4
+d_y = 4
 import pandas as pd 
 import matplotlib.pyplot as plt 
 
 enable_x64(True)
 
-
-
+jax.config.update('jax_disable_jit', False)
 
 p = LinearGaussianHMM(
                     state_dim=d_x,
@@ -35,8 +34,8 @@ q = LinearGaussianHMM(state_dim=d_x,
 
 
 
-num_samples = 100
-num_replicas = 50
+num_samples = 20
+num_replicas = 20
 seq_length = 2
 
 
@@ -44,7 +43,7 @@ seq_length = 2
 key = jax.random.PRNGKey(5)
 
 
-path = 'experiments/online/online_additive'
+path = 'experiments/online/check_reparam_recursions'
 
 os.makedirs(path, exist_ok=True)
 
@@ -66,7 +65,7 @@ def experiment(key, exp_id, exp_name):
     theta = p.get_random_params(key_theta)
     phi = q.get_random_params(key_phi)
 
-
+    @jax.jit
     def oracle_elbo_and_grad_func(obs_seq):
 
         elbo, grad_elbo = jax.value_and_grad(lambda obs_seq, phi: oracle_elbo(obs_seq, 
@@ -77,7 +76,7 @@ def experiment(key, exp_id, exp_name):
         return elbo, ravel(grad_elbo)[0]
 
 
-
+    @jax.jit
     def offline_elbo_and_grad_func(key, obs_seq):
         elbo, grad_elbo = jax.value_and_grad(lambda obs_seq, phi: offline_elbo(key, obs_seq, 
                                                     len(obs_seq)-1, 
@@ -89,7 +88,7 @@ def experiment(key, exp_id, exp_name):
 
 
 
-
+    @jax.jit
     def online_elbo_and_grad_func(key, obs_seq):
         elbo, grad_elbo = jax.value_and_grad(lambda obs_seq, phi: online_elbo.batch_compute(key, obs_seq, 
                                                     p.format_params(theta), 
@@ -99,6 +98,7 @@ def experiment(key, exp_id, exp_name):
         return elbo, ravel(grad_elbo)[0]
 
 
+    @jax.jit
     def online_elbo_and_grad_func_2(key, obs_seq):
         stats = online_elbo_2.batch_compute(key, obs_seq, 
                                                     p.format_params(theta), 
@@ -115,7 +115,8 @@ def experiment(key, exp_id, exp_name):
 
     state_seq, obs_seq = p.sample_seq(key_seq, theta, seq_length)
 
-    oracle_elbo, oracle_grad_elbo = jax.jit(oracle_elbo_and_grad_func)(obs_seq)
+    print('Computing oracle ELBO gradients...')
+    oracle_elbo, oracle_grad_elbo = oracle_elbo_and_grad_func(obs_seq)
     # print('Oracle ELBO', oracle_elbo)
     # print('Oracle grad norm ELBO', oracle_grad_elbo)
 
@@ -126,22 +127,24 @@ def experiment(key, exp_id, exp_name):
 
     # print('-----')
 
-
-    online_elbos_2, online_grads_elbo_2 = jax.jit(jax.vmap(online_elbo_and_grad_func_2, in_axes=(0,None)))(jax.random.split(key, num_replicas), obs_seq)
+    print('Computing recursive ELBO gradients...')
+    online_elbos_2, online_grads_elbo_2 = jax.vmap(online_elbo_and_grad_func_2, in_axes=(0,None))(jax.random.split(key, num_replicas), obs_seq)
     online_elbo_errors_2 = jax.vmap(scalar_relative_error, in_axes=(None,0))(oracle_elbo, online_elbos_2)
     online_grad_elbo_errors_2 = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, online_grads_elbo_2)
     
-    offline_elbos, offline_grads_elbo = jax.jit(jax.vmap(offline_elbo_and_grad_func, in_axes=(0,None)))(jax.random.split(key, num_replicas), obs_seq)
+    print('Computing offline ELBO gradients...')
+    offline_elbos, offline_grads_elbo = jax.vmap(offline_elbo_and_grad_func, in_axes=(0,None))(jax.random.split(key, num_replicas), obs_seq)
     offline_elbo_errors = jax.vmap(scalar_relative_error, in_axes=(None,0))(oracle_elbo, offline_elbos)
     offline_grad_elbo_errors = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, offline_grads_elbo)
 
-    online_elbos, online_grads_elbo = jax.jit(jax.vmap(online_elbo_and_grad_func, in_axes=(0,None)))(jax.random.split(key, num_replicas), obs_seq)
+    print('Computing autodiff on recursive ELBO...')
+    online_elbos, online_grads_elbo = jax.vmap(online_elbo_and_grad_func, in_axes=(0,None))(jax.random.split(key, num_replicas), obs_seq)
     online_elbo_errors = jax.vmap(scalar_relative_error, in_axes=(None,0))(oracle_elbo, online_elbos)
     online_grad_elbo_errors = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, online_grads_elbo)
 
 
-    elbo_errors = pd.DataFrame(jnp.array([offline_elbo_errors, online_elbo_errors, online_elbo_errors_2]).T, columns=['Offline', 'Online backprop', f'{exp_name}'])
-    grad_elbo_errors = pd.DataFrame(jnp.array([offline_grad_elbo_errors, online_grad_elbo_errors, online_grad_elbo_errors_2]).T, columns=['Offline', 'Online backprop', f'{exp_name}'])
+    elbo_errors = pd.DataFrame(jnp.array([offline_elbo_errors, online_elbo_errors, online_elbo_errors_2]).T, columns=['Offline', 'Online backprop', 'Online recursions'])
+    grad_elbo_errors = pd.DataFrame(jnp.array([offline_grad_elbo_errors, online_grad_elbo_errors, online_grad_elbo_errors_2]).T, columns=['Offline', 'Online backprop', 'Online recursions'])
 
     elbo_errors.plot(kind='box')
     plt.savefig(os.path.join(path, f'elbo_errors_{exp_id}'))

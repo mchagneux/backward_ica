@@ -14,7 +14,7 @@ def main(args):
 
 
     if args.float64: 
-        utils.enable_x64(True)
+        utils.enable_x64(False)
     stats.set_parametrization(args)
 
     p = hmm.get_generative_model(utils.load_args('args', args.exp_dir))
@@ -47,12 +47,12 @@ def main(args):
                         frozen_params=frozen_params,
                         online=args.online,
                         seq_length=data.shape[1],
-                        sweep_sequences=args.sweep_sequences)
+                        online_elbo=args.online_elbo)
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
 
-    print('Online ELBO:', args.online)
+    print('Online ELBO:', args.online_elbo)
 
     params = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
                                                             data=data, 
@@ -76,7 +76,6 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='linear')
     parser.add_argument('--exp_dir', type=str, default='experiments/p_linear/2023_01_16__16_58_54')
 
-    parser.add_argument('--sweep_sequences', action='store_true')
     parser.add_argument('--online', action='store_true')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
@@ -84,9 +83,10 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=200)
     parser.add_argument('--num_samples', type=int, default=10)
     
-    parser.add_argument('--optimizer', type=str, default='adam')
+    parser.add_argument('--optimizer', type=str, default='adamw')
     parser.add_argument('--store_every', type=int, default=0)
     parser.add_argument('--seed', type=int, default=1)
+    parser.add_argument('--online_elbo',action='store_true')
 
     args = parser.parse_args()
 
