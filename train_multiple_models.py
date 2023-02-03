@@ -4,24 +4,24 @@ from datetime import datetime
 p_model = 'linear'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['johnson_backward__offline', 'johnson_backward__online']
+q_models = ['linear__online_mc', 'linear__offline_mc', 'linear__closed_form']
 
-num_epochs = 2000
+num_epochs = 1000
 learning_rate = 0.01
 dims = '2 2'
 load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
 loaded_seq = False
 
-batch_size = 1
-num_seqs = 1
+batch_size = 10
+num_seqs = 10
 seq_length = 50
-num_samples_list = [10,100]
+num_samples_list = [10,10,0]
 
-store_every = 0
-online_list = [False, False]
-online_elbo_list = [False, True]
+store_every = 0 
+online_list = [False, False, False]
+online_elbo_list = [True, False, False]
 
-os.makedirs(base_dir, exist_ok=True) 
+os.makedirs(base_dir, exist_ok=True)
 
 date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
 

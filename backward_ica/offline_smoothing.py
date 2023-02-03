@@ -209,7 +209,7 @@ class OfflineVariationalAdditiveSmoothing:
 
         tau = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
         
-        return jnp.mean(tau, axis=0) / len(obs_seq)
+        return jnp.mean(tau, axis=0) / len(obs_seq), 0
 
 GeneralBackwardELBO = lambda p, q, num_samples: OfflineVariationalAdditiveSmoothing(p, q, offline_elbo_functional(p,q), num_samples)
 
@@ -258,7 +258,7 @@ class LinearGaussianELBO:
             - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_params.scale.log_det) \
             + 0.5*self.p.state_dim
 
-        return kl_term / len(obs_seq)
+        return kl_term / len(obs_seq), 0
 
 
 def check_linear_gaussian_elbo(p: LinearGaussianHMM, num_seqs, seq_length):
@@ -270,9 +270,9 @@ def check_linear_gaussian_elbo(p: LinearGaussianHMM, num_seqs, seq_length):
     elbo = LinearGaussianELBO(p, p)
 
     evidence_reference = vmap(lambda seq: p.likelihood_seq(
-        seq, theta))(seqs) / len(seqs[0])
+        seq, theta))(seqs) / seq_length
     theta = p.format_params(theta)
-    evidence_elbo = vmap(lambda seq: elbo(seq, len(seq)-1, theta, theta))(seqs)
+    evidence_elbo = vmap(lambda seq: elbo(seq, len(seq)-1, theta, theta)[0])(seqs)
 
     print('ELBO sanity check:', jnp.mean(
         jnp.abs(evidence_elbo - evidence_reference)))

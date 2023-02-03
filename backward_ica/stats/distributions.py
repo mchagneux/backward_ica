@@ -1,6 +1,6 @@
 from backward_ica.utils import * 
 import jax.scipy.stats as stats
-
+from jax.scipy.special import gammaln
 @register_pytree_node_class
 class Scale:
 
@@ -309,12 +309,26 @@ class Student:
     @staticmethod
     def logpdf(x, params):
 
-        return vmap(stats.t.logpdf, in_axes=(0, None, 0, 0))(x, params.df, params.mean, jnp.diag(params.scale.cov_chol)).sum()
+        dim = params.mean.shape[0]
+        df = params.df  
+        loc = params.mean 
+
+        dev = x - loc
+        maha = dev.T @ params.scale.prec @ dev
+
+        t = 0.5 * (df + dim)
+        A = gammaln(t)
+        B = gammaln(0.5 * df)
+        C = dim/2. * jnp.log(df * jnp.pi)
+        D = 0.5 * params.scale.log_det
+        E = -t * jnp.log(1 + (1./df) * maha)
+
+        return A - B - C - D + E
 
     
     @staticmethod
     def pdf(x, params):
-        return vmap(stats.t.pdf, in_axes=(0, None, 0, 0))(x, params.df, params.mean, jnp.diag(params.scale.cov_chol)).prod()
+        return jnp.exp(Student.logpdf(x, params))
 
 
     @classmethod

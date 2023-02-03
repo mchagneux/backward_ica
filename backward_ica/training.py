@@ -107,31 +107,41 @@ class SVITrainer:
             if isinstance(self.p, LinearGaussianHMM) and isinstance(self.q, LinearGaussianHMM) and (not force_full_mc):
                 self.elbo = LinearGaussianELBO(self.p, self.q)
                 self.get_montecarlo_keys = get_dummy_keys
-                self.loss = lambda key, data, compute_up_to, params: -self.elbo(
-                                                                        data, 
-                                                                        compute_up_to, 
-                                                                        self.formatted_theta_star, 
-                                                                        q.format_params(params))
+                def closed_form_elbo(key, data, compute_up_to, params):
+                    value, dummy_aux = self.elbo(
+                                        data, 
+                                        compute_up_to, 
+                                        self.formatted_theta_star, 
+                                        q.format_params(params))
+                    return -value, dummy_aux
+                self.loss = closed_form_elbo
             else: 
                 if online_elbo: 
-                    self.elbo = OnlineISELBO(self.p, self.q, num_samples)
+                    self.elbo = OnlineNormalizedISELBO(self.p, self.q, num_samples)
                     self.get_montecarlo_keys = get_keys
-                    self.loss = lambda key, data, compute_up_to, params: -self.elbo.batch_compute(key, 
+                    def online_elbo(key, data, compute_up_to, params):
+
+                        carry, output = self.elbo.batch_compute(key, 
                                                     data, 
                                                     self.formatted_theta_star, 
-                                                    params)['tau']
-
+                                                    params)
+                        
+                        return -carry['tau'], output
+                    self.loss = online_elbo
                 else: 
 
                     self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                     self.get_montecarlo_keys = get_keys
-                    self.loss = lambda key, data, compute_up_to, params: -self.elbo(
-                                                                            key, 
-                                                                            data, 
-                                                                            compute_up_to, 
-                                                                            self.formatted_theta_star, 
-                                                                            q.format_params(params))
-        
+                    def offline_elbo(key, data, compute_up_to, params):
+                        value, dummy_aux = self.elbo(
+                                        key, 
+                                        data, 
+                                        compute_up_to, 
+                                        self.formatted_theta_star, 
+                                        q.format_params(params))
+                        return -value, dummy_aux 
+
+                    self.loss = offline_elbo
             if self.online: 
 
                 self.elbo = OnlineELBOAndGradsReparam(p=self.p, 
@@ -223,7 +233,7 @@ class SVITrainer:
         else: 
             def step(carry, x):
                 def batch_step(params, opt_state, batch, keys):
-                    neg_elbo_values, grads = vmap(value_and_grad(self.loss, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
+                    (neg_elbo_values, aux), grads = vmap(value_and_grad(self.loss, argnums=3, has_aux=True), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
 
                     avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                     updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
@@ -231,7 +241,7 @@ class SVITrainer:
 
                     return params, \
                         opt_state, \
-                        -jnp.mean(neg_elbo_values), avg_grads
+                        -jnp.mean(neg_elbo_values), avg_grads, aux
 
                 data, params, opt_state, subkeys_epoch = carry
 
@@ -239,9 +249,9 @@ class SVITrainer:
                 batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
                 batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
 
-                params, opt_state, avg_elbo_batch, avg_grads = batch_step(params, opt_state, batch_obs_seq, batch_keys)
+                params, opt_state, avg_elbo_batch, avg_grads, aux = batch_step(params, opt_state, batch_obs_seq, batch_keys)
 
-                return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads)
+                return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads, aux)
             
 
         self.step = step
@@ -269,6 +279,7 @@ class SVITrainer:
         batch_start_indices = jnp.arange(0, num_seqs, self.batch_size)
 
         t = tqdm(total=self.num_epochs, desc='Epoch')
+        aux_list = []
         for epoch_nb in range(self.num_epochs):
             t.update(1)
             subkeys_epoch = subkeys[epoch_nb]
@@ -277,7 +288,7 @@ class SVITrainer:
             data = jax.random.permutation(subkey_batcher, data)
         
 
-            (_ , params, opt_state, _), (avg_elbo_batches, avg_grads) = jax.lax.scan(f=self.step,  
+            (_ , params, opt_state, _), (avg_elbo_batches, avg_grads, aux) = jax.lax.scan(f=self.step,  
                                                                         init=(
                                                                             data, 
                                                                             params, 
@@ -285,6 +296,7 @@ class SVITrainer:
                                                                             subkeys_epoch), 
                                                                         xs=batch_start_indices)
 
+            aux_list.append(aux)
 
             # print(jnp.linalg.norm(jax.flatten_util.ravel_pytree(avg_grads)[0]))
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
@@ -300,7 +312,7 @@ class SVITrainer:
             all_params.append(params)
         t.close()
                     
-        return all_params, avg_elbos
+        return all_params, avg_elbos, aux_list
 
     def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, store_every=None, log_dir='', args=None):
 
@@ -321,14 +333,15 @@ class SVITrainer:
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
-            params, avg_elbos = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer, args)
-
+            params, avg_elbos, aux_list = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer, args)
+            with open(os.path.join(log_dir, 'weights'), 'wb') as f:
+                dill.dump(aux_list, f)
             best_epoch = jnp.nanargmax(jnp.array(avg_elbos))
             best_epochs.append(best_epoch)
             best_elbo = avg_elbos[best_epoch]
             best_elbos.append(best_elbo)
             print(f'Best ELBO {best_elbo:.3f} at epoch {best_epoch}')
-        
+
             if store_every != 0:
                 selected_epochs = list(range(0, self.num_epochs, store_every))
                 all_params.append({epoch_nb:params[epoch_nb] for epoch_nb in selected_epochs})

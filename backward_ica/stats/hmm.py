@@ -166,7 +166,6 @@ class HMM:
                 if (type(v) == str): new_params.transition.map['linear']['w'] = jnp.load(v).astype(jnp.float64)
         return new_params
 
-
 class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
     def __init__(self, 

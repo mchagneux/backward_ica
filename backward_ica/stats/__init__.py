@@ -76,7 +76,6 @@ class BackwardSmoother(metaclass=ABCMeta):
 
         return tree_prepend(init_state, state_seq)
 
-    
     def get_state(self, t, obs_seq, formatted_params):
 
         timesteps = jnp.arange(0, len(obs_seq))
@@ -112,6 +111,10 @@ class BackwardSmoother(metaclass=ABCMeta):
 
     def compute_backwd_params_seq(self, state_seq, formatted_params):
         return vmap(self.backwd_params_from_state, in_axes=(0,None))(tree_droplast(state_seq), formatted_params)
+    
+    def new_proposal_params(self, transition_params, filt_params):
+        raise NotImplementedError
+
 
 class TwoFilterSmoother(metaclass=ABCMeta):
         
@@ -167,6 +170,21 @@ class TwoFilterSmoother(metaclass=ABCMeta):
     @abstractmethod
     def compute_state_seq(self, obs_seq, formatted_params):
         raise NotImplementedError
+
+
+def linear_gaussian_forward_params_from_backwd_variable_and_transition(filt_params:Gaussian.Params, 
+                                                                        transition_params:Kernel.Params):
+    A, b, Q_prec = transition_params.map.w, transition_params.map.b, transition_params.noise.scale.prec
+
+    prec_forward = 2 * (Q_prec + filt_params.scale.prec)
+
+    K = inv(prec_forward)
+
+    A_forward = K @ Q_prec @ A
+    b_forward = K @ (Q_prec @ b + filt_params.scale.prec @ filt_params.mean)
+
+    return Kernel.Params(map=Maps.LinearMapParams(A_forward, b_forward), 
+                        noise=Gaussian.NoiseParams(Scale(prec=prec_forward)))
 
 class LinearBackwardSmoother(BackwardSmoother):
 
@@ -263,7 +281,12 @@ class LinearBackwardSmoother(BackwardSmoother):
             marginals = self.compute_joint_marginals(filt_params_seq, backwd_params_seq, lag)
             return marginals
 
-    
+        
+    def new_proposal_params(self, backwd_params, filt_params):
+
+        proposal_params = self.linear_gaussian_backwd_params_from_transition_and_filt(filt_params.mean, filt_params.scale.cov, backwd_params)
+        return proposal_params
+
     def smooth_seq_at_multiple_timesteps(self, obs_seq, params, slices):
         formatted_params = self.format_params(params)
 

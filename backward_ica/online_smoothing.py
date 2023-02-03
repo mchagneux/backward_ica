@@ -61,12 +61,12 @@ class OnlineVariationalAdditiveSmoothing:
     
     def compute(self, carry, input):
 
-        carry = lax.cond(input['t'] != 0, 
+        carry, output = lax.cond(input['t'] != 0, 
                         self._update, 
                         self._init,
                         carry, input)
         
-        return carry, None
+        return carry, output
     
     def batch_compute(self, key, obs_seq, theta, phi):
 
@@ -86,11 +86,23 @@ class OnlineVariationalAdditiveSmoothing:
 
         carry_m1 = self.init_carry(phi)
 
-        stats = lax.scan(_step, 
+        carry, outputs = lax.scan(_step, 
                         init=carry_m1,
-                        xs=(timesteps, keys, obs_seq))[0]['stats']
-                        
-        return tree_map(lambda x: jnp.mean(x, axis=0) / (T+1), stats)
+                        xs=(timesteps, keys, obs_seq))
+
+        stats = carry['stats']
+        # choices = carry['choices']
+
+        # def mean_on_choices(array, choices):
+        #     zeros_array = jnp.zeros_like(array)
+        #     return jnp.sum(jnp.where(choices, array, zeros_array), axis=0) / choices.sum()
+
+        # return tree_map(lambda x:  jnp.mean(jnp.exp(carry['log_K']) * x, axis=0) / (T+1), stats), outputs
+        return tree_map(lambda x:  jnp.mean(x, axis=0) / (T+1), stats), outputs
+
+        # return tree_map(lambda x: mean_on_choices(x, choices) / (T + 1), stats), outputs
+        # weights = self.normalizer(carry['log_q_x'] - carry['log_nu_x'])
+        # return tree_map(lambda x: (weights.reshape(-1,1).T @ x).squeeze() / (T + 1), stats), outputs
 
 
 def init_carry(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
@@ -116,9 +128,10 @@ def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
     state_0 = q.init_state(y_0, phi_0)
 
+    filt_params = q.filt_params_from_state(state_0, phi_0)
     x_0, log_q_x_0 = samples_and_log_probs(q.filt_dist, 
                                             key_0, 
-                                            q.filt_params_from_state(state_0, phi_0), 
+                                            filt_params, 
                                             num_samples)
 
     data_0 = {'x':x_0,
@@ -138,7 +151,7 @@ def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
             'stats':{'tau': tau_0}}
 
     
-    return carry
+    return carry, (jnp.zeros((num_samples, num_samples)), x_0, filt_params, (phi_0.transition.map.w, phi_0.transition.map.b, phi_0.transition.noise.scale.cov))
 
 def update_IS(
         carry_tm1, 
@@ -180,21 +193,261 @@ def update_IS(
 
         h_tm1_t = jax.vmap(_h)(carry_tm1['x'], carry_tm1['log_q_x'])
 
-        return (normalizer(w_tm1_t).reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze() 
+        return (normalizer(w_tm1_t).reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), w_tm1_t
     
+    filt_params = q.filt_params_from_state(state_t, phi_t)
     x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
                                             key_t, 
-                                            q.filt_params_from_state(state_t, phi_t),
+                                            filt_params,
                                             num_samples)
+
             
-    tau_t = jax.vmap(update)(x_t, log_q_t_x_t)
+    tau_t, w_tm1_t = jax.vmap(update)(x_t, log_q_t_x_t)
 
     carry_t = {'state':state_t, 
             'x':x_t, 
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
 
-    return carry_t
+    return carry_t, (w_tm1_t, x_t, filt_params, (params_q_tm1_t.map.w, params_q_tm1_t.map.b, params_q_tm1_t.noise.scale.cov))
+
+
+
+
+
+def init_carry_Student(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
+
+
+    dummy_tau = jnp.empty((num_samples, *out_shape))
+    dummy_x = jnp.empty((num_samples, state_dim)) 
+    dummy_log_q_x = jnp.empty((num_samples,))
+
+
+    return {'state':dummy_state, 
+            'choices':jax.random.bernoulli(jax.random.PRNGKey(0), shape=(num_samples,)),
+            'log_nu_x':dummy_log_q_x,
+            'log_q_x':dummy_log_q_x, 
+            'x':dummy_x, 
+            'stats':{'tau':dummy_tau}}
+
+
+def mixture_proposal_samples_and_log_probs(key, params, lbda, num_samples):
+    key, key_bernoulli = jax.random.split(key, 2)
+    choices = jax.random.bernoulli(key_bernoulli, lbda, (num_samples,))
+    student_params = Student.Params(params.mean, 2, params.scale)
+    def conditional_sample(key, choice):
+        return lax.cond(choice, 
+                    Gaussian.sample, 
+                    lambda key, params: Student.sample(key, student_params),
+                    key, params)
+    def log_prob(sample):
+        return jnp.log(lbda*Gaussian.pdf(sample, params) + (1-lbda)*Student.pdf(sample, student_params))
+
+    samples = jax.vmap(conditional_sample)(jax.random.split(key, num_samples), choices)
+    return (samples, jax.vmap(log_prob)(samples)), choices
+
+def init_IS_Student(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
+
+
+    y_0 = input_0['y']
+    key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
+
+    phi_0 = q.format_params(unformatted_phi_0)
+
+    state_0 = q.init_state(y_0, phi_0)
+
+    filt_params = q.filt_params_from_state(state_0, phi_0)
+
+    (x_0, log_nu_0), choices_0 = mixture_proposal_samples_and_log_probs(key_0, filt_params, 0.80, num_samples)
+
+    log_q_x_0 = jax.vmap(q.filt_dist.logpdf, in_axes=(0,None))(x_0, filt_params)
+
+    data_0 = {'x':x_0,
+            'log_q_x':log_q_x_0,
+            'state':state_0,
+            'y':y_0}
+
+    data = {'tm1': carry_m1, 't':data_0}
+
+    tau_0 = named_vmap(partial(h_0, models={'p':p, 'q':q}), 
+                    axes_names={'t':{'x':0,'log_q_x':0}}, 
+                    input_dict=data)
+
+    carry = {'x':x_0,
+            'log_q_x':log_q_x_0,
+            'log_nu_x':log_nu_0,
+            'choices':choices_0,
+            'state':state_0,
+            'stats':{'tau': tau_0}}
+
+    
+    return carry, (jnp.zeros((num_samples, num_samples)), x_0, filt_params, (phi_0.transition.map.w, phi_0.transition.map.b, phi_0.transition.noise.scale.cov))
+
+def update_IS_Student(
+        carry_tm1, 
+        input_t:HMM, 
+        p:HMM, 
+        q:BackwardSmoother, 
+        h, 
+        num_samples, 
+        normalizer):
+
+
+    state_tm1 = carry_tm1['state']
+
+
+    t, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['key'], input_t['y'], input_t['phi']
+
+    phi_t = q.format_params(unformatted_phi_t)
+    params_q_tm1_t = q.backwd_params_from_state(state_tm1, phi_t)
+
+    state_t = q.new_state(y_t, state_tm1, phi_t)
+
+    tau_tm1 = carry_tm1['stats']['tau']
+
+    h = partial(h, models={'p':p, 'q':q})
+
+    def update(x_t, log_q_t_x_t):
+
+        data_t = {'x':x_t,'log_q_x':log_q_t_x_t, 'y':y_t}
+
+        def weights(x_tm1, log_nu_tm1_x_tm1):
+            return q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) - log_nu_tm1_x_tm1
+        
+        def _h(x_tm1, log_q_tm1_x_tm1):
+            data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'params_backwd': params_q_tm1_t, 'theta':carry_tm1['theta']}
+            data = {'t':data_t, 'tm1':data_tm1}
+            return h(data)
+        
+        w_tm1_t = jax.vmap(weights)(carry_tm1['x'], carry_tm1['log_nu_x'])
+
+        h_tm1_t = jax.vmap(_h)(carry_tm1['x'], carry_tm1['log_q_x'])
+
+        return (normalizer(w_tm1_t).reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), w_tm1_t
+    
+    filt_params = q.filt_params_from_state(state_t, phi_t)
+
+    (x_t, log_nu_t_x_t), choices_t = mixture_proposal_samples_and_log_probs(key_t, filt_params, 0.80, num_samples)
+
+    log_q_t_x_t = jax.vmap(q.filt_dist.logpdf, in_axes=(0,None))(x_t, filt_params)
+
+    tau_t, w_tm1_t = jax.vmap(update)(x_t, log_q_t_x_t)
+
+    carry_t = {'state':state_t, 
+            'x':x_t, 
+            'stats': {'tau':tau_t},
+            'choices':choices_t,
+            'log_q_x':log_q_t_x_t,
+            'log_nu_x':log_nu_t_x_t}
+
+    return carry_t, (w_tm1_t, x_t, filt_params, (params_q_tm1_t.map.w, params_q_tm1_t.map.b, params_q_tm1_t.noise.scale.cov))
+
+
+
+def init_carry_proposal(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
+
+
+    dummy_tau = jnp.empty((num_samples, *out_shape))
+    dummy_x = jnp.empty((num_samples, state_dim)) 
+    dummy_log_q_x = jnp.empty((num_samples,))
+
+
+    return {'state':dummy_state, 
+            'log_q_x':dummy_log_q_x, 
+            'log_K':dummy_log_q_x,
+            'x':dummy_x, 
+            'stats':{'tau':dummy_tau}}
+
+def init_IS_proposal(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
+
+
+    y_0 = input_0['y']
+    key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
+
+    phi_0 = q.format_params(unformatted_phi_0)
+
+    state_0 = q.init_state(y_0, phi_0)
+
+    filt_params = q.filt_params_from_state(state_0, phi_0)
+
+    x_0, log_q_x_0 = samples_and_log_probs(q.filt_dist, key_0, filt_params, num_samples)
+
+    data_0 = {'x':x_0,
+            'log_q_x':log_q_x_0,
+            'state':state_0,
+            'y':y_0}
+
+    data = {'tm1': carry_m1, 't':data_0}
+
+    tau_0 = named_vmap(partial(h_0, models={'p':p, 'q':q}), 
+                    axes_names={'t':{'x':0,'log_q_x':0}}, 
+                    input_dict=data)
+
+    carry = {'x':x_0,
+            'log_q_x':log_q_x_0,
+            'log_K':jnp.zeros_like(log_q_x_0),
+            'state':state_0,
+            'stats':{'tau': tau_0}}
+
+    
+    return carry, 0
+
+def update_IS_proposal(
+        carry_tm1, 
+        input_t:HMM, 
+        p:HMM, 
+        q:BackwardSmoother, 
+        h, 
+        num_samples, 
+        normalizer):
+
+    proposal_kernel = q.backwd_kernel
+
+    state_tm1 = carry_tm1['state']
+
+
+    t, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['key'], input_t['y'], input_t['phi']
+
+    phi_t = q.format_params(unformatted_phi_t)
+    params_q_tm1_t = q.backwd_params_from_state(state_tm1, phi_t)
+
+    state_t = q.new_state(y_t, state_tm1, phi_t)
+
+    tau_tm1 = carry_tm1['stats']['tau']
+
+    x_tm1 = carry_tm1['x']
+    log_q_tm1_x_tm1 = carry_tm1['log_q_x']
+
+    h = partial(h, models={'p':p, 'q':q})
+
+    def update(tau_tm1, log_K_tm1, x_tm1, log_q_tm1_x_tm1, x_t, log_q_t_x_t, log_nu_t_x_t):
+
+        data_t = {'x':x_t,'log_q_x':log_q_t_x_t, 'y':y_t}
+
+        data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'params_backwd': params_q_tm1_t, 'theta':carry_tm1['theta']}
+        data = {'t':data_t, 'tm1':data_tm1}
+        log_K_t = log_K_tm1 + (log_q_t_x_t + q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) - log_q_tm1_x_tm1) - log_nu_t_x_t
+        return tau_tm1 + h(data), log_K_t
+            
+    
+    filt_params = q.filt_params_from_state(state_t, phi_t)
+    proposal_params = q.new_proposal_params(params_q_tm1_t, filt_params)
+
+    x_t = jax.vmap(proposal_kernel.sample, in_axes=(0,0,None))(jax.random.split(key_t, num_samples), x_tm1, proposal_params)
+    log_nu_t_x_t = jax.vmap(proposal_kernel.logpdf, in_axes=(0,0,None))(x_t, x_tm1, proposal_params)
+
+    log_q_t_x_t = jax.vmap(q.filt_dist.logpdf, in_axes=(0,None))(x_t, filt_params)
+            
+    log_K_tm1 = carry_tm1['log_K']
+    tau_t, log_K_t = jax.vmap(update)(tau_tm1, log_K_tm1, x_tm1, log_q_tm1_x_tm1, x_t, log_q_t_x_t, log_nu_t_x_t)
+
+    carry_t = {'state':state_t, 
+            'x':x_t, 
+            'log_K': log_K_t,
+            'stats': {'tau':tau_t},
+            'log_q_x':log_q_t_x_t}
+
+    return carry_t, 0
 
 
 
@@ -447,7 +700,7 @@ def update_gradients_F(
 
         G_t = tree_map(lambda G,g: ((G+g).T @ w_t).T, G_tm1, g_t)
 
-        F_t = tree_map(lambda F,G,g: ((F.T + G.T*h_t + g.T * (H_tm1 + h_t)) @ w_t).T,
+        F_t = tree_map(lambda F,G,g: ((F.T + G.T * h_t + g.T * (H_tm1 + h_t)) @ w_t).T,
                     F_tm1, G_tm1, g_t)
 
         return F_t, G_t, H_t
@@ -593,5 +846,5 @@ OnlineELBOAndGradsF = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothi
                                                     init_gradients_F,
                                                     update_gradients_F,
                                                     online_elbo_functional(p,q),
-                                                    exp_and_normalize,
+                                                    None,
                                                     num_samples)

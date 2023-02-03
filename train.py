@@ -14,7 +14,7 @@ def main(args):
 
 
     if args.float64: 
-        utils.enable_x64(False)
+        utils.enable_x64(True)
     stats.set_parametrization(args)
 
     p = hmm.get_generative_model(utils.load_args('args', args.exp_dir))
@@ -83,7 +83,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=200)
     parser.add_argument('--num_samples', type=int, default=10)
     
-    parser.add_argument('--optimizer', type=str, default='adamw')
+    parser.add_argument('--optimizer', type=str, default='adam')
     parser.add_argument('--store_every', type=int, default=0)
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--online_elbo',action='store_true')
