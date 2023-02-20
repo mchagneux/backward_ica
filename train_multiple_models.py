@@ -8,13 +8,13 @@ q_models = ['linear__online_mc', 'linear__offline_mc', 'linear__closed_form']
 
 num_epochs = 1000
 learning_rate = 0.01
-dims = '2 2'
+dims = '5 5'
 load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
 loaded_seq = False
 
-batch_size = 10
-num_seqs = 10
-seq_length = 50
+batch_size = 1
+num_seqs = 1
+seq_length = 500
 num_samples_list = [10,10,0]
 
 store_every = 0 

@@ -126,7 +126,7 @@ class SVITrainer:
                                                     self.formatted_theta_star, 
                                                     params)
                         
-                        return -carry['tau'], output
+                        return -carry, output
                     self.loss = online_elbo
                 else: 
 
