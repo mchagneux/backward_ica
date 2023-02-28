@@ -153,7 +153,7 @@ def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
             'stats':{'tau': tau_0}}
 
     
-    return carry, (jnp.zeros((num_samples, num_samples)), x_0, filt_params, (phi_0.transition.map.w, phi_0.transition.map.b, phi_0.transition.noise.scale.cov))
+    return carry, jnp.zeros((num_samples, num_samples))
 
 def update_IS(
         carry_tm1, 
@@ -211,7 +211,7 @@ def update_IS(
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
 
-    return carry_t, (w_tm1_t, x_t, filt_params, (params_q_tm1_t.map.w, params_q_tm1_t.map.b, params_q_tm1_t.noise.scale.cov))
+    return carry_t, w_tm1_t
 
 
 def init_carry_precompute(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
@@ -524,7 +524,7 @@ def init_IS_proposal(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samp
             'stats':{'tau': tau_0}}
 
     
-    return carry, log_q_x_0
+    return carry, jnp.zeros((num_samples,))
 
 def update_IS_proposal(
         carry_tm1, 
@@ -554,33 +554,32 @@ def update_IS_proposal(
 
     h = partial(h, models={'p':p, 'q':q})
 
-    # def update(tau_tm1, x_t, log_q_t_x_t, log_nu_t_x_t):
+    def update(tau_tm1, x_tm1, log_q_tm1_x_tm1, x_t, log_q_t_x_t, log_nu_t_x_t):
+
+        data_t = {'x':x_t,'log_q_x':log_q_t_x_t, 'y':y_t}
+        data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'params_backwd': params_q_tm1_t, 'theta':carry_tm1['theta']}
+        data = {'t':data_t, 'tm1':data_tm1}
+        log_K_tm1_t = (log_q_t_x_t + q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) - log_q_tm1_x_tm1) - log_nu_t_x_t
+        return tau_tm1 + h(data), log_K_tm1_t
+            
+    # def update(x_tm1, log_q_tm1_x_tm1, x_t, log_q_t_x_t, log_nu_t_x_t):
 
     #     data_t = {'x':x_t,'log_q_x':log_q_t_x_t, 'y':y_t}
 
-    #     data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'params_backwd': params_q_tm1_t, 'theta':carry_tm1['theta']}
-    #     data = {'t':data_t, 'tm1':data_tm1}
+    #     def weights(x_tm1, log_q_tm1_x_tm1):
+    #         return q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) - log_q_tm1_x_tm1
+        
+    #     def _h(x_tm1, log_q_tm1_x_tm1):
+    #         data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'params_backwd': params_q_tm1_t, 'theta':carry_tm1['theta']}
+    #         data = {'t':data_t, 'tm1':data_tm1}
+    #         return h(data)
+        
+    #     w_tm1_t = jax.vmap(weights)(carry_tm1['x'], carry_tm1['log_q_x'])
+
+    #     h_tm1_t = jax.vmap(_h)(carry_tm1['x'], carry_tm1['log_q_x'])
     #     log_K_tm1_t = (log_q_t_x_t + q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) - log_q_tm1_x_tm1) - log_nu_t_x_t
-    #     return tau_tm1 + h(data), log_K_tm1_t
-            
-    def update(x_tm1, log_q_tm1_x_tm1, x_t, log_q_t_x_t, log_nu_t_x_t):
 
-        data_t = {'x':x_t,'log_q_x':log_q_t_x_t, 'y':y_t}
-
-        def weights(x_tm1, log_q_tm1_x_tm1):
-            return q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) - log_q_tm1_x_tm1
-        
-        def _h(x_tm1, log_q_tm1_x_tm1):
-            data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'params_backwd': params_q_tm1_t, 'theta':carry_tm1['theta']}
-            data = {'t':data_t, 'tm1':data_tm1}
-            return h(data)
-        
-        w_tm1_t = jax.vmap(weights)(carry_tm1['x'], carry_tm1['log_q_x'])
-
-        h_tm1_t = jax.vmap(_h)(carry_tm1['x'], carry_tm1['log_q_x'])
-        log_K_tm1_t = (log_q_t_x_t + q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) - log_q_tm1_x_tm1) - log_nu_t_x_t
-
-        return (normalizer(w_tm1_t).reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), log_K_tm1_t
+    #     return (normalizer(w_tm1_t).reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), (w_tm1_t, log_K_tm1_t)
     
     filt_params = q.filt_params_from_state(state_t, phi_t)
     proposal_params = q.new_proposal_params(params_q_tm1_t, filt_params)
@@ -591,17 +590,20 @@ def update_IS_proposal(
 
     log_q_t_x_t = jax.vmap(q.filt_dist.logpdf, in_axes=(0,None))(x_t, filt_params)
             
-    tau_t, log_K_tm1_t = jax.vmap(update)(x_tm1, log_q_tm1_x_tm1, x_t, log_q_t_x_t, log_nu_t_x_t)
+    tau_t, log_K_tm1_t = jax.vmap(update)(tau_tm1, x_tm1, log_q_tm1_x_tm1, x_t, log_q_t_x_t, log_nu_t_x_t)
 
-    w_tm1_t = normalizer(log_K_tm1_t)
-    choices = jax.random.choice(key_resample, a=num_samples, shape=(num_samples,), p=w_tm1_t)
+    K_tm1_t = normalizer(log_K_tm1_t)
+    # choices = jax.random.choice(key_resample, a=num_samples, shape=(num_samples,), p=K_tm1_t)
+    # x_t = x_t[choices]
+    # tau_t = tau_t[choices]
+    # log_q_x = log_q_x[choices]
 
     carry_t = {'state':state_t, 
-            'x':x_t[choices], 
-            'stats': {'tau':tau_t[choices]},
-            'log_q_x':log_q_t_x_t[choices]}
+            'x':x_t,
+            'stats': {'tau':tau_t},
+            'log_q_x':log_q_t_x_t}
 
-    return carry_t, log_K_tm1_t
+    return carry_t, K_tm1_t
 
 
 
