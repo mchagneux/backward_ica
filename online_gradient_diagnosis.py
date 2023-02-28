@@ -34,10 +34,11 @@ q = LinearGaussianHMM(state_dim=d_x,
 
 
 num_samples_oracle = 10000
-num_samples = 100
+
+num_samples = 200
 num_replicas = 100
 seq_length = 50
-num_runs = 3
+num_runs = 5
 compute_grads = True
 online_methods = True
 name_method_2 = 'proposal'
