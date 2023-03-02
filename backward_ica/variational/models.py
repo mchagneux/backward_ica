@@ -26,7 +26,6 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
         filt:Any
 
         def compute_covs(self):
-            self.prior.scale.cov
             self.backwd.noise.scale.cov
 
         def tree_flatten(self):
@@ -44,13 +43,13 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
                     layers)
     
     @classmethod
-    def with_linear_gaussian_transition_kernel(cls, p:HMM, layers):
+    def with_linear_gaussian_transition_kernel(cls, args):
 
-        transition_kernel = Kernel.linear_gaussian(matrix_conditonning='init_sym_def_pos', 
-                                                        bias=True, 
-                                                        range_params=(-1,1))(p.state_dim, p.state_dim)
+        transition_kernel = Kernel.linear_gaussian(matrix_conditonning=args.transition_matrix_conditionning,
+                                                        bias=args.transition_bias, 
+                                                        range_params=args.range_transition_map_params)(args.state_dim, args.state_dim)
                                                         
-        return cls(p.state_dim, p.obs_dim, transition_kernel, layers)
+        return cls(args.state_dim, args.obs_dim, transition_kernel, args.update_layers)
 
 
     def __init__(self, 
@@ -122,6 +121,10 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
             params = self.set_params(params, params_to_set)
         return params  
         
+
+    def frozen_prior(self):
+        return tuple([jnp.zeros(shape=[size]) for size in self.update_layers])
+
     def set_params(self, params, args):
         new_params = copy.deepcopy(params)
         for k,v in vars(args).items():         
@@ -170,6 +173,7 @@ class NeuralLinearBackwardSmoother(LinearBackwardSmoother):
 @register_pytree_node_class
 @dataclass(init=True)
 class JohnsonParams:
+
     prior: Gaussian.Params
     transition:Kernel.Params
     net:Any
@@ -187,22 +191,33 @@ class JohnsonParams:
 
 class JohnsonSmoother:
 
-    def __init__(self, state_dim, obs_dim, layers, anisotropic):
+
+    def __init__(self, 
+                    state_dim, 
+                    obs_dim, 
+                    transition_matrix_conditionning,
+                    range_transition_map_params,
+                    transition_bias,
+                    layers, 
+                    anisotropic):
 
         self.state_dim = state_dim 
         self.obs_dim = obs_dim 
         self.prior_dist = Gaussian
 
-        self.transition_kernel = Kernel.linear_gaussian(matrix_conditonning='diagonal',
-                                                        bias=False, 
-                                                        range_params=(-1,1))(state_dim, state_dim)
+        self.transition_kernel = Kernel.linear_gaussian(
+                                            matrix_conditonning=transition_matrix_conditionning,
+                                            bias=transition_bias, 
+                                            range_params=range_transition_map_params)(
+                                                                        state_dim, 
+                                                                        state_dim)
 
         net = inference_nets.johnson_anisotropic if anisotropic else inference_nets.johnson
         self._net = hk.without_apply_rng(hk.transform(partial(net, layers=layers, state_dim=state_dim)))
 
 
     def get_random_params(self, key, params_to_set=None):
-        key_prior, key_transition, key_net = random.split(key, 3)
+        key_prior, key_transition, key_net = random.split(key, 3)                                       
 
         prior_params = self.prior_dist.get_random_params(key_prior, self.state_dim)
         transition_params = self.transition_kernel.get_random_params(key_transition)
@@ -236,9 +251,39 @@ class JohnsonSmoother:
     
 class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
 
-    def __init__(self, state_dim, obs_dim, layers, anisotropic):
 
-        JohnsonSmoother.__init__(self, state_dim, obs_dim, layers, anisotropic)
+    @classmethod
+    def from_args(cls, args):
+        return cls(
+            args.state_dim, 
+            args.obs_dim, 
+            args.transition_matrix_conditionning,
+            args.range_transition_map_params, 
+            args.transition_bias, 
+            args.update_layers, 
+            args.anisotropic)
+
+
+    def __init__(
+            self, 
+            state_dim,
+            obs_dim, 
+            transition_matrix_conditionning, 
+            range_transition_map_params, 
+            transition_bias, 
+            layers, 
+            anisotropic):
+
+        JohnsonSmoother.__init__(
+                            self, 
+                            state_dim, 
+                            obs_dim, 
+                            transition_matrix_conditionning, 
+                            range_transition_map_params, 
+                            transition_bias, 
+                            layers, 
+                            anisotropic)
+        
         LinearBackwardSmoother.__init__(self, state_dim)
 
 

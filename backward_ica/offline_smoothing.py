@@ -94,6 +94,7 @@ class OfflineVariationalAdditiveSmoothing:
     def __call__(self, key, obs_seq, T, theta: HMM.Params, phi):
 
         theta.compute_covs()
+        phi.compute_covs()
 
         def t_strictly_greater_than_T(carry_tp1, input_t):
 

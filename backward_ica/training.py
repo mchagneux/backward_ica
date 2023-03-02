@@ -27,29 +27,15 @@ def define_frozen_tree(key, frozen_params, q, theta_star):
     frozen_phi = tree_map(lambda x: '', frozen_phi)
 
 
-    # if 'theta' in frozen_params: 
-    #     frozen_theta = theta_star 
-
-    if 'prior_phi' in frozen_params:
-        if isinstance(q, LinearGaussianHMM) or (isinstance(q, NeuralLinearBackwardSmoother) and q.explicit_proposal):
+    if 'prior' in frozen_params:
+        if isinstance(q, LinearGaussianHMM) or isinstance(q, JohnsonSmoother):
             frozen_phi.prior = theta_star.prior
-        # else:
-        #     if isinstance(frozen_phi, GeneralBackwardSmootherParams):
-        #         frozen_phi.prior = GeneralBackwardSmootherParams(q.get_init_state(), frozen_phi.filt_update, frozen_phi.backwd)
-        #     else: 
-        #         frozen_phi.prior = q.get_init_state()
-    
-    if 'transition_phi' in frozen_params:
-        # if isinstance(q, NeuralBackwardSmoother):
-        #     raise NotImplementedError
-        # else: 
-            frozen_phi.transition = theta_star.transition
+        elif isinstance(q, NeuralLinearBackwardSmoother):
+            frozen_phi.prior = q.frozen_prior()
 
     if 'covariances' in frozen_params: 
         frozen_phi.transition.noise.scale = theta_star.transition.noise.scale
     
-    # frozen_params = (frozen_theta, frozen_phi)
-
     return frozen_phi
     
 class SVITrainer:
@@ -117,7 +103,7 @@ class SVITrainer:
                 self.loss = closed_form_elbo
             else: 
                 if online_elbo: 
-                    self.elbo = OnlineProposalResampling(self.p, self.q, num_samples)
+                    self.elbo = OnlinePaRISELBO(self.p, self.q, num_samples)
                     self.get_montecarlo_keys = get_keys
                     def online_elbo(key, data, compute_up_to, params):
 
@@ -255,7 +241,6 @@ class SVITrainer:
             
 
         self.step = step
-
 
     def timesteps(self, seq_length):
         return jnp.arange(0, seq_length)

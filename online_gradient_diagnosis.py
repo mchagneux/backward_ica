@@ -1,5 +1,8 @@
-from backward_ica.stats.hmm import LinearGaussianHMM
-from backward_ica.online_smoothing import OnlineNormalizedISELBO, OnlineNormalizedISELBOPrecompute, OnlineProposalResampling
+from backward_ica.stats.hmm import get_generative_model, LinearGaussianHMM
+from backward_ica.variational import get_variational_model
+from backward_ica.stats import set_parametrization
+import backward_ica.utils as utils
+from backward_ica.online_smoothing import OnlineNormalizedISELBO, OnlinePaRISELBO
 from backward_ica.offline_smoothing import LinearGaussianELBO, GeneralBackwardELBO
 import jax, jax.numpy as jnp
 from functools import partial
@@ -7,47 +10,50 @@ from backward_ica.utils import enable_x64
 import os 
 from jax.tree_util import tree_map
 from jax.flatten_util import ravel_pytree as ravel
-d_x = 5
-d_y = 5
 import pandas as pd 
 import matplotlib.pyplot as plt 
+import argparse
 
-enable_x64(True)
 
 jax.config.update('jax_disable_jit', False)
 
-p = LinearGaussianHMM(
-                    state_dim=d_x,
-                    obs_dim=d_y, 
-                    transition_matrix_conditionning='diagonal',
-                    range_transition_map_params=(-0.95,0.95),
-                    transition_bias=False,
-                    emission_bias=False)
-
-q = LinearGaussianHMM(state_dim=d_x,
-                    obs_dim=d_y, 
-                    transition_matrix_conditionning='diagonal',
-                    range_transition_map_params=(-0.95,0.95),
-                    transition_bias=False,
-                    emission_bias=False)
+args_p = argparse.Namespace()
+args_p.model = 'chaotic_rnn'
+args_p.state_dim, args_p.obs_dim = 5,5
+args_p.seq_length = 50
+args_p.transition_bias = False
+args_p.emission_bias = False
+args_p.loaded_seq = False
+args_p.load_from = ''
+args_p = utils.get_defaults(args_p)
+set_parametrization(args_p)
+enable_x64(args_p.float64)
 
 
+args_q = argparse.Namespace()
+args_q.model = 'johnson_backward'
+args_q.state_dim, args_q.obs_dim = 5,5
 
 num_samples_oracle = 10000
 
-num_samples = 200
-num_replicas = 100
-seq_length = 50
+
+num_samples = 2
+num_replicas = 2
+seq_length = 3
 num_runs = 5
 compute_grads = True
 online_methods = True
-name_method_2 = 'proposal'
+name_method_2 = 'PaRIS'
 
 key = jax.random.PRNGKey(5)
 key, key_theta = jax.random.split(key, 2)
-theta = p.get_random_params(key_theta)
 
-path = 'experiments/online/compare_naive_and_proposal_no_correction'
+p, theta = get_generative_model(args_p, key_theta)
+q = get_variational_model(args_q)
+
+
+
+path = f'experiments/online/compare_naive_and_{name_method_2}'
 
 os.makedirs(path, exist_ok=True)
 
@@ -65,7 +71,7 @@ else:
 offline_elbo = GeneralBackwardELBO(p, q, num_samples)
 
 online_elbo = OnlineNormalizedISELBO(p, q, num_samples)
-online_elbo_2 = OnlineProposalResampling(p, q, num_samples)
+online_elbo_2 = OnlinePaRISELBO(p, q, num_samples)
 
 if not isinstance(oracle, LinearGaussianELBO):
     oracle_elbo = lambda obs_seq, compute_up_to, theta, phi: oracle(
@@ -194,9 +200,17 @@ def experiment(key, exp_id, exp_name):
         if compute_grads: 
             online_grad_elbo_errors_2 = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, online_grads_elbo_2)
 
-        elbo_errors = pd.DataFrame(jnp.array([offline_elbo_errors, online_elbo_errors, online_elbo_errors_2]).T, columns=['Offline',  'Online Naive SNIS', f'Online {exp_name}'])
+        elbo_errors = pd.DataFrame(jnp.array([
+                                        offline_elbo_errors, 
+                                        online_elbo_errors, 
+                                        online_elbo_errors_2]).T,
+                                    columns=['Offline',  'Online Naive SNIS', f'Online {exp_name}'])
         if compute_grads: 
-            grad_elbo_errors = pd.DataFrame(jnp.array([offline_grad_elbo_errors, online_grad_elbo_errors, online_grad_elbo_errors_2]).T, columns=['Offline',  'Online Naive SNIS', f'Online {exp_name}'])
+            grad_elbo_errors = pd.DataFrame(jnp.array([
+                                                offline_grad_elbo_errors, 
+                                                online_grad_elbo_errors, 
+                                                online_grad_elbo_errors_2]).T, 
+                                            columns=['Offline',  'Online Naive SNIS', f'Online {exp_name}'])
 
 
     else: 

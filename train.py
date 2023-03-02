@@ -25,8 +25,7 @@ def main(args):
     key_phi = jax.random.PRNGKey(args.seed)
 
     
-    q = variational.get_variational_model(args, 
-                                        p=p)
+    q = variational.get_variational_model(args)
 
 
     frozen_params = define_frozen_tree(key_phi, 
@@ -98,11 +97,16 @@ if __name__ == '__main__':
 
     args.model = args.model.split('__')[0]
 
-    args = utils.get_defaults(args)
 
+    args = utils.get_defaults(args)
+    args.transition_matrix_conditionning = 'diagonal'
+    args.range_transition_map_params = [0.9,1]
+    args.transition_bias = True
+        
     utils.save_args(args, 'args', args.save_dir)
     args_p = utils.load_args('args', args.exp_dir)
     args.state_dim, args.obs_dim = args_p.state_dim, args_p.obs_dim
+
 
     main(args)
 

@@ -45,7 +45,9 @@ def main(args):
         else: 
             evidence_func = p.likelihood_seq
 
-        avg_evidence = jnp.mean(jax.vmap(jax.jit(lambda key, obs_seq: evidence_func(key, obs_seq, theta_star)))(evidence_keys, obs_seqs)) / args.seq_length
+        avg_evidence = jnp.mean(jax.vmap(jax.jit(
+                            lambda key, obs_seq: evidence_func(key, obs_seq, theta_star)))
+                                (evidence_keys, obs_seqs)) / args.seq_length
 
         print('Oracle evidence:', avg_evidence)
 
@@ -63,8 +65,6 @@ if __name__ == '__main__':
     parser.add_argument('--seq_length',type=int, default=2000)
     parser.add_argument('--single_split_seq', type=bool, default=False)
     parser.add_argument('--load_from', type=str, default='')
-    parser.add_argument('--transition_bias', type=bool, default=False)
-    parser.add_argument('--emission_bias', type=bool, default=False)
     parser.add_argument('--compute_oracle_evidence',type=bool, default=True)
     parser.add_argument('--exp_dir', type=str, default='experiments/tests')
     parser.add_argument('--seed', type=int, default=0)
@@ -73,6 +73,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.state_dim, args.obs_dim = args.dims
     del args.dims
+
+    args.transition_matrix_conditionning = 'diagonal'
+    args.range_transition_map_params = [0.95,1]
+    args.transition_bias = False
+    args.emission_bias = False 
+
     os.makedirs(args.exp_dir, exist_ok=True)
     args = utils.get_defaults(args)
     utils.save_args(args, 'args', args.exp_dir)

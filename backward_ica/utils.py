@@ -219,15 +219,13 @@ def get_defaults(args):
     args.default_prior_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the prior
     args.default_transition_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the transition kernel
     args.default_transition_bias = 0.0
-    args.default_emission_base_scale = math.sqrt(1e-2)
+    args.default_emission_base_scale = math.sqrt(1e-1)
 
-    if 'chaotic_rnn' not in args.model:
-        args.transition_matrix_conditionning = 'diagonal'
-        if not(hasattr(args, 'transition_bias')):
-            args.transition_bias = False
-        args.range_transition_map_params = [0.99,1] # range of the components of the transition matrix
 
-    else:
+    if args.model == 'linear' and (not hasattr(args, 'emission_bias')):
+        args.emission_bias = False
+        
+    if 'chaotic_rnn' in args.model:
         args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
         args.transition_matrix_conditionning = 'init_sym_def_pos' # constraint
         args.default_transition_matrix = os.path.join(args.load_from, 'W.npy')
@@ -240,21 +238,18 @@ def get_defaults(args):
         args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
 
-    if not(hasattr(args, 'emission_bias')):
-        args.emission_bias = False 
 
     if 'nonlinear_emission' in args.model:
         args.emission_map_layers = (8,)
         args.slope = 0 # amount of linearity in the emission function
         args.injective = True
 
-    if 'neural_backward' in args.model:
+    if 'neural_backward' or 'johnson' in args.model:
         ## variational family
-        args.update_layers = (100,) # number of layers in the GRU which updates the variational filtering dist
-        args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
+        args.update_layers = (8,8) # number of layers in the GRU which updates the variational filtering dist
+        # args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
-    elif 'johnson' in args.model:
-        args.update_layers = (100,)
+    if 'johnson' in args.model:
         args.anisotropic = 'anisotropic' in args.model
 
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
