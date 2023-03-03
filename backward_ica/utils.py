@@ -248,14 +248,14 @@ def get_defaults(args):
 
     if 'neural_backward' or 'johnson' in args.model:
         ## variational family
-        args.update_layers = (8,) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (2,) # number of layers in the GRU which updates the variational filtering dist
         # args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     if 'johnson' in args.model:
         args.anisotropic = 'anisotropic' in args.model
 
     if 'neural_backward' in args.model:
-        args.backwd_layers = (8,)
+        args.backwd_layers = (2,)
 
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
 

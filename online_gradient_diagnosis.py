@@ -29,7 +29,7 @@ set_parametrization(args_p)
 
 
 args_q = argparse.Namespace()
-args_q.model = 'johnson_backward'
+args_q.model = 'neural_backward'
 args_q.state_dim, args_q.obs_dim = args_p.state_dim, args_p.obs_dim
 args_q = utils.get_defaults(args_q)
 args_q.transition_matrix_conditionning = 'diagonal'
@@ -39,13 +39,13 @@ args_q.transition_bias = True
 num_samples_oracle = 10000
 
 
-num_samples = 10
+num_samples = 100
 num_replicas = 100
 seq_length = 50
 num_runs = 5
-compute_grads = True
+compute_grads = False
 online_methods = True
-name_method_2 = 'PaRIS'
+name_method_2 = 'same'
 
 key = jax.random.PRNGKey(5)
 key, key_theta = jax.random.split(key, 2)
@@ -72,7 +72,7 @@ else:
 offline_elbo = GeneralBackwardELBO(p, q, num_samples)
 
 online_elbo = OnlineNormalizedISELBO(p, q, num_samples)
-online_elbo_2 = OnlinePaRISELBO(p, q, num_samples)
+online_elbo_2 = OnlineNormalizedISELBO(p, q, num_samples)
 
 if not isinstance(oracle, LinearGaussianELBO):
     oracle_elbo = lambda obs_seq, compute_up_to, theta, phi: oracle(
