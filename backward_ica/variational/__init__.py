@@ -12,14 +12,15 @@ def get_variational_model(args, p=None, key_for_random_params=None):
                 transition_bias=args.transition_bias, 
                 emission_bias=args.emission_bias)
 
-    elif 'neural_backward_linear' in args.model:
-        if 'backwd_net' in args.model:
-            q = NeuralBackwardSmoother(state_dim=args.state_dim, 
-                                                obs_dim=args.obs_dim,
-                                                transition_kernel=None,
-                                                update_layers=args.update_layers)
-        else:
-            q = NeuralBackwardSmoother.with_linear_gaussian_transition_kernel(args)
+    elif 'neural_backward' in args.model:
+        q = NeuralBackwardSmoother(
+                state_dim=args.state_dim, 
+                obs_dim=args.obs_dim,
+                transition_kernel=None,
+                backwd_layers=args.backwd_layers,
+                update_layers=args.update_layers)
+        # else:
+        #     q = NeuralBackwardSmoother.with_linear_gaussian_transition_kernel(args)
     elif 'johnson_backward' in args.model:
             q = JohnsonBackward.from_args(args)
 

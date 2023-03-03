@@ -3,6 +3,7 @@ import haiku as hk
 from jax import nn 
 from backward_ica.utils import _conditionnings
 from collections import namedtuple
+
 class Maps:
 
     @register_pytree_node_class
@@ -34,7 +35,10 @@ class Maps:
 
         net = hk.nets.MLP((*layers, out_dim), 
                         activate_final=True, 
-                        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                        w_init=hk.initializers.VarianceScaling(
+                                                            1.0, 
+                                                            'fan_avg', 
+                                                            'uniform'),
                         b_init=hk.initializers.RandomNormal(),
                         activation=nn.relu)
 
@@ -54,7 +58,10 @@ class Maps:
     def chaotic_map(x, grid_size, gamma, tau, out_dim):
         linear_map = hk.Linear(out_dim, 
                             with_bias=False, 
-                            w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'normal'))
+                            w_init=hk.initializers.VarianceScaling(
+                                                                1.0, 
+                                                                'fan_avg', 
+                                                                'normal'))
         return x + grid_size * (-x + gamma * linear_map(nn.tanh(x))) / tau
 
     @staticmethod
@@ -99,8 +106,6 @@ class Maps:
 
         return cls.LinearMapParams(w,b)
 
-
-
 class Kernel:
 
     Params = namedtuple('KernelParams', ['map','noise'])
@@ -125,9 +130,7 @@ class Kernel:
         self.noise_dist = noise_dist
 
         self.map_type = map_def['map_type']
-
-
-
+        self.inhomogeneous = False
         if noise_dist == Gaussian:
             self.format_output = lambda mean, noise, params: Gaussian.Params(mean, noise.scale)
             self.params_type = Gaussian.NoiseParams
@@ -154,7 +157,7 @@ class Kernel:
 
         elif self.map_type == 'nonlinear':
             if map_def['map_info']['homogeneous']: 
-        
+                
                 init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(map_def['map'], 
                                                                                     out_dim=out_dim)))                                 
                 apply_map = lambda params, input: (nonlinear_apply_map(params.map, input), params.noise)
@@ -164,26 +167,29 @@ class Kernel:
                 format_map_params = lambda x:x
                 
             else: 
-                
-                init_map_params, nonlinear_apply_map = hk.without_apply_rng(hk.transform(partial(map_def['map'], 
-                                                                                state_dim=out_dim)))
-                
+                self.inhomogeneous = True
+                init_map_params, nonlinear_apply_map = hk.without_apply_rng(
+                                                hk.transform(partial(map_def['map'], 
+                                                state_dim=out_dim)))
+    
                 def apply_map(params, input):
-                    mean, scale = nonlinear_apply_map(params.inner.map, params.varying, input)
+                    mean, scale = nonlinear_apply_map(params[0], params[1], input)
                     return (mean, Gaussian.NoiseParams(scale))
 
-                get_random_map_params = lambda key: init_map_params(key, 
-                                                                    jnp.empty((map_def['map_info']['varying_params_shape'],)), 
-                                                                    jnp.empty((self.in_dim,)))
-                
+                get_random_map_params = lambda key: init_map_params(
+                                                key, 
+                                                map_def['map_info']['dummy_varying_params'], 
+                                                jnp.empty((self.in_dim,)))
+    
                 format_map_params = lambda x:x
         
-
 
         self._apply_map = apply_map 
         self._get_random_map_params = get_random_map_params
         self._format_map_params = format_map_params 
-        self._get_random_noise_params = lambda key: noise_dist.get_random_noise_params(key, self.out_dim)
+        self._get_random_noise_params = lambda key: noise_dist.get_random_noise_params(
+                                                        key, 
+                                                        self.out_dim)
 
     def map(self, state, params):
         mean, scale = self._apply_map(params, state)
@@ -199,11 +205,16 @@ class Kernel:
         return self.noise_dist.pdf(x, self.map(state, params))
 
     def get_random_params(self, key):
-        key, subkey = random.split(key, 2)
-        return self.Params(self._get_random_map_params(key), self._get_random_noise_params(subkey))
+        if self.inhomogeneous:
+            return self._get_random_map_params(key)
+        else:
+            key, subkey = random.split(key, 2)
+            return self.Params(self._get_random_map_params(key), self._get_random_noise_params(subkey))
 
     def format_params(self, params):
-        return self.Params(self._format_map_params(params.map), 
-                            self.noise_dist.format_noise_params(params.noise))
+        return self.Params(
+                        self._format_map_params(params.map), 
+                        self.noise_dist.format_noise_params(params.noise))
+
 
 

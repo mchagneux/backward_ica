@@ -4,11 +4,10 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['johnson_backward__online', 
-            'johnson_backward']
+q_models = ['neural_backward']
 
 num_epochs = 1000
-learning_rate = 0.01
+learning_rate = 0.1
 dims = '5 5'
 load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
@@ -16,11 +15,11 @@ loaded_seq = True
 batch_size = 1
 num_seqs = 1
 seq_length = 2000
-num_samples_list = [10, 10]
+num_samples_list = [10]
 
 store_every = 0
-online_list = [False, False]
-online_elbo_list = [True, False]
+online_list = [False]
+online_elbo_list = [False]
 
 os.makedirs(base_dir, exist_ok=True)
 

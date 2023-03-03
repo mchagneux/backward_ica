@@ -25,7 +25,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
         filt:Any
 
         def compute_covs(self):
-            self.backwd.noise.scale.cov
+            pass
 
         def tree_flatten(self):
             return ((self.prior, self.state, self.backwd, self.filt), None)
@@ -60,49 +60,86 @@ class NeuralBackwardSmoother(BackwardSmoother):
             update_layers=(8,8)):
         
 
-        super().__init__(state_dim)
-
         self.state_dim = state_dim
         self.obs_dim = obs_dim
-
         self.transition_kernel = transition_kernel
         self.update_layers = update_layers
         self.backwd_layers = backwd_layers
         d = self.state_dim
 
-        
-        self._state_net = hk.without_apply_rng(hk.transform(partial(inference_nets.deep_gru, 
-                                                                    layers=self.update_layers)))
-        
-        self._filt_net = hk.without_apply_rng(hk.transform(partial(inference_nets.gaussian_proj, 
-                                                                    d=d)))
+        if self.transition_kernel is not None: 
 
-
-        if self.transition_kernel is None:
-            self._backwd_net = hk.without_apply_rng(hk.transform(
-                                                        partial(inference_nets.johnson, 
-                                    layers=self.backwd_layers, 
-                                    state_dim=state_dim)))
+            backwd_kernel_def = {'map_type':'linear',
+                                'map_info' : {'conditionning': None, 
+                                        'bias': True,
+                                        'range_params':(0,1)}}
+            
+            super().__init__(
+                        filt_dist=Gaussian, 
+                        backwd_kernel=Kernel(
+                                        state_dim, 
+                                        state_dim, backwd_kernel_def))
             
             def backwd_params_from_state(state, params):
                 filt_params = self.filt_params_from_state(state, params)
-                out = self._backwd_net.apply(params.backwd, state)
-                return Gaussian.Params.from_nat_params(
-                                                    eta1 = out[0] + filt_params.eta1, 
-                                                    eta2 = out[1] + filt_params.eta2)
-            
-            self._backwd_params_from_state = backwd_params_from_state
-
-        else: 
-            def backwd_params_from_state(state, params):
-                filt_params = self.filt_params_from_state(state, params)
-                return NeuralLinearBackwardSmoother.linear_gaussian_backwd_params_from_transition_and_filt(
+                return LinearBackwardSmoother.linear_gaussian_backwd_params_from_transition_and_filt(
                                                                     filt_params.mean, 
                                                                     filt_params.scale.cov, 
                                                                     params.backwd)
 
             self._backwd_params_from_state = backwd_params_from_state
-             
+
+            
+            
+        else: 
+            
+            def _backwd_map(varying_params, input, state_dim):
+                eta1_filt, eta2_filt = varying_params.eta1, varying_params.eta2
+                out = inference_nets.johnson(
+                                input, 
+                                layers=backwd_layers, 
+                                state_dim=state_dim)
+                eta1_backwd, eta2_backwd = out[0] + eta1_filt, out[1] + eta2_filt
+                out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
+                return out_params.mean, out_params.scale
+            
+            def backwd_params_from_state(state, params):
+                filt_params = self.filt_params_from_state(state, params)
+                return params.backwd, filt_params
+            
+            self._backwd_params_from_state = backwd_params_from_state
+
+            backwd_kernel_def = {
+                            'map_type':'nonlinear',
+                            'map_info' : {
+                                        'homogeneous': False, 
+                                        'dummy_varying_params':Gaussian.Params(
+                                                    eta1=jnp.empty((self.state_dim,)),
+                                                    eta2=jnp.eye(self.state_dim))},
+                            'map': _backwd_map}
+
+            super().__init__(
+                        filt_dist=Gaussian,
+                        backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
+
+
+        
+        self._state_net = hk.without_apply_rng(hk.transform(
+                                                partial(inference_nets.deep_gru, 
+                                                        layers=self.update_layers)))
+        
+        self._filt_net = hk.without_apply_rng(hk.transform(
+                                                partial(inference_nets.gaussian_proj, 
+                                                        d=d)))
+
+
+            
+    def compute_marginals(self, *args):
+        return super().compute_marginals(*args)
+    
+    def smooth_seq(self, *args):
+        return super().smooth_seq(*args)
+    
     def get_random_params(self, key, params_to_set=None):
 
         key_prior, key_state, key_filt, key_backwd = random.split(key, 4)
@@ -125,7 +162,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
         filt_params = self._filt_net.init(key_filt, dummy_state)
 
         if self.transition_kernel is None:
-            backwd_params = self._backwd_net.init(key_backwd, dummy_state)
+            backwd_params = self.backwd_kernel.get_random_params(key_backwd)
         else: 
             backwd_params = self.transition_kernel.get_random_params(key_backwd)
 
@@ -180,7 +217,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))
-        print('Num params:', len(jnp.ravel(params)))
+        print('Num params:', len(ravel_pytree(params)[0]))
     
         
     def empty_state(self):

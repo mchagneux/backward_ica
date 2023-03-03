@@ -12,14 +12,20 @@ def deep_gru(obs, prev_state, layers):
 
 def gaussian_proj(state, d):
 
-    out_dim = d + (d * (d + 1)) // 2
-    net = hk.Linear(out_dim, 
+    net = hk.Linear(2*d, 
         w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
         b_init=hk.initializers.RandomNormal(),)
 
     out = net(state.out)
     
-    return Gaussian.Params.from_vec(out, d, diag=False)
+    eta1, log_prec_diag = jnp.split(out,2)
+
+    eta2 = jnp.diag(nn.softplus(log_prec_diag))
+
+    return Gaussian.Params(
+                    eta1=eta1, 
+                    eta2=eta2)
+
 
 def backwd_update_forward(varying_params, next_state, layers, state_dim):
 
