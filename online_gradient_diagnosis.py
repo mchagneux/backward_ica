@@ -127,15 +127,22 @@ def offline_elbo_and_grad_func(key, obs_seq, theta, phi):
                             q.format_params(phi))[0]
         return len(obs_seq)*elbo, jnp.zeros((2,))
 
-jit_offline_elbo_and_grad_func = jax.jit(jax.vmap(offline_elbo_and_grad_func, in_axes=(0,None, None, None)))
+jit_offline_elbo_and_grad_func = jax.jit(jax.vmap(
+                                            offline_elbo_and_grad_func,  
+                                            in_axes=(0,None, None, None)))
 
 
 def online_elbo_and_grad_func(key, obs_seq, theta, phi):
     if compute_grads: 
-        (elbo, weights), grad_elbo = jax.value_and_grad(lambda obs_seq, phi: online_elbo.batch_compute(key, obs_seq, 
-                                                                p.format_params(theta), 
-                                                                phi), 
-                                                                argnums=1, has_aux=True)(obs_seq, phi)
+        (elbo, weights), grad_elbo = jax.value_and_grad(
+                                        lambda obs_seq, phi: online_elbo.batch_compute(
+                                                        key, 
+                                                        obs_seq, 
+                                                        p.format_params(theta), 
+                                                        phi), 
+                                                        argnums=1, has_aux=True)(
+                                                                        obs_seq, 
+                                                                        phi)
 
 
         return (len(obs_seq)*elbo, ravel(grad_elbo)[0]), weights
@@ -195,14 +202,21 @@ def experiment(key, exp_id, exp_name):
     oracle_elbo, oracle_grad_elbo = jit_oracle_elbo_and_grad_func(obs_seq, theta, phi)
     
     print('Computing offline results...')
-    offline_elbos, offline_grads_elbo = jit_offline_elbo_and_grad_func(jax.random.split(key, num_replicas), obs_seq, theta, phi)
-    offline_elbo_errors = jax.vmap(scalar_relative_error, in_axes=(None,0))(oracle_elbo, offline_elbos)
-    offline_grad_elbo_errors = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, offline_grads_elbo)
+    offline_elbos, offline_grads_elbo = jit_offline_elbo_and_grad_func(
+                        jax.random.split(key, num_replicas), obs_seq, theta, phi)
+    offline_elbo_errors = jax.vmap(scalar_relative_error, in_axes=(None,0))(
+                        oracle_elbo, offline_elbos)
+    offline_grad_elbo_errors = jax.vmap(cosine_similarity, in_axes=(None, 0))(
+                        oracle_grad_elbo, offline_grads_elbo)
 
     if online_methods: 
 
         print('Computing recursive results method 1...')
-        (online_elbos, online_grads_elbo), weights = jit_online_elbo_and_grad_func(jax.random.split(key, num_replicas), obs_seq, theta, phi)
+        (online_elbos, online_grads_elbo), weights = jit_online_elbo_and_grad_func(
+                        jax.random.split(key, num_replicas), 
+                        obs_seq, 
+                        theta, 
+                        phi)
         online_elbo_errors = jax.vmap(scalar_relative_error, in_axes=(None,0))(oracle_elbo, online_elbos)
         if compute_grads: online_grad_elbo_errors = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, online_grads_elbo)
         # jnp.save(os.path.join(path, 'weights_method_1.npy'), weights)
