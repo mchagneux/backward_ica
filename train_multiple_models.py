@@ -7,7 +7,7 @@ base_dir = os.path.join('experiments', f'p_{p_model}')
 q_models = ['neural_backward']
 
 num_epochs = 1000
-learning_rate = 0.1
+learning_rate = 0.01
 dims = '5 5'
 load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
@@ -19,7 +19,7 @@ num_samples_list = [10]
 
 store_every = 0
 online_list = [False]
-online_elbo_list = [False]
+online_elbo_list = [True]
 
 os.makedirs(base_dir, exist_ok=True)
 

@@ -103,7 +103,7 @@ class SVITrainer:
                 self.loss = closed_form_elbo
             else: 
                 if online_elbo: 
-                    self.elbo = OnlinePaRISELBO(self.p, self.q, num_samples)
+                    self.elbo = OnlineNormalizedISELBO(self.p, self.q, num_samples)
                     self.get_montecarlo_keys = get_keys
                     def online_elbo(key, data, compute_up_to, params):
 
