@@ -73,24 +73,25 @@ def johnson_anisotropic(obs, layers, state_dim):
 
     return eta1, eta2
 
-def linear_gaussian_proj(state, d):
+# def linear_gaussian_proj(state, d):
 
-    A_back_dim = (d * (d+1)) // 2
-    a_back_dim = d
-    Sigma_back_dim = (d * (d + 1)) // 2
+#     A_back_dim = (d * (d+1)) // 2
+#     a_back_dim = d
+#     Sigma_back_dim = (d * (d + 1)) // 2
     
-    out_dim = A_back_dim + a_back_dim + Sigma_back_dim
-    net = hk.nets.MLP(output_sizes=(8,8,out_dim),
-                activation=nn.tanh,
-                activate_final=False, 
-                w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-                b_init=hk.initializers.RandomNormal(),)
+#     out_dim = A_back_dim + a_back_dim + Sigma_back_dim
+    
+#     net = hk.nets.MLP(output_sizes=(8,8,out_dim),
+#                 activation=nn.tanh,
+#                 activate_final=False, 
+#                 w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+#                 b_init=hk.initializers.RandomNormal(),)
 
-    out = net(jnp.concatenate(state.hidden))
+#     out = net(jnp.concatenate(state.hidden))
 
-    A_back_chol = chol_from_vec(out[:A_back_dim], d)
-    a_back = out[A_back_dim:A_back_dim+a_back_dim]
-    Sigma_back_vec = out[A_back_dim+a_back_dim:]
+#     A_back_chol = chol_from_vec(out[:A_back_dim], d)
+#     a_back = out[A_back_dim:A_back_dim+a_back_dim]
+#     Sigma_back_vec = out[A_back_dim+a_back_dim:]
 
-    return Kernel.Params(map=Maps.LinearMapParams(w=A_back_chol @ A_back_chol.T + jnp.eye(d), b=a_back), 
-                        noise=Gaussian.NoiseParams.from_vec(Sigma_back_vec, d, chol_add=jnp.eye))
+#     return Kernel.Params(map=Maps.LinearMapParams(w=A_back_chol @ A_back_chol.T + jnp.eye(d), b=a_back), 
+#                         noise=Gaussian.NoiseParams.from_vec(Sigma_back_vec, d, chol_add=jnp.eye))

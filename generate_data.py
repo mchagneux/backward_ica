@@ -15,7 +15,8 @@ def main(args):
 
     key_theta = jax.random.PRNGKey(args.seed)
     key_params, key_gen, key_smc = jax.random.split(key_theta, 3)
-    p, theta_star = hmm.get_generative_model(args, 
+    p, theta_star = hmm.get_generative_model(
+                                            args, 
                                             key_for_random_params=key_params)
 
     utils.save_params(theta_star, 'theta_star', args.exp_dir)
@@ -51,7 +52,8 @@ def main(args):
 
         print('Oracle evidence:', avg_evidence)
 
-
+    else:
+        print('Switching computation of evidence.')
         
 
 if __name__ == '__main__':
@@ -65,7 +67,7 @@ if __name__ == '__main__':
     parser.add_argument('--seq_length',type=int, default=2000)
     parser.add_argument('--single_split_seq', type=bool, default=False)
     parser.add_argument('--load_from', type=str, default='')
-    parser.add_argument('--compute_oracle_evidence',type=bool, default=True)
+    parser.add_argument('--compute_oracle_evidence',type=bool, default=False)
     parser.add_argument('--exp_dir', type=str, default='experiments/tests')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--loaded_seq', action='store_true', default=False)

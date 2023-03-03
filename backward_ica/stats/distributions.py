@@ -28,7 +28,8 @@ class Scale:
     def cov(self):
         if 'cov_chol' in vars(self).keys():
             return mat_from_chol(self.cov_chol)
-        else: return inv_from_chol(self.prec_chol)
+        else: 
+            return inv_from_chol(self.prec_chol)
 
     @lazy_property
     def prec(self):

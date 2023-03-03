@@ -1,8 +1,7 @@
 from backward_ica.stats.hmm import LinearGaussianHMM
-from backward_ica.variational.models import NeuralLinearBackwardSmoother, JohnsonBackward, JohnsonForward
+from backward_ica.variational.models import NeuralBackwardSmoother, JohnsonBackward
 
 def get_variational_model(args, p=None, key_for_random_params=None):
-
 
     if args.model == 'linear':
         q = LinearGaussianHMM(
@@ -14,34 +13,15 @@ def get_variational_model(args, p=None, key_for_random_params=None):
                 emission_bias=args.emission_bias)
 
     elif 'neural_backward_linear' in args.model:
-        if (p is not None) and (p.transition_kernel.map_type == 'linear'):
-            q = NeuralLinearBackwardSmoother.with_transition_from_p(
-                                                            p, 
-                                                            args.update_layers)
-
-        elif 'backwd_net' in args.model:
-            q = NeuralLinearBackwardSmoother(state_dim=args.state_dim, 
+        if 'backwd_net' in args.model:
+            q = NeuralBackwardSmoother(state_dim=args.state_dim, 
                                                 obs_dim=args.obs_dim,
                                                 transition_kernel=None,
                                                 update_layers=args.update_layers)
         else:
-            q = NeuralLinearBackwardSmoother.with_linear_gaussian_transition_kernel(
-                                                                    args)
-        
-    # elif args.model == 'neural_backward':
-    #     q = NeuralBackwardSmoother(state_dim=args.state_dim, 
-    #                                     obs_dim=args.obs_dim, 
-    #                                     update_layers=args.update_layers,
-    #                                     backwd_layers=args.backwd_map_layers)
-
+            q = NeuralBackwardSmoother.with_linear_gaussian_transition_kernel(args)
     elif 'johnson_backward' in args.model:
             q = JohnsonBackward.from_args(args)
-
-    elif 'johnson_forward' in args.model:
-            q = JohnsonForward(state_dim=args.state_dim, 
-                                    obs_dim=args.obs_dim, 
-                                    layers=args.update_layers,
-                                    anisotropic=args.anisotropic)
 
 
     if key_for_random_params is not None:

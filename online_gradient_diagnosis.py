@@ -13,33 +13,35 @@ from jax.flatten_util import ravel_pytree as ravel
 import pandas as pd 
 import matplotlib.pyplot as plt 
 import argparse
-
-
+enable_x64(True)
 jax.config.update('jax_disable_jit', False)
 
 args_p = argparse.Namespace()
 args_p.model = 'chaotic_rnn'
 args_p.state_dim, args_p.obs_dim = 5,5
-args_p.seq_length = 50
+args_p.seq_length = 2000
 args_p.transition_bias = False
 args_p.emission_bias = False
-args_p.loaded_seq = False
-args_p.load_from = ''
+args_p.loaded_seq = True
+args_p.load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
 args_p = utils.get_defaults(args_p)
 set_parametrization(args_p)
-enable_x64(args_p.float64)
 
 
 args_q = argparse.Namespace()
 args_q.model = 'johnson_backward'
-args_q.state_dim, args_q.obs_dim = 5,5
+args_q.state_dim, args_q.obs_dim = args_p.state_dim, args_p.obs_dim
+args_q = utils.get_defaults(args_q)
+args_q.transition_matrix_conditionning = 'diagonal'
+args_q.range_transition_map_params = [0.9,1]
+args_q.transition_bias = True
 
 num_samples_oracle = 10000
 
 
-num_samples = 2
-num_replicas = 2
-seq_length = 3
+num_samples = 10
+num_replicas = 100
+seq_length = 50
 num_runs = 5
 compute_grads = True
 online_methods = True
@@ -51,8 +53,6 @@ key, key_theta = jax.random.split(key, 2)
 p, theta = get_generative_model(args_p, key_theta)
 q = get_variational_model(args_q)
 
-
-
 path = f'experiments/online/compare_naive_and_{name_method_2}'
 
 os.makedirs(path, exist_ok=True)
@@ -61,7 +61,8 @@ def scalar_relative_error(oracle, estimate):
     return (oracle - estimate) / jnp.abs(oracle)
 
 def cosine_similarity(oracle, estimate):
-    return (oracle @ estimate) / (jnp.linalg.norm(oracle, ord=2) * jnp.linalg.norm(estimate, ord=2))
+    return (oracle @ estimate) / (jnp.linalg.norm(oracle, ord=2) \
+                                  * jnp.linalg.norm(estimate, ord=2))
 
 if isinstance(p, LinearGaussianHMM) and isinstance(q, LinearGaussianHMM):
     oracle = LinearGaussianELBO(p, q)
@@ -88,7 +89,6 @@ else:
 def oracle_elbo_and_grad_func(obs_seq, theta, phi):
 
     if compute_grads: 
-
         elbo, grad_elbo = jax.value_and_grad(lambda obs_seq, phi: oracle_elbo(obs_seq, 
                                                     len(obs_seq)-1, 
                                                     p.format_params(theta), 
@@ -110,7 +110,9 @@ jit_oracle_elbo_and_grad_func = jax.jit(oracle_elbo_and_grad_func)
 def offline_elbo_and_grad_func(key, obs_seq, theta, phi):
     if compute_grads: 
 
-        elbo, grad_elbo = jax.value_and_grad(lambda obs_seq, phi: offline_elbo(key, obs_seq, 
+        elbo, grad_elbo = jax.value_and_grad(lambda obs_seq, phi: offline_elbo(
+                                                    key, 
+                                                    obs_seq, 
                                                     len(obs_seq)-1, 
                                                     p.format_params(theta), 
                                                     q.format_params(phi))[0], 
@@ -145,10 +147,14 @@ def online_elbo_and_grad_func(key, obs_seq, theta, phi):
 
 def online_elbo_and_grad_func_2(key, obs_seq, theta, phi):
     if compute_grads: 
-        (elbo, weights), grad_elbo = jax.value_and_grad(lambda obs_seq, phi: online_elbo_2.batch_compute(key, obs_seq, 
-                                                                p.format_params(theta), 
-                                                                phi), 
-                                                                argnums=1, has_aux=True)(obs_seq, phi)
+        (elbo, weights), grad_elbo = jax.value_and_grad(
+                                        lambda obs_seq, phi: 
+                                            online_elbo_2.batch_compute(
+                                                key, 
+                                                obs_seq, 
+                                                p.format_params(theta), 
+                                                phi), 
+                                                argnums=1, has_aux=True)(obs_seq, phi)
 
 
         return (len(obs_seq)*elbo, ravel(grad_elbo)[0]), weights
@@ -159,8 +165,10 @@ def online_elbo_and_grad_func_2(key, obs_seq, theta, phi):
         return (len(obs_seq)*elbo, weights), jnp.zeros((2,))
     
 
-jit_online_elbo_and_grad_func = jax.jit(jax.vmap(online_elbo_and_grad_func, in_axes=(0,None, None, None)))
-jit_online_elbo_and_grad_func_2 = jax.jit(jax.vmap(online_elbo_and_grad_func_2, in_axes=(0,None, None, None)))
+jit_online_elbo_and_grad_func = jax.jit(jax.vmap(online_elbo_and_grad_func, 
+                                        in_axes=(0,None, None, None)))
+jit_online_elbo_and_grad_func_2 = jax.jit(jax.vmap(online_elbo_and_grad_func_2, 
+                                        in_axes=(0,None, None, None)))
 
 
 def experiment(key, exp_id, exp_name):
@@ -173,7 +181,15 @@ def experiment(key, exp_id, exp_name):
 
     key, key_seq = jax.random.split(key, 2)
 
-    state_seq, obs_seq = p.sample_seq(key_seq, theta, seq_length)
+    _ , obs_seq = p.sample_multiple_sequences(
+                                                    key_seq, 
+                                                    theta, 
+                                                    num_seqs=1,
+                                                    seq_length=seq_length,
+                                                    load_from=args_p.load_from,
+                                                    loaded_seq=args_p.loaded_seq)
+
+    obs_seq = obs_seq.squeeze()
 
     print('Computing oracle results...')
     oracle_elbo, oracle_grad_elbo = jit_oracle_elbo_and_grad_func(obs_seq, theta, phi)

@@ -237,6 +237,8 @@ def get_defaults(args):
         args.range_emission_map_params = (0.99,1)
         args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
+        args.transition_bias = False 
+        args.emission_bias = False
 
 
     if 'nonlinear_emission' in args.model:
@@ -536,7 +538,6 @@ def exp_and_normalize(x):
 
     x = jnp.exp(x - x.max())
     return x / x.sum()
-
 
 
 def normalize(x):

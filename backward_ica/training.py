@@ -30,7 +30,7 @@ def define_frozen_tree(key, frozen_params, q, theta_star):
     if 'prior' in frozen_params:
         if isinstance(q, LinearGaussianHMM) or isinstance(q, JohnsonSmoother):
             frozen_phi.prior = theta_star.prior
-        elif isinstance(q, NeuralLinearBackwardSmoother):
+        elif isinstance(q, NeuralBackwardSmoother):
             frozen_phi.prior = q.frozen_prior()
 
     if 'covariances' in frozen_params: 

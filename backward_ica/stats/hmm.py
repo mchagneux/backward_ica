@@ -5,7 +5,7 @@ from backward_ica.stats.kalman import Kalman
 from backward_ica.stats.smc import SMC
 from backward_ica.stats.distributions import * 
 from backward_ica.stats.kernels import * 
-
+from jax.flatten_util import ravel_pytree
 from jax import lax, vmap
 from backward_ica.utils import * 
 
@@ -53,9 +53,18 @@ class HMM:
         emission: Kernel.Params
 
         def compute_covs(self):
+
             self.prior.scale.cov
+            self.prior.scale.log_det
+            self.prior.scale.prec
+
             self.transition.noise.scale.cov
+            self.transition.noise.scale.prec
+            self.transition.noise.scale.log_det
+
             self.emission.noise.scale.cov
+            self.emission.noise.scale.prec
+            self.emission.noise.scale.log_det
 
         def tree_flatten(self):
             return ((self.prior, self.transition, self.emission), None)
@@ -143,9 +152,7 @@ class HMM:
         
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))
-        print('Num params:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params)))
-        print('-- in prior + predict:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves((params.prior, params.transition))))
-        print('-- in update:', sum(jnp.atleast_1d(leaf).shape[0] for leaf in tree_leaves(params.emission)))
+        print('Num params:', len(ravel_pytree(params)[0]))
 
     def set_params(self, params, args):
         new_params = copy.deepcopy(params)
