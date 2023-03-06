@@ -79,88 +79,86 @@ class SVITrainer:
         self.optimizer = optax.chain(zero_grads_optimizer, base_optimizer)
         self.online = online
 
-        if isinstance(self.q, TwoFilterSmoother):
-            self.elbo = GeneralForwardELBO(self.p, self.q, num_samples)
-            self.get_montecarlo_keys = get_keys
-            self.loss = lambda key, data, compute_up_to, params: -self.elbo(
-                                                                    key, 
-                                                                    data, 
-                                                                    compute_up_to, 
-                                                                    self.formatted_theta_star, 
-                                                                    q.format_params(params))
+        self.online_elbo = online_elbo
 
+        if isinstance(self.p, LinearGaussianHMM) and isinstance(self.q, LinearGaussianHMM) and (not force_full_mc):
+            self.elbo = LinearGaussianELBO(self.p, self.q)
+            self.get_montecarlo_keys = get_dummy_keys
+            def closed_form_elbo(key, data, compute_up_to, params):
+                value, dummy_aux = self.elbo(
+                                    data, 
+                                    compute_up_to, 
+                                    self.formatted_theta_star, 
+                                    q.format_params(params))
+                return -value, dummy_aux
+            self.loss = closed_form_elbo
         else: 
-            if isinstance(self.p, LinearGaussianHMM) and isinstance(self.q, LinearGaussianHMM) and (not force_full_mc):
-                self.elbo = LinearGaussianELBO(self.p, self.q)
-                self.get_montecarlo_keys = get_dummy_keys
-                def closed_form_elbo(key, data, compute_up_to, params):
-                    value, dummy_aux = self.elbo(
-                                        data, 
-                                        compute_up_to, 
-                                        self.formatted_theta_star, 
-                                        q.format_params(params))
-                    return -value, dummy_aux
-                self.loss = closed_form_elbo
-            else: 
-                if online_elbo: 
-                    self.elbo = OnlineNormalizedISELBO(self.p, self.q, num_samples)
-                    self.get_montecarlo_keys = get_keys
-                    def online_elbo(key, data, compute_up_to, params):
-
-                        carry, output = self.elbo.batch_compute(key, 
-                                                    data, 
-                                                    self.formatted_theta_star, 
-                                                    params)
-                        
-                        return -carry, output
-                    self.loss = online_elbo
-                else: 
-
-                    self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-                    self.get_montecarlo_keys = get_keys
-                    def offline_elbo(key, data, compute_up_to, params):
-                        value, dummy_aux = self.elbo(
-                                        key, 
-                                        data, 
-                                        compute_up_to, 
-                                        self.formatted_theta_star, 
-                                        q.format_params(params))
-                        return -value, dummy_aux 
-
-                    self.loss = offline_elbo
-            if self.online: 
-
-                self.elbo = OnlineELBOAndGradsReparam(p=self.p, 
-                                        q=self.q, 
-                                        num_samples=num_samples)
-                                        
+            if online_elbo: 
+                self.elbo = OnlineNormalizedISELBO(self.p, self.q, num_samples)
+                self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
                 self.get_montecarlo_keys = get_keys
+                def online_elbo(key, data, compute_up_to, params):
 
-                def online_update(carry, key, data, timestep, params):
-                    jac_Omega_tm1 = carry['stats']['jac_Omega']
-
-
-                    carry['theta'] = self.formatted_theta_star
-
-                    input = {'key': key, 
-                            't':timestep, 
-                            'phi':params,
-                            'y':data}
-
-                    new_carry = self.elbo.compute(carry, input)[0]
-
-                    Omega_t, jac_Omega_t = new_carry['stats']['Omega'], new_carry['stats']['jac_Omega']
-
-                    neg_elbo_t = tree_map(lambda x: -jnp.mean(x, axis=0) / (timestep + 1), Omega_t)
-
-                    grad_neg_elbo_t = tree_map(lambda x,y: jnp.mean(x-y, axis=0) / (timestep+1), jac_Omega_tm1, jac_Omega_t)
+                    offline_value, _ = self.offline_elbo_for_check(
+                                                                key, 
+                                                                data, 
+                                                                compute_up_to,
+                                                                self.formatted_theta_star, 
+                                                                self.q.format_params(params))
+                    carry, online_aux = self.elbo.batch_compute(key, 
+                                                data, 
+                                                self.formatted_theta_star, 
+                                                params)
                     
-                    return new_carry, (neg_elbo_t, grad_neg_elbo_t)
+                    return -carry, (-offline_value, online_aux)
+                self.loss = online_elbo
+            else: 
+
+                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+                self.get_montecarlo_keys = get_keys
+                def offline_elbo(key, data, compute_up_to, params):
+                    value, dummy_aux = self.elbo(
+                                    key, 
+                                    data, 
+                                    compute_up_to, 
+                                    self.formatted_theta_star, 
+                                    q.format_params(params))
+                    return -value, dummy_aux 
+
+                self.loss = offline_elbo
+        if self.online: 
+
+            self.elbo = OnlineELBOAndGradsReparam(p=self.p, 
+                                    q=self.q, 
+                                    num_samples=num_samples)
+                                    
+            self.get_montecarlo_keys = get_keys
+
+            def online_update(carry, key, data, timestep, params):
+                jac_Omega_tm1 = carry['stats']['jac_Omega']
+
+
+                carry['theta'] = self.formatted_theta_star
+
+                input = {'key': key, 
+                        't':timestep, 
+                        'phi':params,
+                        'y':data}
+
+                new_carry = self.elbo.compute(carry, input)[0]
+
+                Omega_t, jac_Omega_t = new_carry['stats']['Omega'], new_carry['stats']['jac_Omega']
+
+                neg_elbo_t = tree_map(lambda x: -jnp.mean(x, axis=0) / (timestep + 1), Omega_t)
+
+                grad_neg_elbo_t = tree_map(lambda x,y: jnp.mean(x-y, axis=0) / (timestep+1), jac_Omega_tm1, jac_Omega_t)
+                
+                return new_carry, (neg_elbo_t, grad_neg_elbo_t)
 
 
 
-                self.online_update = online_update
-                self.online_init = partial(self.elbo.init_carry, params=self.q.get_random_params(jax.random.PRNGKey(0)))
+            self.online_update = online_update
+            self.online_init = partial(self.elbo.init_carry, params=self.q.get_random_params(jax.random.PRNGKey(0)))
 
         if self.online:
 
@@ -225,6 +223,8 @@ class SVITrainer:
                     updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
                     params = optax.apply_updates(params, updates)
 
+                    if self.online_elbo:
+                        aux = -jnp.mean(aux[0]), aux[1]
                     return params, \
                         opt_state, \
                         -jnp.mean(neg_elbo_values), avg_grads, aux
@@ -245,7 +245,7 @@ class SVITrainer:
     def timesteps(self, seq_length):
         return jnp.arange(0, seq_length)
 
-    def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None):
+    def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None, log_writer_monitor=None):
 
 
         num_seqs = data.shape[0]
@@ -281,10 +281,15 @@ class SVITrainer:
                                                                             subkeys_epoch), 
                                                                         xs=batch_start_indices)
 
-            aux_list.append(aux)
+            aux_list.append(aux[1])
 
             # print(jnp.linalg.norm(jax.flatten_util.ravel_pytree(avg_grads)[0]))
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
+            
+            if self.online_elbo:
+                avg_monitor_elbo_batches = aux[0]
+                avg_monitor_elbo_epoch = jnp.mean(avg_monitor_elbo_batches)
+
             t.set_postfix({'Avg ELBO epoch':avg_elbo_epoch})
 
             if log_writer is not None:
@@ -292,7 +297,11 @@ class SVITrainer:
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', avg_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
-
+            if log_writer_monitor is not None:
+                with log_writer_monitor.as_default():
+                    tf.summary.scalar('Epoch ELBO', avg_monitor_elbo_epoch, epoch_nb)
+                    for batch_nb, avg_monitor_elbo_batch in enumerate(avg_monitor_elbo_batches):
+                        tf.summary.scalar('Minibatch ELBO', avg_monitor_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
             avg_elbos.append(avg_elbo_epoch)
             all_params.append(params)
         t.close()
@@ -313,12 +322,15 @@ class SVITrainer:
         os.makedirs(tensorboard_subdir, exist_ok=True)
         for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
             log_writer = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}'))
-
+            if self.online_elbo:
+                log_writer_monitor = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}_monitor'))
+            else:
+                log_writer_monitor = None
             print(f'Fit {fit_nb+1}/{num_fits}')
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
-            params, avg_elbos, aux_list = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer, args)
+            params, avg_elbos, aux_list = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer, args, log_writer_monitor=log_writer_monitor)
             with open(os.path.join(log_dir, 'weights'), 'wb') as f:
                 dill.dump(aux_list, f)
             best_epoch = jnp.nanargmax(jnp.array(avg_elbos))

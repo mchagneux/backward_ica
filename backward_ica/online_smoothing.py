@@ -4,6 +4,7 @@ from jax.flatten_util import ravel_pytree as ravel
 from .stats.hmm import *
 from .utils import *
 from backward_ica.stats import BackwardSmoother
+from backward_ica.variational import NeuralBackwardSmoother
 
 
 class OnlineVariationalAdditiveSmoothing:
@@ -190,11 +191,12 @@ def update_IS(
             data = {'t':data_t, 'tm1':data_tm1}
             return h(data)
         
-        w_tm1_t = jax.vmap(weights)(carry_tm1['x'], carry_tm1['log_q_x'])
+        log_w_tm1_t = jax.vmap(weights)(carry_tm1['x'], carry_tm1['log_q_x'])
 
+        w_tm1_t = normalizer(log_w_tm1_t)
         h_tm1_t = jax.vmap(_h)(carry_tm1['x'], carry_tm1['log_q_x'])
 
-        return (normalizer(w_tm1_t).reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), w_tm1_t
+        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), w_tm1_t
     
     filt_params = q.filt_params_from_state(state_t, phi_t)
     x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
@@ -216,7 +218,7 @@ def update_PaRIS(
         carry_tm1, 
         input_t:HMM, 
         p:HMM, 
-        q:LinearGaussianHMM, 
+        q:BackwardSmoother, 
         h, 
         num_samples, 
         normalizer):
@@ -244,7 +246,7 @@ def update_PaRIS(
         data_t = {'x':x_t,'log_q_x':log_q_t_x_t, 'y':y_t}
 
         def weights(x_tm1):
-            return q.transition_kernel.logpdf(x_t, x_tm1, phi_t.transition)
+            return q.log_transition_function(x_tm1, x_t, phi_t)
         
         def _h(x_tm1, log_q_tm1_x_tm1):
             data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'params_backwd': params_q_tm1_t, 'theta':carry_tm1['theta']}

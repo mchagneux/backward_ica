@@ -55,14 +55,14 @@ class NeuralBackwardSmoother(BackwardSmoother):
     def __init__(self, 
             state_dim,
             obs_dim, 
-            transition_kernel=None,
+            transition_kernel:Kernel=None,
             backwd_layers=(8,8),
             update_layers=(8,8)):
         
 
         self.state_dim = state_dim
         self.obs_dim = obs_dim
-        self.transition_kernel = transition_kernel
+        self.transition_kernel:Kernel = transition_kernel
         self.update_layers = update_layers
         self.backwd_layers = backwd_layers
         d = self.state_dim
@@ -89,6 +89,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
             self._backwd_params_from_state = backwd_params_from_state
 
+            self._log_transition_function = lambda params, x_0, x_1: \
+                        self.transition_kernel.logpdf(x_1, x_0, params.backwd)
             
             
         else: 
@@ -101,11 +103,24 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                 state_dim=state_dim)
                 eta1_backwd, eta2_backwd = out[0] + eta1_filt, out[1] + eta2_filt
                 out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
-                return out_params.mean, out_params.scale
+                return (out_params.mean, out_params.scale), out
+            
+            def _log_transition_function(x_0, x_1):
+                eta1, eta2 = inference_nets.johnson(
+                                x_1, 
+                                layers=backwd_layers, 
+                                state_dim=state_dim)
+                
+                return x_0.T @ eta2 @ x_0 + eta1.T @ x_0
             
             def backwd_params_from_state(state, params):
                 filt_params = self.filt_params_from_state(state, params)
                 return params.backwd, filt_params
+            
+
+            self._log_transition_function = hk.without_apply_rng(
+                                            hk.transform(
+                                            _log_transition_function))[1]
             
             self._backwd_params_from_state = backwd_params_from_state
 
@@ -133,6 +148,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                                         d=d)))
 
 
+    def log_transition_function(self, x_0, x_1, params):
+        return self._log_transition_function(params.backwd, x_0, x_1)
             
     def compute_marginals(self, *args):
         return super().compute_marginals(*args)
@@ -304,6 +321,9 @@ class JohnsonSmoother:
         params = self.get_random_params(random.PRNGKey(0))
         print('Num params:', len(ravel_pytree(params)[0]))
     
+    def log_transition_function(self, x_0, x_1, params):
+        return self.transition_kernel.logpdf(x_1, x_0, params.transition)
+
 class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
 
 

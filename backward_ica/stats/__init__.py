@@ -54,6 +54,10 @@ class BackwardSmoother(metaclass=ABCMeta):
     def smooth_seq(self, *args):
         raise NotImplementedError
 
+    @abstractmethod
+    def log_transition_function(self, x_0, x_1, params):
+        raise NotImplementedError
+    
     def compute_state_seq(self, obs_seq, compute_up_to, formatted_params):
 
         mask_seq = jnp.arange(0, len(obs_seq)) <= compute_up_to
@@ -280,8 +284,7 @@ class LinearBackwardSmoother(BackwardSmoother):
         else: 
             marginals = self.compute_joint_marginals(filt_params_seq, backwd_params_seq, lag)
             return marginals
-
-        
+       
     def new_proposal_params(self, backwd_params, filt_params):
 
         proposal_params = self.linear_gaussian_backwd_params_from_transition_and_filt(filt_params.mean, filt_params.scale.cov, backwd_params)
