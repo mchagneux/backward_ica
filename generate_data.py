@@ -53,7 +53,7 @@ def main(args):
         print('Oracle evidence:', avg_evidence)
 
     else:
-        print('Switching computation of evidence.')
+        print('Skipping computation of evidence.')
         
 
 if __name__ == '__main__':

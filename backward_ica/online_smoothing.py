@@ -153,7 +153,7 @@ def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
             'stats':{'tau': tau_0}}
 
     
-    return carry, jnp.zeros((num_samples, num_samples))
+    return carry, (log_q_x_0, jnp.zeros((num_samples, num_samples)), jnp.zeros((num_samples, num_samples)), log_q_x_0)
 
 def update_IS(
         carry_tm1, 
@@ -183,20 +183,19 @@ def update_IS(
 
         data_t = {'x':x_t,'log_q_x':log_q_t_x_t, 'y':y_t}
 
-        def weights(x_tm1, log_q_tm1_x_tm1):
-            return q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) - log_q_tm1_x_tm1
+        log_q_tm1_t_x_tm1_x_t = jax.vmap(q.backwd_kernel.logpdf, in_axes=(0,None,None))(carry_tm1['x'], x_t, params_q_tm1_t)
         
-        def _h(x_tm1, log_q_tm1_x_tm1):
-            data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'params_backwd': params_q_tm1_t, 'theta':carry_tm1['theta']}
+        def _h(x_tm1, log_q_tm1_x_tm1, log_q_tm1_t_x_tm1_x_t):
+            data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'log_q_backwd_x': log_q_tm1_t_x_tm1_x_t, 'theta':carry_tm1['theta']}
             data = {'t':data_t, 'tm1':data_tm1}
             return h(data)
         
-        log_w_tm1_t = jax.vmap(weights)(carry_tm1['x'], carry_tm1['log_q_x'])
+        log_w_tm1_t = log_q_tm1_t_x_tm1_x_t - carry_tm1['log_q_x']
 
         w_tm1_t = normalizer(log_w_tm1_t)
-        h_tm1_t = jax.vmap(_h)(carry_tm1['x'], carry_tm1['log_q_x'])
+        h_tm1_t = jax.vmap(_h)(carry_tm1['x'], carry_tm1['log_q_x'], log_q_tm1_t_x_tm1_x_t)
 
-        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), w_tm1_t
+        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), (log_q_tm1_t_x_tm1_x_t, h_tm1_t, 1 / jnp.sum(w_tm1_t**2))
     
     filt_params = q.filt_params_from_state(state_t, phi_t)
     x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
@@ -205,14 +204,14 @@ def update_IS(
                                             num_samples)
 
             
-    tau_t, w_tm1_t = jax.vmap(update)(x_t, log_q_t_x_t)
+    tau_t, (log_backwd, h, w) = jax.vmap(update)(x_t, log_q_t_x_t)
 
     carry_t = {'state':state_t, 
             'x':x_t, 
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
 
-    return carry_t, w_tm1_t
+    return carry_t, (log_q_t_x_t, log_backwd, h, w)
 
 def update_PaRIS(
         carry_tm1, 

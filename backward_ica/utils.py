@@ -70,16 +70,15 @@ def elbo_h_t_online(data, models):
     
     x_tm1 = data['tm1']['x']
     theta = data['tm1']['theta']
-    params_q_tm1_t = data['tm1']['params_backwd']
 
     log_q_t_x_t = data['t']['log_q_x']
     log_q_tm1_x_tm1 = data['tm1']['log_q_x']
-    
+    log_q_tm1_t_x_tm1_x_t = data['tm1']['log_q_backwd_x']
     return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
             + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
             + log_q_tm1_x_tm1 \
             - log_q_t_x_t \
-            - q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t) \
+            - log_q_tm1_t_x_tm1_x_t \
 
 
 

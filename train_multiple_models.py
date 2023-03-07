@@ -4,10 +4,9 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['linear','johnson_backward','neural_backward']
+q_models = ['neural_backward__online']
 
-num_epochs = 1000
-learning_rates = [0.01,0.01,0.1]
+num_epochs = 500
 dims = '5 5'
 load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
@@ -15,12 +14,12 @@ loaded_seq = True
 batch_size = 1
 num_seqs = 1
 seq_length = 2000
-
-num_samples_list = [1,1,1]
-
 store_every = 0
-online_list = [False,False,False]
-online_elbo_list = [False,False,False]
+
+num_samples_list = [10]
+learning_rates = [0.1]
+online_list = [False]
+online_elbo_list = [True]
 
 os.makedirs(base_dir, exist_ok=True)
 
@@ -58,7 +57,7 @@ processes = [subprocess.Popen(f'python train.py {online} {online_elbo} \
                                         num_samples_list, 
                                         online_list, 
                                         online_elbo_list,
-                                        learning_rates]
+                                        learning_rates)]
 
          
 tensorboard_process = subprocess.Popen(f'tensorboard --logdir {exp_dir}', shell=True)
