@@ -4,20 +4,20 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['neural_backward__online']
+q_models = ['neural_backward']
 
-num_epochs = 500
+num_epochs = 800
 dims = '5 5'
 load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
 
 batch_size = 1
 num_seqs = 1
-seq_length = 2000
+seq_length = 100
 store_every = 0
 
 num_samples_list = [10]
-learning_rates = [0.1]
+learning_rates = [0.01]
 online_list = [False]
 online_elbo_list = [True]
 

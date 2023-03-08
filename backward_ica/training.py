@@ -70,13 +70,16 @@ class SVITrainer:
         self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
 
 
-        base_optimizer = optax.apply_if_finite(optax.masked(getattr(optax, optimizer)(learning_rate), 
+        base_optimizer = optax.apply_if_finite(
+                                    optax.masked(getattr(optax, optimizer)(learning_rate), 
                                                             self.trainable_params), 
                                             max_consecutive_errors=10)
 
         zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
 
-        self.optimizer = optax.chain(zero_grads_optimizer, base_optimizer)
+        self.optimizer = optax.chain(
+                                optax.clip(0.1), 
+                                base_optimizer)
         self.online = online
 
         self.online_elbo = online_elbo
@@ -105,12 +108,12 @@ class SVITrainer:
                                                                 compute_up_to,
                                                                 self.formatted_theta_star, 
                                                                 self.q.format_params(params))
-                    carry, online_aux = self.elbo.batch_compute(key, 
+                    carry, ess = self.elbo.batch_compute(key, 
                                                 data, 
                                                 self.formatted_theta_star, 
                                                 params)
                     
-                    return -carry, (-offline_value, online_aux)
+                    return -carry, (-offline_value, ess)
                 self.loss = online_elbo
             else: 
 
@@ -224,10 +227,10 @@ class SVITrainer:
                     params = optax.apply_updates(params, updates)
 
                     if self.online_elbo:
-                        aux = -jnp.mean(aux[0]), aux[1]
+                        aux = -jnp.mean(aux[0]), jnp.mean(aux[1], axis=0)
                     return params, \
                         opt_state, \
-                        -jnp.mean(neg_elbo_values), avg_grads, aux
+                        -jnp.mean(neg_elbo_values), ravel_pytree(avg_grads)[0], aux
 
                 data, params, opt_state, subkeys_epoch = carry
 
@@ -235,9 +238,9 @@ class SVITrainer:
                 batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
                 batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
 
-                params, opt_state, avg_elbo_batch, avg_grads, aux = batch_step(params, opt_state, batch_obs_seq, batch_keys)
+                params, opt_state, avg_elbo_batch, avg_grads_batch, aux = batch_step(params, opt_state, batch_obs_seq, batch_keys)
 
-                return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads, aux)
+                return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads_batch, aux)
             
 
         self.step = step
@@ -273,7 +276,7 @@ class SVITrainer:
             data = jax.random.permutation(subkey_batcher, data)
         
 
-            (_ , params, opt_state, _), (avg_elbo_batches, avg_grads, aux) = jax.lax.scan(f=self.step,  
+            (_ , params, opt_state, _), (avg_elbo_batches, avg_grads_batches, aux) = jax.lax.scan(f=self.step,  
                                                                         init=(
                                                                             data, 
                                                                             params, 
@@ -281,27 +284,36 @@ class SVITrainer:
                                                                             subkeys_epoch), 
                                                                         xs=batch_start_indices)
 
-            aux_list.append(aux[1])
 
             # print(jnp.linalg.norm(jax.flatten_util.ravel_pytree(avg_grads)[0]))
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
-            
+            avg_grads_epoch = jnp.mean(avg_grads_batches, axis=0)
             if self.online_elbo:
                 avg_monitor_elbo_batches = aux[0]
                 avg_monitor_elbo_epoch = jnp.mean(avg_monitor_elbo_batches)
-
+                avg_ess_epoch = jnp.mean(aux[1], axis=0)
             t.set_postfix({'Avg ELBO epoch':avg_elbo_epoch})
 
             if log_writer is not None:
                 with log_writer.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
+                    tf.summary.histogram('Histogram gradients', avg_grads_epoch, epoch_nb)
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
-                        tf.summary.scalar('Minibatch ELBO', avg_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
+                        tf.summary.scalar('Minibatch ELBO', 
+                                          avg_elbo_batch, 
+                                          epoch_nb*len(batch_start_indices) + batch_nb)
             if log_writer_monitor is not None:
                 with log_writer_monitor.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_monitor_elbo_epoch, epoch_nb)
+                    # tf.summary.histogram('ESS', avg_ess_epoch, epoch_nb)
+                    # tf.summary.scalar('Min ESS', jnp.min(avg_ess_epoch), epoch_nb)
+                    tf.summary.scalar('Max ESS', jnp.max(avg_ess_epoch), epoch_nb)
+                    # print(avg_ess_epoch.shape)
                     for batch_nb, avg_monitor_elbo_batch in enumerate(avg_monitor_elbo_batches):
-                        tf.summary.scalar('Minibatch ELBO', avg_monitor_elbo_batch, epoch_nb*len(batch_start_indices) + batch_nb)
+                        tf.summary.scalar( 
+                                        'Minibatch ELBO', 
+                                        avg_monitor_elbo_batch, 
+                                        epoch_nb*len(batch_start_indices) + batch_nb)
             avg_elbos.append(avg_elbo_epoch)
             all_params.append(params)
         t.close()

@@ -78,7 +78,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
                         filt_dist=Gaussian, 
                         backwd_kernel=Kernel(
                                         state_dim, 
-                                        state_dim, backwd_kernel_def))
+                                        state_dim, 
+                                        backwd_kernel_def))
             
             def backwd_params_from_state(state, params):
                 filt_params = self.filt_params_from_state(state, params)

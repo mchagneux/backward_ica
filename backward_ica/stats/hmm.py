@@ -470,7 +470,6 @@ class NonLinearHMM(HMM):
             
         return means, covs
 
-        
     def fit_ffbsi_em(self, key, data, optimizer, learning_rate, batch_size, num_epochs):
 
         key_init_params, key_batcher = random.split(key, 2)

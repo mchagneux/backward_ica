@@ -1,6 +1,7 @@
 from backward_ica.utils import * 
 import jax.scipy.stats as stats
 from jax.scipy.special import gammaln
+
 @register_pytree_node_class
 class Scale:
 
@@ -37,7 +38,6 @@ class Scale:
             return mat_from_chol(self.prec_chol)
         else: return inv_from_chol(self.cov_chol)
 
-
     @lazy_property
     def cov_chol(self):
         return cholesky(self.cov)
@@ -45,7 +45,6 @@ class Scale:
     @lazy_property
     def prec_chol(self):
         return cholesky(self.prec)
-
 
     @property
     def chol(self):
@@ -170,7 +169,7 @@ class Gaussian:
 
         @lazy_property
         def scale(self):
-            return Scale(prec=self.eta2)
+            return Scale(prec=-2*self.eta2)
         
         @lazy_property
         def eta1(self):
@@ -178,7 +177,7 @@ class Gaussian:
             
         @lazy_property
         def eta2(self):
-            return self.scale.prec 
+            return -0.5*self.scale.prec 
             
         def tree_flatten(self):
             attrs = vars(self)

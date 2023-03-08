@@ -120,7 +120,13 @@ def init_carry(unformatted_params, state_dim, obs_dim, num_samples, out_shape, d
             'x':dummy_x, 
             'stats':{'tau':dummy_tau}}
 
-def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
+def init_IS(
+        carry_m1, 
+        input_0, 
+        p:HMM, 
+        q:BackwardSmoother, 
+        h_0, 
+        num_samples):
 
 
     y_0 = input_0['y']
@@ -153,7 +159,7 @@ def init_IS(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
             'stats':{'tau': tau_0}}
 
     
-    return carry, (log_q_x_0, jnp.zeros((num_samples, num_samples)), jnp.zeros((num_samples, num_samples)), log_q_x_0)
+    return carry, log_q_x_0
 
 def update_IS(
         carry_tm1, 
@@ -195,7 +201,7 @@ def update_IS(
         w_tm1_t = normalizer(log_w_tm1_t)
         h_tm1_t = jax.vmap(_h)(carry_tm1['x'], carry_tm1['log_q_x'], log_q_tm1_t_x_tm1_x_t)
 
-        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), (log_q_tm1_t_x_tm1_x_t, h_tm1_t, 1 / jnp.sum(w_tm1_t**2))
+        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), 1 / jnp.sum(w_tm1_t**2)
     
     filt_params = q.filt_params_from_state(state_t, phi_t)
     x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
@@ -204,14 +210,14 @@ def update_IS(
                                             num_samples)
 
             
-    tau_t, (log_backwd, h, w) = jax.vmap(update)(x_t, log_q_t_x_t)
+    tau_t, ess_t = jax.vmap(update)(x_t, log_q_t_x_t)
 
     carry_t = {'state':state_t, 
             'x':x_t, 
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
 
-    return carry_t, (log_q_t_x_t, log_backwd, h, w)
+    return carry_t, ess_t
 
 def update_PaRIS(
         carry_tm1, 
@@ -252,11 +258,13 @@ def update_PaRIS(
             data = {'t':data_t, 'tm1':data_tm1}
             return h(data)
         
-        w_tm1_t = jax.vmap(weights)(x_tm1)
+        log_w_tm1_t = jax.vmap(weights)(x_tm1)
+
+        w_tm1_t = normalizer(log_w_tm1_t)
 
         h_tm1_t = jax.vmap(_h)(x_tm1, log_q_tm1_x_tm1)
 
-        return (normalizer(w_tm1_t).reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), w_tm1_t
+        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), 1 / (w_tm1_t**2).sum()
     
     filt_params = q.filt_params_from_state(state_t, phi_t)
     x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
@@ -265,14 +273,14 @@ def update_PaRIS(
                                             num_samples)
 
             
-    tau_t, w_tm1_t = jax.vmap(update)(x_t, log_q_t_x_t)
+    tau_t, ess_t = jax.vmap(update)(x_t, log_q_t_x_t)
 
     carry_t = {'state':state_t, 
             'x':x_t, 
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
 
-    return carry_t, w_tm1_t
+    return carry_t, ess_t
 
 
 

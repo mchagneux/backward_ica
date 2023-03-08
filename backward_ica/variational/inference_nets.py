@@ -20,7 +20,7 @@ def gaussian_proj(state, d):
     
     eta1, log_prec_diag = jnp.split(out,2)
 
-    eta2 = jnp.diag(nn.softplus(log_prec_diag))
+    eta2 = -jnp.diag(nn.softplus(log_prec_diag))
 
     return Gaussian.Params(
                     eta1=eta1, 
@@ -56,7 +56,7 @@ def johnson(obs, layers, state_dim):
     out = rec_net(obs)
     eta1, log_prec_diag = jnp.split(out,2)
 
-    eta2 = jnp.diag(nn.softplus(log_prec_diag))
+    eta2 = -jnp.diag(nn.softplus(log_prec_diag))
 
     return eta1, eta2
 
