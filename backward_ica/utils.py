@@ -239,7 +239,6 @@ def get_defaults(args):
         args.transition_bias = False 
         args.emission_bias = False
 
-
     if 'nonlinear_emission' in args.model:
         args.emission_map_layers = (8,)
         args.slope = 0 # amount of linearity in the emission function
@@ -254,7 +253,10 @@ def get_defaults(args):
         args.anisotropic = 'anisotropic' in args.model
 
     if 'neural_backward' in args.model:
-        args.backwd_layers = (16,)
+        if not 'explicit_transition' in args.model_options:
+            args.backwd_layers = (16,)
+        else: 
+            args.backwd_layers = 0
 
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
 

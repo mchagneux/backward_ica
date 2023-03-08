@@ -159,7 +159,7 @@ def init_IS(
             'stats':{'tau': tau_0}}
 
     
-    return carry, log_q_x_0
+    return carry, (log_q_x_0, log_q_x_0)
 
 def update_IS(
         carry_tm1, 
@@ -251,10 +251,13 @@ def update_PaRIS(
         data_t = {'x':x_t,'log_q_x':log_q_t_x_t, 'y':y_t}
 
         def weights(x_tm1):
-            return q.log_transition_function(x_tm1, x_t, phi_t)
+            return q.log_transition_function(x_tm1, x_t, params_q_tm1_t)
         
         def _h(x_tm1, log_q_tm1_x_tm1):
-            data_tm1 = {'x':x_tm1, 'log_q_x':log_q_tm1_x_tm1, 'params_backwd': params_q_tm1_t, 'theta':carry_tm1['theta']}
+            data_tm1 = {'x':x_tm1, 
+                        'log_q_x':log_q_tm1_x_tm1, 
+                        'log_q_backwd_x': q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t), 
+                        'theta':carry_tm1['theta']}
             data = {'t':data_t, 'tm1':data_tm1}
             return h(data)
         
@@ -264,7 +267,7 @@ def update_PaRIS(
 
         h_tm1_t = jax.vmap(_h)(x_tm1, log_q_tm1_x_tm1)
 
-        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), 1 / (w_tm1_t**2).sum()
+        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), 1 / (w_tm1_t**2).sum(), jnp.exp(log_w_tm1_t).sum()
     
     filt_params = q.filt_params_from_state(state_t, phi_t)
     x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
@@ -273,14 +276,14 @@ def update_PaRIS(
                                             num_samples)
 
             
-    tau_t, ess_t = jax.vmap(update)(x_t, log_q_t_x_t)
+    tau_t, ess_t, normalizing_cst = jax.vmap(update)(x_t, log_q_t_x_t)
 
     carry_t = {'state':state_t, 
             'x':x_t, 
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
 
-    return carry_t, ess_t
+    return carry_t, (ess_t, normalizing_cst)
 
 
 
