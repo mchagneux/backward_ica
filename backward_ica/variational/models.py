@@ -19,6 +19,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
     @dataclass(init=True)
     class Params:
 
+        prior:Any 
         state:Any 
         backwd:Any
         filt:Any
@@ -31,7 +32,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
 
         def tree_flatten(self):
-            return ((self.state, self.backwd, self.filt), None)
+            return ((self.prior, self.state, self.backwd, self.filt), None)
 
         @classmethod
         def tree_unflatten(cls, aux_data, children):
@@ -70,8 +71,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
         self.backwd_layers = backwd_layers
         d = self.state_dim
 
-        self.prior_params = tuple([jnp.ones(shape=[size]) for size in self.update_layers])
-        
         if self.transition_kernel is not None: 
 
             backwd_kernel_def = {'map_type':'linear',
@@ -119,14 +118,14 @@ class NeuralBackwardSmoother(BackwardSmoother):
             
             def _log_transition_function(x_0, x_1, aux):
 
-                eta1, eta2 = net(aux, x_1, state_dim)
+                eta1, eta2, const = net(aux, x_1, state_dim)
                 
                 # eta2 = out[1]
                 # eta1 = out[0] #- 2 * mu_filt @ eta2.T
 
 
                 return x_0.T @ eta2 @ x_0 \
-                    + eta1.T @ x_0
+                    + eta1.T @ x_0 + const
             
             def backwd_params_from_state(state, params):
                 filt_params = self.filt_params_from_state(state, params)
@@ -142,9 +141,10 @@ class NeuralBackwardSmoother(BackwardSmoother):
                             'map_type':'nonlinear',
                             'map_info' : {
                                         'homogeneous': False, 
-                                        'dummy_varying_params':Gaussian.Params(
+                                        'dummy_varying_params':
+                                                Gaussian.Params(
                                                     eta1=jnp.empty((self.state_dim,)),
-                                                    eta2=jnp.eye(self.state_dim)),
+                                                    eta2=jnp.eye(self.state_dim)) 
                                                 },
                             'map': _backwd_map}
 
@@ -179,11 +179,14 @@ class NeuralBackwardSmoother(BackwardSmoother):
         dummy_obs = jnp.empty((self.obs_dim,))
 
 
-        
+        prior_params = tuple([random.normal(key, shape=[size]) for \
+                                                            key, size in zip(
+                                                    random.split(key_prior, len(self.update_layers)), 
+                                                    self.update_layers)])
 
-        state_params = self._state_net.init(key_state, dummy_obs, self.prior_params)
+        state_params = self._state_net.init(key_state, dummy_obs, prior_params)
 
-        out, new_state = self._state_net.apply(state_params, dummy_obs, self.prior_params)
+        out, new_state = self._state_net.apply(state_params, dummy_obs, prior_params)
 
         dummy_state = State(out=out, 
                             hidden=new_state)
@@ -196,7 +199,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
             backwd_params = self.transition_kernel.get_random_params(key_backwd)
 
 
-        params =  self.Params(state_params, 
+        params =  self.Params(prior_params, 
+                            state_params, 
                             backwd_params,
                             filt_params)
         
@@ -230,7 +234,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                 params.filt)
 
     def init_state(self, obs, params):
-        out, init_state = self._state_net.apply(params.state, obs, self.prior_params)
+        out, init_state = self._state_net.apply(params.state, obs, params.prior)
         return State(out=out, hidden=init_state)
 
     def new_state(self, obs, prev_state, params):

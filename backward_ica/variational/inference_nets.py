@@ -46,7 +46,7 @@ def backwd_update_forward(varying_params, next_state, layers, state_dim):
 
 def johnson(aux, obs, layers, state_dim):
 
-    rec_net = hk.nets.MLP((*layers, 2*state_dim),
+    rec_net = hk.nets.MLP((*layers, 2*state_dim + 1),
                 w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                 b_init=hk.initializers.RandomNormal(),
                 activation=nn.tanh,
@@ -54,11 +54,13 @@ def johnson(aux, obs, layers, state_dim):
 
 
     out = rec_net(jnp.concatenate([aux.vec, obs]))
-    eta1, log_prec_diag = jnp.split(out,2)
-
+    eta1, log_prec_diag = out[:state_dim], out[state_dim:-1]
     eta2 = -jnp.diag(nn.softplus(log_prec_diag))
 
-    return eta1, eta2
+    const = 0 #out[-1]
+
+
+    return eta1, eta2, const
 
 
 def johnson_anisotropic(obs, layers, state_dim):
