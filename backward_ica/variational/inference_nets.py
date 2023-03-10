@@ -3,7 +3,7 @@ from jax import numpy as jnp, nn
 from backward_ica.utils import *
 from backward_ica.stats.distributions import * 
 from backward_ica.stats.kernels import * 
-
+from jax.flatten_util import ravel_pytree
 def deep_gru(obs, prev_state, layers):
 
     gru = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in layers])

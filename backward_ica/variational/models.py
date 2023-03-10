@@ -19,7 +19,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
     @dataclass(init=True)
     class Params:
 
-        prior:Any 
         state:Any 
         backwd:Any
         filt:Any
@@ -32,7 +31,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
 
         def tree_flatten(self):
-            return ((self.prior, self.state, self.backwd, self.filt), None)
+            return ((self.state, self.backwd, self.filt), None)
 
         @classmethod
         def tree_unflatten(cls, aux_data, children):
@@ -71,6 +70,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
         self.backwd_layers = backwd_layers
         d = self.state_dim
 
+        self.prior_params = tuple([jnp.ones(shape=[size]) for size in self.update_layers])
+        
         if self.transition_kernel is not None: 
 
             backwd_kernel_def = {'map_type':'linear',
@@ -107,16 +108,17 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                                 layers=backwd_layers, 
                                                 state_dim=state_dim)
             
-            net = lambda input, state_dim: inference_nets.johnson(input, backwd_layers, state_dim)
+            net = lambda aux, input, state_dim: inference_nets.johnson(aux, input, backwd_layers, state_dim)
             
-            def _backwd_map(varying_params, input, state_dim):
-                eta1_filt, eta2_filt = varying_params.eta1, varying_params.eta2
-                out = net(varying_params, input, state_dim)
+            def _backwd_map(aux, input, state_dim):
+                eta1_filt, eta2_filt = aux.eta1, aux.eta2
+                out = net(aux, input, state_dim)
                 eta1_backwd, eta2_backwd = out[0] + eta1_filt, out[1] + eta2_filt
                 out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
                 return (out_params.mean, out_params.scale)
             
             def _log_transition_function(x_0, x_1, aux):
+
                 eta1, eta2 = net(aux, x_1, state_dim)
                 
                 # eta2 = out[1]
@@ -142,7 +144,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                         'homogeneous': False, 
                                         'dummy_varying_params':Gaussian.Params(
                                                     eta1=jnp.empty((self.state_dim,)),
-                                                    eta2=jnp.eye(self.state_dim))},
+                                                    eta2=jnp.eye(self.state_dim)),
+                                                },
                             'map': _backwd_map}
 
             super().__init__(
@@ -176,14 +179,11 @@ class NeuralBackwardSmoother(BackwardSmoother):
         dummy_obs = jnp.empty((self.obs_dim,))
 
 
-        prior_params = tuple([random.normal(key, shape=[size]) for \
-                                                            key, size in zip(
-                                                    random.split(key_prior, len(self.update_layers)), 
-                                                    self.update_layers)])
+        
 
-        state_params = self._state_net.init(key_state, dummy_obs, prior_params)
+        state_params = self._state_net.init(key_state, dummy_obs, self.prior_params)
 
-        out, new_state = self._state_net.apply(state_params, dummy_obs, prior_params)
+        out, new_state = self._state_net.apply(state_params, dummy_obs, self.prior_params)
 
         dummy_state = State(out=out, 
                             hidden=new_state)
@@ -196,8 +196,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
             backwd_params = self.transition_kernel.get_random_params(key_backwd)
 
 
-        params =  self.Params(prior_params, 
-                            state_params, 
+        params =  self.Params(state_params, 
                             backwd_params,
                             filt_params)
         
@@ -231,7 +230,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                 params.filt)
 
     def init_state(self, obs, params):
-        out, init_state = self._state_net.apply(params.state, obs, params.prior)
+        out, init_state = self._state_net.apply(params.state, obs, self.prior_params)
         return State(out=out, hidden=init_state)
 
     def new_state(self, obs, prev_state, params):

@@ -4,7 +4,7 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['neural_backward__online']
+q_models = ['neural_backward']
 
 num_epochs = 1000
 dims = '5 5'
@@ -13,7 +13,7 @@ loaded_seq = True
 
 batch_size = 1
 num_seqs = 1
-seq_length = 50
+seq_length = 500
 store_every = 0
 
 num_samples_list = [10]
