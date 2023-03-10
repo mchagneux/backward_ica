@@ -161,11 +161,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
 
     def log_transition_function(self, x_0, x_1, params):
-<<<<<<< HEAD
         return self._log_transition_function(params[0], x_0, x_1, params[1])
-=======
-        return self._log_transition_function(params[0], params[1], x_0, x_1)
->>>>>>> 06a463fc7e34850c9e62bb7290828c05c154c54c
             
     def compute_marginals(self, *args):
         return super().compute_marginals(*args)
