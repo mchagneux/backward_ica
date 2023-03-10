@@ -160,8 +160,7 @@ class Gaussian:
         
         @property
         def vec(self):
-            d = self.mean.shape[0]
-            return jnp.concatenate((self.mean, self.scale.chol[jnp.tril_indices(d)]))
+            return jnp.concatenate((self.eta1, jnp.diag(self.eta2)))
 
         @lazy_property
         def mean(self):

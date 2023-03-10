@@ -44,7 +44,7 @@ def backwd_update_forward(varying_params, next_state, layers, state_dim):
 
     return out.mean, out.scale
 
-def johnson(obs, layers, state_dim):
+def johnson(aux, obs, layers, state_dim):
 
     rec_net = hk.nets.MLP((*layers, 2*state_dim),
                 w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
@@ -53,7 +53,7 @@ def johnson(obs, layers, state_dim):
                 activate_final=False)
 
 
-    out = rec_net(obs)
+    out = rec_net(jnp.concatenate([aux.vec, obs]))
     eta1, log_prec_diag = jnp.split(out,2)
 
     eta2 = -jnp.diag(nn.softplus(log_prec_diag))

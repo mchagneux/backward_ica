@@ -17,7 +17,7 @@ seq_length = 100
 store_every = 0
 
 num_samples_list = [10]
-learning_rates = [0.01]
+learning_rates = [0.1]
 online_list = [False]
 online_elbo_list = [True]
 

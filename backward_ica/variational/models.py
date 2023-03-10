@@ -94,23 +94,24 @@ class NeuralBackwardSmoother(BackwardSmoother):
                         self.transition_kernel.logpdf(x_1, x_0, params.backwd)
             
             
+
+
         else: 
+            net = lambda aux, x_1, state_dim: inference_nets.johnson(
+                                                aux,
+                                                x_1, 
+                                                layers=backwd_layers, 
+                                                state_dim=state_dim)
             
             def _backwd_map(varying_params, input, state_dim):
                 eta1_filt, eta2_filt = varying_params.eta1, varying_params.eta2
-                out = inference_nets.johnson(
-                                input, 
-                                layers=backwd_layers, 
-                                state_dim=state_dim)
+                out = net(varying_params, input, state_dim)
                 eta1_backwd, eta2_backwd = out[0] + eta1_filt, out[1] + eta2_filt
                 out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
                 return (out_params.mean, out_params.scale), out
             
-            def _log_transition_function(x_0, x_1):
-                eta1, eta2 = inference_nets.johnson(
-                                x_1, 
-                                layers=backwd_layers, 
-                                state_dim=state_dim)
+            def _log_transition_function(x_0, x_1, aux):
+                eta1, eta2 = net(aux, x_1, state_dim)
                 
                 return x_0.T @ eta2 @ x_0 + eta1.T @ x_0
             
@@ -150,7 +151,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
 
     def log_transition_function(self, x_0, x_1, params):
-        return self._log_transition_function(params.backwd, x_0, x_1)
+        return self._log_transition_function(params[0], x_0, x_1, params[1])
             
     def compute_marginals(self, *args):
         return super().compute_marginals(*args)
