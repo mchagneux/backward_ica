@@ -70,15 +70,18 @@ class SVITrainer:
         self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
 
 
-        base_optimizer = optax.apply_if_finite(
-                                    optax.masked(getattr(optax, optimizer)(learning_rate), 
-                                                            self.trainable_params), 
+        base_optimizer = optax.apply_if_finite(getattr(optax, optimizer)(learning_rate),
                                             max_consecutive_errors=10)
 
-        zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
+        # base_optimizer = optax.apply_if_finite(
+        #                             optax.masked(getattr(optax, optimizer)(learning_rate), 
+        #                                                     self.trainable_params), 
+        #                                     max_consecutive_errors=10)
+        
+        # zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
 
         self.optimizer = optax.chain(
-                                optax.clip(0.1), 
+                                optax.clip(1.0), 
                                 base_optimizer)
         self.online = online
 
@@ -97,7 +100,7 @@ class SVITrainer:
             self.loss = closed_form_elbo
         else: 
             if online_elbo: 
-                self.elbo = OnlineNormalizedISELBO(self.p, self.q, num_samples)
+                self.elbo = OnlinePaRISELBO(self.p, self.q, num_samples)
                 self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
                 self.get_montecarlo_keys = get_keys
                 def online_elbo(key, data, compute_up_to, params):
@@ -108,12 +111,12 @@ class SVITrainer:
                                                                 compute_up_to,
                                                                 self.formatted_theta_star, 
                                                                 self.q.format_params(params))
-                    carry, ess = self.elbo.batch_compute(key, 
+                    carry, (ess, normalizing_csts) = self.elbo.batch_compute(key, 
                                                 data, 
                                                 self.formatted_theta_star, 
                                                 params)
                     
-                    return -carry, (-offline_value, ess)
+                    return -carry, (-offline_value, ess, normalizing_csts)
                 self.loss = online_elbo
             else: 
 
@@ -227,7 +230,7 @@ class SVITrainer:
                     params = optax.apply_updates(params, updates)
 
                     if self.online_elbo:
-                        aux = -jnp.mean(aux[0]), jnp.mean(aux[1], axis=0)
+                        aux = -jnp.mean(aux[0]), jnp.mean(aux[1], axis=0), jnp.mean(aux[2], axis=0)
                     return params, \
                         opt_state, \
                         -jnp.mean(neg_elbo_values), ravel_pytree(avg_grads)[0], aux
@@ -291,7 +294,8 @@ class SVITrainer:
             if self.online_elbo:
                 avg_monitor_elbo_batches = aux[0]
                 avg_monitor_elbo_epoch = jnp.mean(avg_monitor_elbo_batches)
-                avg_ess_epoch = jnp.mean(aux[1], axis=0)
+                avg_ess_epoch = jnp.mean(aux[1], axis=0)[1:]
+                avg_normalizing_cst_epoch = jnp.mean(aux[2], axis=0)[1:]
             t.set_postfix({'Avg ELBO epoch':avg_elbo_epoch})
 
             if log_writer is not None:
@@ -308,6 +312,8 @@ class SVITrainer:
                     # tf.summary.histogram('ESS', avg_ess_epoch, epoch_nb)
                     # tf.summary.scalar('Min ESS', jnp.min(avg_ess_epoch), epoch_nb)
                     tf.summary.scalar('Max ESS', jnp.max(avg_ess_epoch), epoch_nb)
+                    tf.summary.scalar('Min normalizing cst', jnp.min(avg_normalizing_cst_epoch), epoch_nb)
+
                     # print(avg_ess_epoch.shape)
                     for batch_nb, avg_monitor_elbo_batch in enumerate(avg_monitor_elbo_batches):
                         tf.summary.scalar( 

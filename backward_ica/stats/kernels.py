@@ -173,7 +173,7 @@ class Kernel:
                                                 state_dim=out_dim)))
     
                 def apply_map(params, input):
-                    mean, scale = nonlinear_apply_map(params[0], params[1], input)[0]
+                    mean, scale = nonlinear_apply_map(params[0], params[1], input)
                     return (mean, Gaussian.NoiseParams(scale))
 
 

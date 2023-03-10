@@ -25,7 +25,11 @@ class NeuralBackwardSmoother(BackwardSmoother):
         filt:Any
 
         def compute_covs(self):
-            pass
+            if hasattr(self.backwd, 'noise'):
+                self.backwd.noise.scale.cov
+                self.backwd.noise.scale.prec
+
+
 
         def tree_flatten(self):
             return ((self.prior, self.state, self.backwd, self.filt), None)
@@ -49,8 +53,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
                 args.state_dim, 
                 args.obs_dim, 
                 transition_kernel, 
+                args.backwd_layers,
                 args.update_layers)
-
 
     def __init__(self, 
             state_dim,
@@ -86,12 +90,12 @@ class NeuralBackwardSmoother(BackwardSmoother):
                 return LinearBackwardSmoother.linear_gaussian_backwd_params_from_transition_and_filt(
                                                                     filt_params.mean, 
                                                                     filt_params.scale.cov, 
-                                                                    params.backwd)
+                                                                    params.backwd), filt_params
 
             self._backwd_params_from_state = backwd_params_from_state
 
             self._log_transition_function = lambda params, x_0, x_1: \
-                        self.transition_kernel.logpdf(x_1, x_0, params.backwd)
+                        self.transition_kernel.logpdf(x_1, x_0, params)
             
             
 
@@ -103,27 +107,33 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                                 layers=backwd_layers, 
                                                 state_dim=state_dim)
             
+            net = lambda input, state_dim: inference_nets.johnson(input, backwd_layers, state_dim)
+            
             def _backwd_map(varying_params, input, state_dim):
                 eta1_filt, eta2_filt = varying_params.eta1, varying_params.eta2
                 out = net(varying_params, input, state_dim)
                 eta1_backwd, eta2_backwd = out[0] + eta1_filt, out[1] + eta2_filt
                 out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
-                return (out_params.mean, out_params.scale), out
+                return (out_params.mean, out_params.scale)
             
             def _log_transition_function(x_0, x_1, aux):
                 eta1, eta2 = net(aux, x_1, state_dim)
                 
-                return x_0.T @ eta2 @ x_0 + eta1.T @ x_0
+                # eta2 = out[1]
+                # eta1 = out[0] #- 2 * mu_filt @ eta2.T
+
+
+                return x_0.T @ eta2 @ x_0 \
+                    + eta1.T @ x_0
             
             def backwd_params_from_state(state, params):
                 filt_params = self.filt_params_from_state(state, params)
                 return params.backwd, filt_params
             
-
             self._log_transition_function = hk.without_apply_rng(
-                                            hk.transform(
-                                            _log_transition_function))[1]
-            
+                                                hk.transform(
+                                                _log_transition_function))[1]
+                
             self._backwd_params_from_state = backwd_params_from_state
 
             backwd_kernel_def = {
@@ -151,7 +161,11 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
 
     def log_transition_function(self, x_0, x_1, params):
+<<<<<<< HEAD
         return self._log_transition_function(params[0], x_0, x_1, params[1])
+=======
+        return self._log_transition_function(params[0], params[1], x_0, x_1)
+>>>>>>> 06a463fc7e34850c9e62bb7290828c05c154c54c
             
     def compute_marginals(self, *args):
         return super().compute_marginals(*args)
