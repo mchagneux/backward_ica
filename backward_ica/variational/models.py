@@ -73,70 +73,44 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
         if self.transition_kernel is not None: 
 
+            print('Setting up potentials from linear Gaussian kernel.')
             backwd_kernel_def = {'map_type':'linear',
                                 'map_info' : {'conditionning': None, 
                                         'bias': True,
                                         'range_params':(0,1)}}
             
-            super().__init__(
-                        filt_dist=Gaussian, 
-                        backwd_kernel=Kernel(
-                                        state_dim, 
-                                        state_dim, 
-                                        backwd_kernel_def))
             
-            def backwd_params_from_state(state, params):
-                filt_params = self.filt_params_from_state(state, params)
-                return LinearBackwardSmoother.linear_gaussian_backwd_params_from_transition_and_filt(
-                                                                    filt_params.mean, 
-                                                                    filt_params.scale.cov, 
-                                                                    params.backwd), filt_params
+            def backwd_params_from_state(filt_params_0, filt_params_1, params):
+                mean_filt_1 = filt_params_1.mean
+                mean_filt_0, cov_filt_0 = filt_params_0.mean, filt_params_0.scale.cov
+                
+
+                return LinearBackwardSmoother.linear_gaussian_backwd_params_from_transition_and_filt(mean_filt_0, cov_filt_0, params.backwd), (params.backwd, mean_filt_0, mean_filt_1)
 
             self._backwd_params_from_state = backwd_params_from_state
 
-            self._log_transition_function = lambda params, x_0, x_1: \
-                        self.transition_kernel.logpdf(x_1, x_0, params)
+            def _log_transition_function(x_0, x_1, params_potential):
+                kernel_params, mu_0, mu_1 = params_potential[0], params_potential[1], params_potential[2]
+                A, b, Q_prec = kernel_params.map.w, kernel_params.map.b, kernel_params.noise.scale.prec
+                temp = x_1 - (A @ x_0 + b)
+                temp_const = mu_1 - (A @ mu_0 + b)
+                return -0.5 * temp.T @ Q_prec @ temp + 0.5*temp_const.T @ Q_prec @ temp_const
+
+            self._log_transition_function = lambda x_0, x_1, params_potential: _log_transition_function(x_0, x_1, params_potential)
+
             
             
 
 
         else: 
-            net = lambda aux, x_1, state_dim: inference_nets.johnson(
-                                                aux,
-                                                x_1, 
-                                                layers=backwd_layers, 
-                                                state_dim=state_dim)
-            
-            net = lambda aux, input, state_dim: inference_nets.johnson(aux, input, backwd_layers, state_dim)
             
             def _backwd_map(aux, input, state_dim):
                 eta1_filt, eta2_filt = aux.eta1, aux.eta2
-                out = net(aux, input, state_dim)
+                out = inference_nets.johnson(aux.vec, input, backwd_layers, state_dim)
                 eta1_backwd, eta2_backwd = out[0] + eta1_filt, out[1] + eta2_filt
                 out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
-                return (out_params.mean, out_params.scale)
-            
-            def _log_transition_function(x_0, x_1, aux):
-
-                eta1, eta2, const = net(aux, x_1, state_dim)
-                
-                # eta2 = out[1]
-                # eta1 = out[0] #- 2 * mu_filt @ eta2.T
-
-
-                return x_0.T @ eta2 @ x_0 \
-                    + eta1.T @ x_0 + const
-            
-            def backwd_params_from_state(state, params):
-                filt_params = self.filt_params_from_state(state, params)
-                return params.backwd, filt_params
-            
-            self._log_transition_function = hk.without_apply_rng(
-                                                hk.transform(
-                                                _log_transition_function))[1]
-                
-            self._backwd_params_from_state = backwd_params_from_state
-
+                return (out_params.mean, out_params.scale), out
+                            
             backwd_kernel_def = {
                             'map_type':'nonlinear',
                             'map_info' : {
@@ -147,10 +121,43 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                                     eta2=jnp.eye(self.state_dim)) 
                                                 },
                             'map': _backwd_map}
+            
+
 
             super().__init__(
-                        filt_dist=Gaussian,
-                        backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
+                    filt_dist=Gaussian,
+                    backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
+            
+
+            def _log_transition_function(params, x_0, x_1, aux):
+
+                filt_params_0, filt_params_1 = aux
+
+                mu_0 = filt_params_0.mean
+                mu_1 = filt_params_1.mean
+
+
+                eta1, eta2 = self.backwd_kernel.nonlinear_map_apply(params, filt_params_0, x_1)[1]
+
+                eta1_const, eta2_const = self.backwd_kernel.nonlinear_map_apply(params, filt_params_0, mu_1)[1]
+
+                const = 0 #(mu_0.T @ eta2_const @ mu_0 + eta1_const.T @ mu_0)
+                           
+                return x_0.T @ eta2 @ x_0 + eta1.T @ x_0 - const, eta1, eta2
+            
+            def backwd_params_from_state(filt_params_0, filt_params_1, params):
+                return (params.backwd, filt_params_0), (params.backwd, (filt_params_0, filt_params_1))
+            
+
+            self._log_transition_function = lambda x_0, x_1, params: _log_transition_function(params[0], x_0, x_1, params[1])
+                
+            self._backwd_params_from_state = backwd_params_from_state
+
+            
+
+
+
+        
 
 
         
@@ -163,8 +170,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                                         d=d)))
 
 
-    def log_transition_function(self, x_0, x_1, params):
-        return self._log_transition_function(params[0], x_0, x_1, params[1])
+    def log_transition_function(self, x_0, x_1, params_potential):
+        return self._log_transition_function(x_0, x_1, params_potential)
             
     def compute_marginals(self, *args):
         return super().compute_marginals(*args)
@@ -228,9 +235,12 @@ class NeuralBackwardSmoother(BackwardSmoother):
         if self.transition_kernel is None:
             return params 
         else: 
+            formatted_transition = self.transition_kernel.format_params(params.backwd)
+            formatted_transition.noise.scale = Scale(cov=jnp.eye(self.state_dim))
+            # formatted_transition.map.w = jnp.eye(self.state_dim)
             return self.Params(params.prior, 
                                 params.state, 
-                                self.transition_kernel.format_params(params.backwd), 
+                                formatted_transition, 
                                 params.filt)
 
     def init_state(self, obs, params):
@@ -244,8 +254,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
     def filt_params_from_state(self, state, params):
         return self._filt_net.apply(params.filt, state)
 
-    def backwd_params_from_state(self, state, params):
-        return self._backwd_params_from_state(state, params)
+    def backwd_params_from_state(self, filt_params_0, filt_params_1, params):
+        return self._backwd_params_from_state(filt_params_0, filt_params_1, params)
 
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))

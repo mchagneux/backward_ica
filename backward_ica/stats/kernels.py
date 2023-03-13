@@ -173,7 +173,7 @@ class Kernel:
                                                 state_dim=out_dim)))
     
                 def apply_map(params, input):
-                    mean, scale = nonlinear_apply_map(params[0], params[1], input)
+                    (mean, scale), aux = nonlinear_apply_map(params[0], params[1], input)
                     return (mean, Gaussian.NoiseParams(scale))
 
 
@@ -183,7 +183,8 @@ class Kernel:
                                                 jnp.empty((self.in_dim,)))
     
                 format_map_params = lambda x:x
-        
+
+                self.nonlinear_map_apply = nonlinear_apply_map
 
         self._apply_map = apply_map 
         self._get_random_map_params = get_random_map_params

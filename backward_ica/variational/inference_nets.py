@@ -18,13 +18,13 @@ def gaussian_proj(state, d):
 
     out = net(state.out)
     
-    eta1, log_prec_diag = jnp.split(out,2)
+    out1, out2 = jnp.split(out,2)
 
-    eta2 = -jnp.diag(nn.softplus(log_prec_diag))
+    out2 = -jnp.diag(nn.softplus(out2))
 
     return Gaussian.Params(
-                    eta1=eta1, 
-                    eta2=eta2)
+                    eta1=out1, 
+                    eta2=out2)
 
 
 def backwd_update_forward(varying_params, next_state, layers, state_dim):
@@ -46,21 +46,17 @@ def backwd_update_forward(varying_params, next_state, layers, state_dim):
 
 def johnson(aux, obs, layers, state_dim):
 
-    rec_net = hk.nets.MLP((*layers, 2*state_dim + 1),
+    net = hk.nets.MLP((*layers, 2*state_dim),
                 w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                 b_init=hk.initializers.RandomNormal(),
                 activation=nn.tanh,
                 activate_final=False)
-
-
-    out = rec_net(jnp.concatenate([aux.vec, obs]))
-    eta1, log_prec_diag = out[:state_dim], out[state_dim:-1]
+    
+    out = net(jnp.concatenate([aux, obs]))
+    eta1, log_prec_diag = jnp.split(out,2)
     eta2 = -jnp.diag(nn.softplus(log_prec_diag))
 
-    const = 0 #out[-1]
-
-
-    return eta1, eta2, const
+    return eta1, eta2
 
 
 def johnson_anisotropic(obs, layers, state_dim):

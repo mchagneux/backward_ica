@@ -98,14 +98,15 @@ class OfflineVariationalAdditiveSmoothing:
 
         def t_strictly_greater_than_T(carry_tp1, input_t):
 
-            return carry_tp1, None
+            return carry_tp1, (jnp.empty((self.p.state_dim,)), jnp.empty((self.p.state_dim,)),jnp.empty((self.p.state_dim,)))
 
         def t_smaller_or_equal_to_T(carry_tp1, input_t):
 
             def t_equals_T(carry_tp1, input_t):
 
                 key_t = input_t['key']
-                state_t = input_t['state']
+                state_t, state_tp1 = tree_get_idx(0,input_t['state']), tree_get_idx(1, input_t['state'])
+
 
                 params_q_t = self.q.filt_params_from_state(state_t, phi)
                 x_t = self.q.filt_dist.sample(key_t, params_q_t)
@@ -117,7 +118,7 @@ class OfflineVariationalAdditiveSmoothing:
 
                 carry_t = {'x':x_t, 'y': input_t['y'], 'tau': tau_t}
 
-                return carry_t, None
+                return carry_t, (jnp.diagonal(params_q_t.scale.cov), jnp.zeros((self.p.state_dim,)), jnp.zeros((self.p.state_dim,)))
                 
 
             def t_strictly_lower_than_T(carry_tp1, input_t):
@@ -129,12 +130,18 @@ class OfflineVariationalAdditiveSmoothing:
                     y_tp1 = carry_tp1['y']
 
                     key_t = input_t['key']
-                    state_t = input_t['state']
+                    state_t = tree_get_idx(0,input_t['state'])
+                    state_tp1 = tree_get_idx(1, input_t['state'])
                     y_t = input_t['y']
 
-                    params_q_t_tp1 = self.q.backwd_params_from_state(state_t, phi)
-
+                    params_q_t = self.q.filt_params_from_state(state_t, phi)
+                    params_q_t_tp1, params_potential = self.q.backwd_params_from_state(
+                                    params_q_t,
+                                    self.q.filt_params_from_state(state_tp1, phi),
+                                    phi)
                     x_t = self.q.backwd_kernel.sample(key_t, x_tp1, params_q_t_tp1)
+
+                    _, eta1, eta2 = self.q.log_transition_function(x_t, x_tp1, params_potential)
 
                     data_tp1 = {'x': x_tp1, 'y':y_tp1, 'theta': theta}
 
@@ -147,7 +154,7 @@ class OfflineVariationalAdditiveSmoothing:
 
                     carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t}
 
-                    return carry_t, None
+                    return carry_t, (jnp.diagonal(params_q_t.scale.cov), eta1, jnp.diagonal(eta2))
 
 
                 def t_strictly_greater_than_0(carry_tp1, input_t):
@@ -156,10 +163,18 @@ class OfflineVariationalAdditiveSmoothing:
                     y_tp1 = carry_tp1['y']
 
                     key_t = input_t['key']
-                    state_t = input_t['state']
+                    state_t = tree_get_idx(0, input_t['state'])
+                    state_tp1 = tree_get_idx(1, input_t['state'])
 
-                    params_q_t_tp1 = self.q.backwd_params_from_state(state_t, phi)
+                    params_q_t = self.q.filt_params_from_state(state_t, phi)
+                    params_q_t_tp1, params_potential = self.q.backwd_params_from_state(
+                                                        params_q_t,
+                                                        self.q.filt_params_from_state(state_tp1, phi),
+                                                        phi)
+                    
                     x_t = self.q.backwd_kernel.sample(key_t, x_tp1, params_q_t_tp1)
+
+                    _, eta1, eta2 = self.q.log_transition_function(x_t, x_tp1, params_potential)
 
                     data_tp1 = {'x': x_tp1, 'y':y_tp1, 'theta': theta}
                     data_t = {'x': x_t, 'params_backwd':params_q_t_tp1}
@@ -169,7 +184,7 @@ class OfflineVariationalAdditiveSmoothing:
 
                     carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t}
 
-                    return carry_t, None
+                    return carry_t, (jnp.diagonal(params_q_t.scale.cov), eta1, jnp.diagonal(eta2))
 
                 return lax.cond(input_t['t'] > 0, 
                                 t_strictly_greater_than_0, t_equals_0, 
@@ -195,8 +210,9 @@ class OfflineVariationalAdditiveSmoothing:
                                             formatted_params=phi)
         def evaluate_one_path(key):
 
+
             inputs = {'t': t_seq,
-                    'state': state_seq,
+                    'state': tree_get_strides(2, tree_append(state_seq, tree_get_idx(0, state_seq))),
                     'y': obs_seq, 
                     'key': jax.random.split(key, len(obs_seq))}
 
@@ -204,13 +220,16 @@ class OfflineVariationalAdditiveSmoothing:
                             'y': jnp.empty((self.p.obs_dim,)),
                             'tau':jnp.empty((*self.functional.out_shape,))}
             
-            return lax.scan(compute, 
+            carry, aux = lax.scan(compute, 
                             init=dummy_carry, 
-                            xs=inputs, reverse=True)[0]['tau']
+                            xs=inputs, reverse=True)
+            
+            return carry['tau'], aux
 
-        tau = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
+        tau, aux = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
         
-        return jnp.mean(tau, axis=0) / len(obs_seq), 0
+        aux = (aux[0][0], jnp.transpose(aux[1], (1,0,2)), jnp.transpose(aux[2], (1,0,2)))
+        return jnp.mean(tau, axis=0) / len(obs_seq), aux
 
 GeneralBackwardELBO = lambda p, q, num_samples: OfflineVariationalAdditiveSmoothing(p, q, offline_elbo_functional(p,q), num_samples)
 

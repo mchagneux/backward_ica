@@ -216,7 +216,7 @@ def get_defaults(args):
 
     args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior
     args.default_prior_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the prior
-    args.default_transition_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the transition kernel
+    args.default_transition_base_scale = math.sqrt(1e-1) # default value for the diagonal components of the covariance matrix of the transition kernel
     args.default_transition_bias = 0.0
     args.default_emission_base_scale = math.sqrt(1e-1)
 
@@ -246,7 +246,7 @@ def get_defaults(args):
 
     if 'neural_backward' or 'johnson' in args.model:
         ## variational family
-        args.update_layers = (16,) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (8,) # number of layers in the GRU which updates the variational filtering dist
         # args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     if 'johnson' in args.model:
@@ -254,7 +254,7 @@ def get_defaults(args):
 
     if 'neural_backward' in args.model:
         if not 'explicit_transition' in args.model_options:
-            args.backwd_layers = (16,)
+            args.backwd_layers = (16,16)
         else: 
             args.backwd_layers = 0
 

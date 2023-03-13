@@ -105,31 +105,31 @@ class SVITrainer:
                 self.get_montecarlo_keys = get_keys
                 def online_elbo(key, data, compute_up_to, params):
 
-                    offline_value, _ = self.offline_elbo_for_check(
+                    offline_value, _  = self.offline_elbo_for_check(
                                                                 key, 
                                                                 data, 
                                                                 compute_up_to,
                                                                 self.formatted_theta_star, 
                                                                 self.q.format_params(params))
-                    carry, (ess, normalizing_csts) = self.elbo.batch_compute(key, 
+                    carry, (ess, normalizing_csts, covs_q_t, eta1, eta2) = self.elbo.batch_compute(key, 
                                                 data, 
                                                 self.formatted_theta_star, 
                                                 params)
                     
-                    return -carry, (-offline_value, ess, normalizing_csts)
+                    return -carry, (-offline_value, ess, normalizing_csts, covs_q_t, eta1, eta2)
                 self.loss = online_elbo
             else: 
 
                 self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                 self.get_montecarlo_keys = get_keys
                 def offline_elbo(key, data, compute_up_to, params):
-                    value, dummy_aux = self.elbo(
+                    value, (covs_q_t_offline, eta1_offline, eta2_offline) = self.elbo(
                                     key, 
                                     data, 
                                     compute_up_to, 
                                     self.formatted_theta_star, 
                                     q.format_params(params))
-                    return -value, dummy_aux 
+                    return -value, (covs_q_t_offline, eta1_offline, eta2_offline)
 
                 self.loss = offline_elbo
         if self.online: 
@@ -229,8 +229,11 @@ class SVITrainer:
                     updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
                     params = optax.apply_updates(params, updates)
 
+                    aux = [jnp.mean(aux_elem, axis=0) for aux_elem in aux]
                     if self.online_elbo:
-                        aux = -jnp.mean(aux[0]), jnp.mean(aux[1], axis=0), jnp.mean(aux[2], axis=0)
+                        aux[0] = -aux[0]
+
+
                     return params, \
                         opt_state, \
                         -jnp.mean(neg_elbo_values), ravel_pytree(avg_grads)[0], aux
@@ -296,24 +299,63 @@ class SVITrainer:
                 avg_monitor_elbo_epoch = jnp.mean(avg_monitor_elbo_batches)
                 avg_ess_epoch = jnp.mean(aux[1], axis=0)[1:]
                 avg_normalizing_cst_epoch = jnp.mean(aux[2], axis=0)[1:]
+                mean_normalizing_const = jnp.mean(avg_normalizing_cst_epoch, axis=-1)
+                min_normalizing_const = jnp.min(avg_normalizing_cst_epoch, axis=-1)
+
+                avg_covs_epoch = jnp.mean(aux[3], axis=0)
+                avg_eta1_epoch = jnp.mean(aux[4], axis=0)[1:]
+                avg_eta2_epoch = jnp.mean(aux[5], axis=0)[1:]
+            else:
+                avg_covs_epoch = jnp.mean(aux[0], axis=0)
+                avg_eta1_epoch = jnp.mean(aux[1], axis=0)[:-1]
+                avg_eta2_epoch = jnp.mean(aux[2], axis=0)[:-1]
+                
+            norm_covs = jnp.linalg.norm(avg_covs_epoch, axis=1)
+            max_norm_covs = jnp.max(norm_covs, axis=0)
+            mean_norm_covs = jnp.mean(norm_covs, axis=0)
+
+            norm_eta_1 = jnp.linalg.norm(jnp.linalg.norm(avg_eta1_epoch, axis=-1), axis=-1)
+            max_eta_1 = jnp.max(norm_eta_1, axis=0)
+            mean_eta_1 = jnp.mean(norm_eta_1, axis=0)
+
+            norm_minus_eta_2 = jnp.linalg.norm(jnp.linalg.norm(-avg_eta2_epoch, axis=-1), axis=-1)
+            max_minus_eta_2 = jnp.max(norm_minus_eta_2, axis=0)
+            mean_minus_eta_2 = jnp.mean(norm_minus_eta_2, axis=0)
+
+
             t.set_postfix({'Avg ELBO epoch':avg_elbo_epoch})
 
             if log_writer is not None:
                 with log_writer.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
-                    tf.summary.histogram('Histogram gradients', avg_grads_epoch, epoch_nb)
+                    # tf.summary.histogram('Histogram gradients', avg_grads_epoch, epoch_nb)
+                    if self.online_elbo:
+                        tf.summary.scalar('Max ESS (over t and i)', jnp.max(avg_ess_epoch), epoch_nb)
+                        tf.summary.scalar('Mean (over t and i) normalizing cst', jnp.mean(mean_normalizing_const, axis=0), epoch_nb)
+                        tf.summary.scalar('Mean (over t) of min (of i) normalizing cst', jnp.mean(min_normalizing_const, axis=0), epoch_nb)
+                        tf.summary.scalar('Min (over t) of min (of i) normalizing cst', jnp.min(min_normalizing_const, axis=0), epoch_nb)
+
+                    tf.summary.scalar('Max (over t) 2-norm (over dimensions) of diag(Sigma_t)', max_norm_covs, epoch_nb)
+                    tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of diag(Sigma_t)', mean_norm_covs, epoch_nb)
+
+                    tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of eta_1', mean_eta_1, epoch_nb)
+                    tf.summary.scalar('Max (over t) 2-norm (over dimensions) of eta_1', max_eta_1, epoch_nb)
+                    
+                    tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of eta_2', mean_minus_eta_2, epoch_nb)
+                    tf.summary.scalar('Max (over t) 2-norm (over dimensions) of eta_2', max_minus_eta_2, epoch_nb)
+
+                    # tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of diag(-eta_2)', jnp.mean(avg_eta2_epoch, axis=0), epoch_nb)
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', 
                                           avg_elbo_batch, 
                                           epoch_nb*len(batch_start_indices) + batch_nb)
+                        
             if log_writer_monitor is not None:
                 with log_writer_monitor.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_monitor_elbo_epoch, epoch_nb)
                     # tf.summary.histogram('ESS', avg_ess_epoch, epoch_nb)
                     # tf.summary.scalar('Min ESS', jnp.min(avg_ess_epoch), epoch_nb)
-                    tf.summary.scalar('Max ESS', jnp.max(avg_ess_epoch), epoch_nb)
-                    tf.summary.scalar('Min normalizing cst', jnp.min(avg_normalizing_cst_epoch), epoch_nb)
-
+    
                     # print(avg_ess_epoch.shape)
                     for batch_nb, avg_monitor_elbo_batch in enumerate(avg_monitor_elbo_batches):
                         tf.summary.scalar( 

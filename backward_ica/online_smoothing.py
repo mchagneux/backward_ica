@@ -159,7 +159,7 @@ def init_IS(
             'stats':{'tau': tau_0}}
 
     
-    return carry, (log_q_x_0, log_q_x_0)
+    return carry, (log_q_x_0, log_q_x_0, jnp.diagonal(filt_params.scale.cov), jnp.empty((num_samples, p.state_dim)), jnp.empty((num_samples, p.state_dim)))
 
 def update_IS(
         carry_tm1, 
@@ -223,7 +223,7 @@ def update_PaRIS(
         carry_tm1, 
         input_t:HMM, 
         p:HMM, 
-        q:BackwardSmoother, 
+        q:NeuralBackwardSmoother, 
         h, 
         num_samples, 
         normalizer):
@@ -235,9 +235,18 @@ def update_PaRIS(
     t, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['key'], input_t['y'], input_t['phi']
 
     phi_t = q.format_params(unformatted_phi_t)
-    params_q_tm1_t = q.backwd_params_from_state(state_tm1, phi_t)
-
     state_t = q.new_state(y_t, state_tm1, phi_t)
+
+
+    filt_params_tm1 = q.filt_params_from_state(state_tm1, phi_t)
+    filt_params_t = q.filt_params_from_state(state_t, phi_t)
+
+    x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
+                                            key_t, 
+                                            filt_params_t,
+                                            num_samples)
+    
+    params_q_tm1_t, params_potential = q.backwd_params_from_state(filt_params_tm1, filt_params_t, phi_t)
 
     tau_tm1 = carry_tm1['stats']['tau']
 
@@ -250,8 +259,8 @@ def update_PaRIS(
 
         data_t = {'x':x_t,'log_q_x':log_q_t_x_t, 'y':y_t}
 
-        def weights(x_tm1):
-            return q.log_transition_function(x_tm1, x_t, params_q_tm1_t)
+        def log_weights(x_tm1):
+            return q.log_transition_function(x_tm1, x_t, params_potential)
         
         def _h(x_tm1, log_q_tm1_x_tm1):
             data_tm1 = {'x':x_tm1, 
@@ -261,29 +270,26 @@ def update_PaRIS(
             data = {'t':data_t, 'tm1':data_tm1}
             return h(data)
         
-        log_w_tm1_t = jax.vmap(weights)(x_tm1)
+        log_w_tm1_t, eta1, eta2 = jax.vmap(log_weights)(x_tm1)
 
         w_tm1_t = normalizer(log_w_tm1_t)
 
+        eta1 = tree_get_idx(0, eta1)
+        eta2 = tree_get_idx(0, eta2)
         h_tm1_t = jax.vmap(_h)(x_tm1, log_q_tm1_x_tm1)
 
-        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), 1 / (w_tm1_t**2).sum(), jnp.exp(log_w_tm1_t).sum()
+        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), 1 / (w_tm1_t**2).sum(), jnp.exp(log_w_tm1_t).sum(), eta1, jnp.diagonal(eta2)
     
-    filt_params = q.filt_params_from_state(state_t, phi_t)
-    x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
-                                            key_t, 
-                                            filt_params,
-                                            num_samples)
 
-            
-    tau_t, ess_t, normalizing_cst = jax.vmap(update)(x_t, log_q_t_x_t)
+
+    tau_t, ess_t, normalizing_cst, eta1, eta2 = jax.vmap(update)(x_t, log_q_t_x_t)
 
     carry_t = {'state':state_t, 
             'x':x_t, 
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
 
-    return carry_t, (ess_t, normalizing_cst)
+    return carry_t, (ess_t, normalizing_cst, jnp.diagonal(filt_params_t.scale.cov), eta1, eta2)
 
 
 
