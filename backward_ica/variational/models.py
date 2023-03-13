@@ -137,11 +137,11 @@ class NeuralBackwardSmoother(BackwardSmoother):
                 mu_1 = filt_params_1.mean
 
 
-                eta1, eta2 = self.backwd_kernel.nonlinear_map_apply(params, filt_params_0, x_1)[1]
+                eta1, eta2 = self.backwd_kernel.nonlinear_map_apply(params, filt_params_0, x_1-mu_1)[1]
 
-                eta1_const, eta2_const = self.backwd_kernel.nonlinear_map_apply(params, filt_params_0, mu_1)[1]
+                eta1_const, eta2_const = self.backwd_kernel.nonlinear_map_apply(params, filt_params_0, x_1-mu_1)[1]
 
-                const = 0 #(mu_0.T @ eta2_const @ mu_0 + eta1_const.T @ mu_0)
+                const = 0#(mu_0.T @ eta2_const @ mu_0 + eta1_const.T @ mu_0)
                            
                 return x_0.T @ eta2 @ x_0 + eta1.T @ x_0 - const, eta1, eta2
             
