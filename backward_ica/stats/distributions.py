@@ -4,60 +4,58 @@ from jax.scipy.special import gammaln
 
 @register_pytree_node_class
 class Scale:
-
+    
     parametrization = 'cov_chol'
 
     def __init__(self, cov_chol=None, prec_chol=None, cov=None, prec=None):
 
-        if cov is not None:
-            self.cov = cov
-            self.cov_chol = cholesky(cov)
-
-        elif prec is not None:
-            self.prec = prec
-            self.prec_chol = cholesky(prec)
-        
-        elif cov_chol is not None:
-            self.cov_chol = cov_chol
+        if cov_chol is not None: 
+            self._cov_chol = cov_chol
 
         elif prec_chol is not None: 
-            self.prec_chol = prec_chol 
+            self._prec_chol = prec_chol 
+        
+        elif cov is not None:
+            self._cov_chol = cholesky(cov)
+
+        elif prec is not None:
+            self._prec_chol = cholesky(prec)
+        
         else:
             raise ValueError()        
 
-    @lazy_property
-    def cov(self):
-        if 'cov_chol' in vars(self).keys():
-            return mat_from_chol(self.cov_chol)
-        else: 
-            return inv_from_chol(self.prec_chol)
-
-    @lazy_property
-    def prec(self):
-        if 'prec_chol' in vars(self).keys():
-            return mat_from_chol(self.prec_chol)
-        else: return inv_from_chol(self.cov_chol)
-
-    @lazy_property
+    @property
     def cov_chol(self):
-        return cholesky(self.cov)
-
-    @lazy_property
+        if hasattr(self, '_cov_chol'):
+            return self._cov_chol
+        else: 
+            return chol_from_prec(self.prec)
+        
+    @property
     def prec_chol(self):
-        return cholesky(self.prec)
+        if hasattr(self, '_prec_chol'):
+            return self._prec_chol
+        else: 
+            return chol_from_prec(self.cov)
+
 
     @property
-    def chol(self):
-        if 'cov_chol' in vars(self).keys(): 
-            return self.cov_chol
-        else: 
-            return self.prec_chol
+    def cov(self):
+        if hasattr(self, '_cov_chol'):
+            return mat_from_chol(self._cov_chol)
+        else:
+            return inv_from_chol(self._prec_chol)
 
-    @lazy_property
+    @property
+    def prec(self):
+        if hasattr(self, '_prec_chol'):
+            return mat_from_chol(self._prec_chol)
+        else:
+            return inv_from_chol(self._cov_chol)
+
+    @property
     def log_det(self):
-        if 'cov_chol' in vars(self).keys():
-            return log_det_from_chol(self.cov_chol)
-        else: return log_det_from_chol(chol_from_prec(self.prec))
+        return log_det_from_chol(self.cov_chol)
 
 
     def tree_flatten(self):
@@ -98,9 +96,6 @@ class Scale:
         return {parametrization:scale}
 
 
-
-
-
 class Gaussian: 
 
 
@@ -110,33 +105,11 @@ class Gaussian:
         def __init__(self, mean=None, scale=None, eta1=None, eta2=None):
 
             if (mean is not None) and (scale is not None):
-                self.mean = mean 
-                self.scale = scale
+                self._mean = mean 
+                self._scale = scale
             elif (eta1 is not None) and (eta2 is not None):
-                self.eta1 = eta1 
-                self.eta2 = eta2
-
-        @classmethod
-        def from_mean_scale(cls, mean, scale):
-            obj = cls.__new__(cls)
-            obj.mean = mean 
-            obj.scale = scale
-            return obj
-
-        @classmethod
-        def from_nat_params(cls, eta1, eta2):
-            obj = cls.__new__(cls)
-            obj.eta1 = eta1
-            obj.eta2 = eta2 
-            return obj
-
-        @classmethod
-        def from_mean_cov(cls, mean, cov):
-            obj = cls.__new__(cls)
-            obj.mean = mean 
-            obj.scale = Scale(cov=cov)
-            return obj 
-
+                self._eta1 = eta1 
+                self._eta2 = eta2
 
         @classmethod
         def from_vec(cls, vec, d, diag=True, chol_add=empty_add):
@@ -162,21 +135,34 @@ class Gaussian:
         def vec(self):
             return jnp.concatenate((self.eta1, jnp.diag(self.eta2)))
 
-        @lazy_property
+        @property
         def mean(self):
-            return self.scale.cov @ self.eta1
+            if hasattr(self, '_mean'):
+                return self._mean
+            else: 
+                return self.scale.cov @ self._eta1
 
-        @lazy_property
+        @property
         def scale(self):
-            return Scale(prec=-2*self.eta2)
-        
-        @lazy_property
-        def eta1(self):
-            return self.scale.prec @ self.mean 
+            if hasattr(self, '_scale'):
+                return self._scale
+            else: 
+                return Scale(prec=-2*self._eta2)
             
-        @lazy_property
+        @property
+        def eta1(self):
+            if hasattr(self, '_eta1'):
+                return self._eta1
+            else: 
+                return self._scale.prec @ self._mean 
+            
+    
+        @property
         def eta2(self):
-            return -0.5*self.scale.prec 
+            if hasattr(self, '_eta2'):
+                return self._eta2
+            else: 
+                return -0.5*self._scale.prec 
             
         def tree_flatten(self):
             attrs = vars(self)

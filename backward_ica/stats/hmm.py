@@ -52,19 +52,6 @@ class HMM:
         transition: Kernel.Params
         emission: Kernel.Params
 
-        def compute_covs(self):
-
-            self.prior.scale.cov
-            self.prior.scale.log_det
-            self.prior.scale.prec
-
-            self.transition.noise.scale.cov
-            self.transition.noise.scale.prec
-            self.transition.noise.scale.log_det
-
-            self.emission.noise.scale.cov
-            self.emission.noise.scale.prec
-            self.emission.noise.scale.log_det
 
         def tree_flatten(self):
             return ((self.prior, self.transition, self.emission), None)
@@ -158,13 +145,13 @@ class HMM:
         new_params = copy.deepcopy(params)
         for k,v in vars(args).items():         
             if k == 'default_prior_mean':
-                new_params.prior.mean = v * jnp.ones_like(params.prior.mean)
+                new_params.prior._mean = v * jnp.ones_like(params.prior.mean)
             elif k == 'default_prior_base_scale':
-                new_params.prior.scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
+                new_params.prior._scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
             elif k == 'default_transition_base_scale': 
-                new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
+                new_params.transition.noise._scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
             elif k == 'default_emission_base_scale': 
-                new_params.emission.noise.scale = Scale.set_default(params.emission.noise.scale, v, HMM.parametrization)
+                new_params.emission.noise._scale = Scale.set_default(params.emission.noise.scale, v, HMM.parametrization)
             elif k == 'default_emission_df':
                 new_params.emission.noise.df = v
             elif k == 'default_emission_matrix' and hasattr(new_params.emission.map, 'w'):
@@ -296,7 +283,6 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
         return build_params(best_params), avg_logls, best_optim
     
     def compute_state_seq(self, obs_seq, compute_up_to, formatted_params):
-        formatted_params.compute_covs()
         return super().compute_state_seq(obs_seq, compute_up_to, formatted_params)
 
 class NonLinearHMM(HMM):

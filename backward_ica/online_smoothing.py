@@ -71,7 +71,6 @@ class OnlineVariationalAdditiveSmoothing:
     
     def batch_compute(self, key, obs_seq, theta, phi):
 
-        theta.compute_covs()
 
         T = len(obs_seq) - 1 # T + 1 observations
         keys = jax.random.split(key, T+1) # T+1 keys 
@@ -159,7 +158,7 @@ def init_IS(
             'stats':{'tau': tau_0}}
 
     
-    return carry, (log_q_x_0, log_q_x_0, jnp.diagonal(filt_params.scale.cov), jnp.empty((num_samples, p.state_dim)), jnp.empty((num_samples, p.state_dim)))
+    return carry, (log_q_x_0, log_q_x_0, q.backwd_params_from_state(filt_params, filt_params, phi_0)[1], jnp.diagonal(filt_params.scale.cov),  jnp.empty((num_samples, p.state_dim)), jnp.empty((num_samples, p.state_dim)))
 
 def update_IS(
         carry_tm1, 
@@ -289,7 +288,7 @@ def update_PaRIS(
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
 
-    return carry_t, (ess_t, normalizing_cst, jnp.diagonal(filt_params_t.scale.cov), eta1, eta2)
+    return carry_t, (ess_t, normalizing_cst, params_potential, jnp.diagonal(filt_params_t.scale.cov), eta1, eta2)
 
 
 

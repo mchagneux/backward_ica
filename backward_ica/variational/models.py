@@ -24,12 +24,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
         backwd:Any
         filt:Any
 
-        def compute_covs(self):
-            if hasattr(self.backwd, 'noise'):
-                self.backwd.noise.scale.cov
-                self.backwd.noise.scale.prec
-
-
 
         def tree_flatten(self):
             return ((self.prior, self.state, self.backwd, self.filt), None)
@@ -274,9 +268,6 @@ class JohnsonParams:
     transition:Kernel.Params
     net:Any
 
-    def compute_covs(self):
-        self.prior.scale.cov
-        self.transition.noise.scale.cov
 
     def tree_flatten(self):
         return ((self.prior, self.transition, self.net), None)
@@ -410,7 +401,6 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
                                                             params.transition)
 
     def compute_state_seq(self, obs_seq, compute_up_to, formatted_params):
-        formatted_params.compute_covs()
         return super().compute_state_seq(obs_seq, compute_up_to, formatted_params)
 
     def empty_state(self):

@@ -111,25 +111,25 @@ class SVITrainer:
                                                                 compute_up_to,
                                                                 self.formatted_theta_star, 
                                                                 self.q.format_params(params))
-                    carry, (ess, normalizing_csts, covs_q_t, eta1, eta2) = self.elbo.batch_compute(key, 
+                    carry, (ess, normalizing_csts, means_q_t, covs_q_t, eta1, eta2) = self.elbo.batch_compute(key, 
                                                 data, 
                                                 self.formatted_theta_star, 
                                                 params)
                     
-                    return -carry, (-offline_value, ess, normalizing_csts, covs_q_t, eta1, eta2)
+                    return -carry, (-offline_value, ess, normalizing_csts, means_q_t, covs_q_t, eta1, eta2)
                 self.loss = online_elbo
             else: 
 
                 self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                 self.get_montecarlo_keys = get_keys
                 def offline_elbo(key, data, compute_up_to, params):
-                    value, (covs_q_t_offline, eta1_offline, eta2_offline) = self.elbo(
+                    value, (means_q_t_offline, covs_q_t_offline, eta1_offline, eta2_offline) = self.elbo(
                                     key, 
                                     data, 
                                     compute_up_to, 
                                     self.formatted_theta_star, 
                                     q.format_params(params))
-                    return -value, (covs_q_t_offline, eta1_offline, eta2_offline)
+                    return -value, (means_q_t_offline, covs_q_t_offline, eta1_offline, eta2_offline)
 
                 self.loss = offline_elbo
         if self.online: 
@@ -229,9 +229,15 @@ class SVITrainer:
                     updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
                     params = optax.apply_updates(params, updates)
 
-                    aux = [jnp.mean(aux_elem, axis=0) for aux_elem in aux]
+                    aux = list(aux)
+                    
+                    aux[1:] = [jnp.mean(aux_elem, axis=0) for aux_elem in aux[1:]]
+
                     if self.online_elbo:
                         aux[0] = -aux[0]
+                    else: 
+                        aux[0] = tree_map(partial(jnp.mean, axis=0), aux[0])
+
 
 
                     return params, \
@@ -301,15 +307,20 @@ class SVITrainer:
                 avg_normalizing_cst_epoch = jnp.mean(aux[2], axis=0)[1:]
                 mean_normalizing_const = jnp.mean(avg_normalizing_cst_epoch, axis=-1)
                 min_normalizing_const = jnp.min(avg_normalizing_cst_epoch, axis=-1)
-
-                avg_covs_epoch = jnp.mean(aux[3], axis=0)
-                avg_eta1_epoch = jnp.mean(aux[4], axis=0)[1:]
-                avg_eta2_epoch = jnp.mean(aux[5], axis=0)[1:]
+                avg_potential_params_epoch = tree_map(partial(jnp.mean, axis=0), aux[3])
+                avg_covs_epoch = jnp.mean(aux[4], axis=0)
+                avg_eta1_epoch = jnp.mean(aux[5], axis=0)[1:]
+                avg_eta2_epoch = jnp.mean(aux[6], axis=0)[1:]
             else:
-                avg_covs_epoch = jnp.mean(aux[0], axis=0)
-                avg_eta1_epoch = jnp.mean(aux[1], axis=0)[:-1]
-                avg_eta2_epoch = jnp.mean(aux[2], axis=0)[:-1]
+                avg_potential_params_epoch =tree_map(partial(jnp.mean, axis=0), aux[0])
+                avg_covs_epoch = jnp.mean(aux[1], axis=0)
+                avg_eta1_epoch = jnp.mean(aux[2], axis=0)[:-1]
+                avg_eta2_epoch = jnp.mean(aux[3], axis=0)[:-1]
                 
+
+            aux_list.append([avg_potential_params_epoch, params])
+            
+
             norm_covs = jnp.linalg.norm(avg_covs_epoch, axis=1)
             max_norm_covs = jnp.max(norm_covs, axis=0)
             mean_norm_covs = jnp.mean(norm_covs, axis=0)
@@ -391,8 +402,8 @@ class SVITrainer:
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
             params, avg_elbos, aux_list = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer, args, log_writer_monitor=log_writer_monitor)
-            with open(os.path.join(log_dir, 'weights'), 'wb') as f:
-                dill.dump(aux_list, f)
+            with open(os.path.join(log_dir, 'data'), 'wb') as f:
+                dill.dump((self.q, aux_list), f)
             best_epoch = jnp.nanargmax(jnp.array(avg_elbos))
             best_epochs.append(best_epoch)
             best_elbo = avg_elbos[best_epoch]
