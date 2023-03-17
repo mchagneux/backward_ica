@@ -229,14 +229,11 @@ class SVITrainer:
                     updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
                     params = optax.apply_updates(params, updates)
 
-                    aux = list(aux)
                     
-                    aux[1:] = [jnp.mean(aux_elem, axis=0) for aux_elem in aux[1:]]
+                    aux = [jnp.mean(aux_elem, axis=0) for aux_elem in aux]
 
                     if self.online_elbo:
                         aux[0] = -aux[0]
-                    else: 
-                        aux[0] = tree_map(partial(jnp.mean, axis=0), aux[0])
 
 
 
@@ -307,31 +304,30 @@ class SVITrainer:
                 avg_normalizing_cst_epoch = jnp.mean(aux[2], axis=0)[1:]
                 mean_normalizing_const = jnp.mean(avg_normalizing_cst_epoch, axis=-1)
                 min_normalizing_const = jnp.min(avg_normalizing_cst_epoch, axis=-1)
-                avg_potential_params_epoch = tree_map(partial(jnp.mean, axis=0), aux[3])
+
+                avg_means_epoch = jnp.mean(aux[3], axis=0)
                 avg_covs_epoch = jnp.mean(aux[4], axis=0)
                 avg_eta1_epoch = jnp.mean(aux[5], axis=0)[1:]
                 avg_eta2_epoch = jnp.mean(aux[6], axis=0)[1:]
             else:
-                avg_potential_params_epoch =tree_map(partial(jnp.mean, axis=0), aux[0])
+                avg_means_epoch = jnp.mean(aux[0], axis=0)
                 avg_covs_epoch = jnp.mean(aux[1], axis=0)
                 avg_eta1_epoch = jnp.mean(aux[2], axis=0)[:-1]
                 avg_eta2_epoch = jnp.mean(aux[3], axis=0)[:-1]
                 
-
-            aux_list.append([avg_potential_params_epoch, params])
             
 
+            norm_means = jnp.linalg.norm(avg_means_epoch, axis=1)
+            mean_norm_means = jnp.mean(norm_means, axis=0)
+
             norm_covs = jnp.linalg.norm(avg_covs_epoch, axis=1)
-            max_norm_covs = jnp.max(norm_covs, axis=0)
             mean_norm_covs = jnp.mean(norm_covs, axis=0)
 
             norm_eta_1 = jnp.linalg.norm(jnp.linalg.norm(avg_eta1_epoch, axis=-1), axis=-1)
-            max_eta_1 = jnp.max(norm_eta_1, axis=0)
             mean_eta_1 = jnp.mean(norm_eta_1, axis=0)
 
-            norm_minus_eta_2 = jnp.linalg.norm(jnp.linalg.norm(-avg_eta2_epoch, axis=-1), axis=-1)
-            max_minus_eta_2 = jnp.max(norm_minus_eta_2, axis=0)
-            mean_minus_eta_2 = jnp.mean(norm_minus_eta_2, axis=0)
+            norm_eta_2 = jnp.linalg.norm(jnp.linalg.norm(avg_eta2_epoch, axis=-1), axis=-1)
+            mean_eta_2 = jnp.mean(norm_eta_2, axis=0)
 
 
             t.set_postfix({'Avg ELBO epoch':avg_elbo_epoch})
@@ -341,21 +337,20 @@ class SVITrainer:
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
                     # tf.summary.histogram('Histogram gradients', avg_grads_epoch, epoch_nb)
                     if self.online_elbo:
-                        tf.summary.scalar('Max ESS (over t and i)', jnp.max(avg_ess_epoch), epoch_nb)
-                        tf.summary.scalar('Mean (over t and i) normalizing cst', jnp.mean(mean_normalizing_const, axis=0), epoch_nb)
-                        tf.summary.scalar('Mean (over t) of min (of i) normalizing cst', jnp.mean(min_normalizing_const, axis=0), epoch_nb)
-                        tf.summary.scalar('Min (over t) of min (of i) normalizing cst', jnp.min(min_normalizing_const, axis=0), epoch_nb)
+                        tf.summary.scalar('Max ESS (over t and particles)', jnp.max(avg_ess_epoch), epoch_nb)
+                        # tf.summary.scalar('Mean (over t and particles) normalizing cst', jnp.mean(mean_normalizing_const, axis=0), epoch_nb)
+                        # tf.summary.scalar('Mean (over t) of min (over particles) normalizing cst', jnp.mean(min_normalizing_const, axis=0), epoch_nb)
+                        tf.summary.scalar('Min (over t) of min (over particles) normalizing cst', jnp.min(min_normalizing_const, axis=0), epoch_nb)
 
-                    tf.summary.scalar('Max (over t) 2-norm (over dimensions) of diag(Sigma_t)', max_norm_covs, epoch_nb)
+
+                    tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of mu_t', mean_norm_means, epoch_nb)
+
                     tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of diag(Sigma_t)', mean_norm_covs, epoch_nb)
 
-                    tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of eta_1', mean_eta_1, epoch_nb)
-                    tf.summary.scalar('Max (over t) 2-norm (over dimensions) of eta_1', max_eta_1, epoch_nb)
+                    tf.summary.scalar('Mean (over t) 2-norm (over particles and dimension) of eta_1', mean_eta_1, epoch_nb)
                     
-                    tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of eta_2', mean_minus_eta_2, epoch_nb)
-                    tf.summary.scalar('Max (over t) 2-norm (over dimensions) of eta_2', max_minus_eta_2, epoch_nb)
+                    tf.summary.scalar('Mean (over t) 2-norm (over particles and dimension) of diag(eta_2)', mean_eta_2, epoch_nb)
 
-                    # tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of diag(-eta_2)', jnp.mean(avg_eta2_epoch, axis=0), epoch_nb)
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', 
                                           avg_elbo_batch, 

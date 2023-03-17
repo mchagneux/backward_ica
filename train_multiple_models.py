@@ -5,10 +5,9 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 q_models = ['neural_backward__offline', 'neural_backward__online']
-
-num_epochs = 50
+num_epochs = 400
 dims = '5 5'
-load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
+load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
 
 batch_size = 1
@@ -16,9 +15,11 @@ num_seqs = 1
 seq_length = 2000
 store_every = 0
 
-num_samples_list = [10,10]
-learning_rates = [0.1,0.1]
-online_list = [False, False]
+num_samples_list = [5,5]
+learning_rates = [0.01,0.01]
+
+
+online_list = [False,False]
 online_elbo_list = [False,True]
 
 os.makedirs(base_dir, exist_ok=True)

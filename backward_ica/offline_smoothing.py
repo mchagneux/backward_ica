@@ -18,12 +18,8 @@ class OfflineVariationalAdditiveSmoothing:
 
 
         def t_strictly_greater_than_T(carry_tp1, input_t):
-            params_q_t = self.q.filt_params_from_state(tree_get_idx(0,input_t['state']), phi)
 
-
-
-
-            return carry_tp1, (self.q.backwd_params_from_state(params_q_t, params_q_t, phi)[1], jnp.empty((self.p.state_dim,)), jnp.empty((self.p.state_dim,)),jnp.empty((self.p.state_dim,)))
+            return carry_tp1, (jnp.empty((self.p.state_dim,)), jnp.empty((self.p.state_dim,)), jnp.empty((self.p.state_dim,)), jnp.empty((self.p.state_dim,)))
 
         def t_smaller_or_equal_to_T(carry_tp1, input_t):
 
@@ -43,7 +39,7 @@ class OfflineVariationalAdditiveSmoothing:
 
                 carry_t = {'x':x_t, 'y': input_t['y'], 'tau': tau_t}
 
-                return carry_t, (self.q.backwd_params_from_state(params_q_t, params_q_t, phi)[1], jnp.diagonal(params_q_t.scale.cov), jnp.zeros((self.p.state_dim,)), jnp.zeros((self.p.state_dim,)))
+                return carry_t, (params_q_t.mean, jnp.diagonal(params_q_t.scale.cov), jnp.zeros((self.p.state_dim,)), jnp.zeros((self.p.state_dim,)))
                 
 
             def t_strictly_lower_than_T(carry_tp1, input_t):
@@ -82,7 +78,7 @@ class OfflineVariationalAdditiveSmoothing:
 
                     carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t}
 
-                    return carry_t, (params_potential, jnp.diagonal(params_q_t.scale.cov), eta1, jnp.diagonal(eta2))
+                    return carry_t, (params_q_t.mean, jnp.diagonal(params_q_t.scale.cov), eta1, jnp.diagonal(eta2))
 
 
                 def t_strictly_greater_than_0(carry_tp1, input_t):
@@ -112,7 +108,7 @@ class OfflineVariationalAdditiveSmoothing:
 
                     carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t}
 
-                    return carry_t, (params_potential, jnp.diagonal(params_q_t.scale.cov), eta1, jnp.diagonal(eta2))
+                    return carry_t, (params_q_t.mean, jnp.diagonal(params_q_t.scale.cov), eta1, jnp.diagonal(eta2))
 
                 return lax.cond(input_t['t'] > 0, 
                                 t_strictly_greater_than_0, t_equals_0, 
@@ -156,7 +152,7 @@ class OfflineVariationalAdditiveSmoothing:
 
         tau, aux = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
         
-        aux = (tree_get_idx(0, aux[0]), aux[1][0], jnp.transpose(aux[1], (1,0,2)), jnp.transpose(aux[2], (1,0,2)))
+        aux = (tree_get_idx(0, aux[0]), tree_get_idx(0, aux[1]), jnp.transpose(aux[1], (1,0,2)), jnp.transpose(aux[2], (1,0,2)))
         return jnp.mean(tau, axis=0) / len(obs_seq), aux
 
 GeneralBackwardELBO = lambda p, q, num_samples: OfflineVariationalAdditiveSmoothing(p, q, offline_elbo_functional(p,q), num_samples)
