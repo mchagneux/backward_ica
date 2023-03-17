@@ -1,7 +1,6 @@
 optax
 pandas
 seaborn
-pykalman
 tqdm
 dm-haiku
 tensorflow 

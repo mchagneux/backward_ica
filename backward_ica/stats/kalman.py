@@ -1,6 +1,5 @@
 from jax import numpy as jnp, lax, jit
 from jax.scipy.stats.multivariate_normal import logpdf as jax_gaussian_logpdf
-from pykalman.standard import KalmanFilter
 from backward_ica.utils import * 
 
 
@@ -89,48 +88,3 @@ class Kalman:
 
         return smooth_mean_seq, smooth_cov_seq
 
-
-
-
-
-
-def pykalman_filter_seq(obs_seq, hmm_params):
-
-    engine = KalmanFilter(transition_matrices=hmm_params.transition.map.w, 
-                        observation_matrices=hmm_params.emission.map.w,
-                        transition_covariance=hmm_params.transition.noise.scale.cov,
-                        observation_covariance=hmm_params.emission.noise.scale.cov,
-                        transition_offsets=hmm_params.transition.map.b,
-                        observation_offsets=hmm_params.emission.map.b,
-                        initial_state_mean=hmm_params.prior.mean,
-                        initial_state_covariance=hmm_params.prior.scale.cov)
-
-    return engine.filter(obs_seq)
-
-def pykalman_logl_seq(obs_seq, hmm_params):
-
-
-    engine = KalmanFilter(transition_matrices=jnp.asarray(hmm_params.transition.map.w), 
-                        observation_matrices=jnp.asarray(hmm_params.emission.map.w),
-                        transition_covariance=jnp.asarray(hmm_params.transition.noise.scale.cov),
-                        observation_covariance=jnp.asarray(hmm_params.emission.noise.scale.cov),
-                        transition_offsets=jnp.asarray(hmm_params.transition.map.b),
-                        observation_offsets=jnp.asarray(hmm_params.emission.map.b),
-                        initial_state_mean=jnp.asarray(hmm_params.prior.mean),
-                        initial_state_covariance=jnp.asarray(hmm_params.prior.scale.cov))
-
-    
-    return engine.loglikelihood(obs_seq)
-    
-def pykalman_smooth_seq(obs_seq, hmm_params):
-
-    engine = KalmanFilter(transition_matrices=hmm_params.transition.map.w, 
-                        observation_matrices=hmm_params.emission.map.w,
-                        transition_covariance=hmm_params.transition.noise.scale.cov,
-                        observation_covariance=hmm_params.emission.noise.scale.cov,
-                        transition_offsets=hmm_params.transition.map.b,
-                        observation_offsets=hmm_params.emission.map.b,
-                        initial_state_mean=hmm_params.prior.mean,
-                        initial_state_covariance=hmm_params.prior.scale.cov)
-                        
-    return engine.smooth(obs_seq)
