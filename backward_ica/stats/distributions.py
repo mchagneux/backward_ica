@@ -133,7 +133,7 @@ class Gaussian:
         
         @property
         def vec(self):
-            return jnp.concatenate((self.eta1, jnp.diag(self.eta2)))
+            return jnp.concatenate((self.eta1, jnp.tril(self.eta2).flatten()))
 
         @property
         def mean(self):

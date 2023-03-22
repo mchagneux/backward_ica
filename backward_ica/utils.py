@@ -540,7 +540,7 @@ class lazy_property(object):
 ## normalizers 
 def exp_and_normalize(x):
 
-    x = jnp.exp(x - x.max())
+    x = jnp.exp(x- x.max())
     return x / x.sum()
 
 

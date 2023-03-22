@@ -111,12 +111,12 @@ class SVITrainer:
                                                                 compute_up_to,
                                                                 self.formatted_theta_star, 
                                                                 self.q.format_params(params))
-                    carry, (ess, normalizing_csts, means_q_t, covs_q_t, eta1, eta2) = self.elbo.batch_compute(key, 
+                    carry, (ess, normalizing_csts, means_q_t, covs_q_t, eta1, eta2, particles) = self.elbo.batch_compute(key, 
                                                 data, 
                                                 self.formatted_theta_star, 
                                                 params)
                     
-                    return -carry, (-offline_value, ess, normalizing_csts, means_q_t, covs_q_t, eta1, eta2)
+                    return -(carry, (-offline_value, ess, normalizing_csts, means_q_t, covs_q_t, eta1, eta2, particles)
                 self.loss = online_elbo
             else: 
 
@@ -302,13 +302,15 @@ class SVITrainer:
                 avg_monitor_elbo_epoch = jnp.mean(avg_monitor_elbo_batches)
                 avg_ess_epoch = jnp.mean(aux[1], axis=0)[1:]
                 avg_normalizing_cst_epoch = jnp.mean(aux[2], axis=0)[1:]
-                mean_normalizing_const = jnp.mean(avg_normalizing_cst_epoch, axis=-1)
-                min_normalizing_const = jnp.min(avg_normalizing_cst_epoch, axis=-1)
+
 
                 avg_means_epoch = jnp.mean(aux[3], axis=0)
                 avg_covs_epoch = jnp.mean(aux[4], axis=0)
                 avg_eta1_epoch = jnp.mean(aux[5], axis=0)[1:]
                 avg_eta2_epoch = jnp.mean(aux[6], axis=0)[1:]
+                particles = jnp.mean(aux[7], axis=0)
+
+
             else:
                 avg_means_epoch = jnp.mean(aux[0], axis=0)
                 avg_covs_epoch = jnp.mean(aux[1], axis=0)
@@ -316,19 +318,27 @@ class SVITrainer:
                 avg_eta2_epoch = jnp.mean(aux[3], axis=0)[:-1]
                 
             
+            aux_list.append([params, avg_means_epoch, avg_covs_epoch, avg_eta1_epoch, avg_eta2_epoch])
 
-            norm_means = jnp.linalg.norm(avg_means_epoch, axis=1)
-            mean_norm_means = jnp.mean(norm_means, axis=0)
 
-            norm_covs = jnp.linalg.norm(avg_covs_epoch, axis=1)
-            mean_norm_covs = jnp.mean(norm_covs, axis=0)
+            # norm_type = 'min'
 
-            norm_eta_1 = jnp.linalg.norm(jnp.linalg.norm(avg_eta1_epoch, axis=-1), axis=-1)
-            mean_eta_1 = jnp.mean(norm_eta_1, axis=0)
+            # if norm_type == 'min':
+            #     norm = lambda x: jnp.min(x, axis=-1)
+            # else: 
+            #     norm = lambda x: jnp.linalg.norm(x, axis=-1, ord=norm_type)
 
-            norm_eta_2 = jnp.linalg.norm(jnp.linalg.norm(avg_eta2_epoch, axis=-1), axis=-1)
-            mean_eta_2 = jnp.mean(norm_eta_2, axis=0)
+            # norm_means = norm(avg_means_epoch)
+            # max_norm_means = norm(norm_means)
 
+            # norm_covs = norm(avg_covs_epoch)
+            # max_norm_covs = norm(norm_covs)
+
+            # norm_eta_1 = norm(norm(avg_eta1_epoch))
+            # max_eta_1 = norm(norm_eta_1)
+
+            # norm_eta_2 = norm(norm(-avg_eta2_epoch))
+            # max_eta_2 = norm(norm_eta_2)
 
             t.set_postfix({'Avg ELBO epoch':avg_elbo_epoch})
 
@@ -338,18 +348,23 @@ class SVITrainer:
                     # tf.summary.histogram('Histogram gradients', avg_grads_epoch, epoch_nb)
                     if self.online_elbo:
                         tf.summary.scalar('Max ESS (over t and particles)', jnp.max(avg_ess_epoch), epoch_nb)
+                        tf.summary.scalar('Min ESS (over t and particles)', jnp.min(avg_ess_epoch), epoch_nb)
+                        tf.summary.scalar('Mean ESS (over t and particles)', jnp.mean(avg_ess_epoch), epoch_nb)
+                        tf.summary.scalar('Min position particles', jnp.min(particles), epoch_nb)
+                        tf.summary.scalar('Max position particles', jnp.max(particles), epoch_nb)
+
                         # tf.summary.scalar('Mean (over t and particles) normalizing cst', jnp.mean(mean_normalizing_const, axis=0), epoch_nb)
                         # tf.summary.scalar('Mean (over t) of min (over particles) normalizing cst', jnp.mean(min_normalizing_const, axis=0), epoch_nb)
-                        tf.summary.scalar('Min (over t) of min (over particles) normalizing cst', jnp.min(min_normalizing_const, axis=0), epoch_nb)
+                        tf.summary.scalar('Mean (over t and particles) normalizing cst', jnp.mean(avg_normalizing_cst_epoch), epoch_nb)
+                        tf.summary.scalar('Min (over t and particles) normalizing cst', jnp.min(avg_normalizing_cst_epoch), epoch_nb)
+                        tf.summary.scalar('Max (over t and particles) normalizing cst', jnp.max(avg_normalizing_cst_epoch), epoch_nb)
 
 
-                    tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of mu_t', mean_norm_means, epoch_nb)
+                    tf.summary.histogram('mu', avg_means_epoch, epoch_nb)
+                    tf.summary.histogram('diag(Sigma)', avg_covs_epoch, epoch_nb)
 
-                    tf.summary.scalar('Mean (over t) 2-norm (over dimensions) of diag(Sigma_t)', mean_norm_covs, epoch_nb)
-
-                    tf.summary.scalar('Mean (over t) 2-norm (over particles and dimension) of eta_1', mean_eta_1, epoch_nb)
-                    
-                    tf.summary.scalar('Mean (over t) 2-norm (over particles and dimension) of diag(eta_2)', mean_eta_2, epoch_nb)
+                    tf.summary.histogram('eta_1', avg_eta1_epoch, epoch_nb)
+                    tf.summary.histogram('diag(-eta_2)', -avg_eta2_epoch, epoch_nb)
 
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', 
@@ -398,7 +413,7 @@ class SVITrainer:
 
             params, avg_elbos, aux_list = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer, args, log_writer_monitor=log_writer_monitor)
             with open(os.path.join(log_dir, 'data'), 'wb') as f:
-                dill.dump((self.q, aux_list), f)
+                dill.dump(aux_list, f)
             best_epoch = jnp.nanargmax(jnp.array(avg_elbos))
             best_epochs.append(best_epoch)
             best_elbo = avg_elbos[best_epoch]

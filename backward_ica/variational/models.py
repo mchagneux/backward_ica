@@ -100,8 +100,11 @@ class NeuralBackwardSmoother(BackwardSmoother):
             
             def _backwd_map(aux, input, state_dim):
                 eta1_filt, eta2_filt = aux.eta1, aux.eta2
-                eta1_potential, eta2_potential = inference_nets.backwd_net(aux.vec, input, backwd_layers, state_dim)  
-                eta1_backwd, eta2_backwd = eta1_potential + eta1_filt, eta2_potential + eta2_filt
+                mu_filt = aux.mean
+
+
+                eta1_potential, eta2_potential = inference_nets.backwd_net(aux.vec, input, backwd_layers, state_dim)
+                eta1_backwd, eta2_backwd = eta1_filt + eta1_potential - 2 * eta2_potential.T @ mu_filt, eta2_filt + eta2_potential 
                 out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
                 return (out_params.mean, out_params.scale), (eta1_potential, eta2_potential)
                             
@@ -131,13 +134,10 @@ class NeuralBackwardSmoother(BackwardSmoother):
                 mu_1 = filt_params_1.mean
 
 
-                eta1, eta2 = self.backwd_kernel.nonlinear_map_apply(params, filt_params_0, x_1)[1]
+                eta1, eta2 = self.backwd_kernel.nonlinear_map_apply(params, filt_params_0, x_1 - mu_1)[1]
 
-                eta1_const, eta2_const = self.backwd_kernel.nonlinear_map_apply(params, filt_params_0, x_1)[1]
-
-                const = 0 #(mu_0.T @ eta2_const @ mu_0 + eta1_const.T @ mu_0)
                            
-                return x_0.T @ eta2 @ x_0 + eta1.T @ x_0 - const, eta1, eta2
+                return (x_0 - mu_0).T @ eta2 @ (x_0 - mu_0) + eta1.T @ (x_0 - mu_0), eta1, eta2
             
             def backwd_params_from_state(filt_params_0, filt_params_1, params):
                 return (params.backwd, filt_params_0), (params.backwd, (filt_params_0, filt_params_1))

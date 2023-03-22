@@ -158,7 +158,7 @@ def init_IS(
             'stats':{'tau': tau_0}}
 
     
-    return carry, (log_q_x_0, log_q_x_0, filt_params.mean, jnp.diagonal(filt_params.scale.cov),  jnp.empty((num_samples, p.state_dim)), jnp.empty((num_samples, p.state_dim)))
+    return carry, (log_q_x_0, log_q_x_0, filt_params.mean, jnp.diagonal(filt_params.scale.cov),  jnp.empty((num_samples, p.state_dim)), jnp.empty((num_samples, p.state_dim)), x_0)
 
 def update_IS(
         carry_tm1, 
@@ -287,8 +287,8 @@ def update_PaRIS(
             'x':x_t, 
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
-
-    return carry_t, (ess_t, normalizing_cst, filt_params_t.mean, jnp.diagonal(filt_params_t.scale.cov), eta1, eta2)
+    
+    return carry_t, (ess_t, normalizing_cst, filt_params_t.mean, jnp.diagonal(filt_params_t.scale.cov), eta1, eta2, x_t)
 
 
 

@@ -4,6 +4,9 @@ from backward_ica.utils import *
 from backward_ica.stats.distributions import * 
 from backward_ica.stats.kernels import * 
 from jax.flatten_util import ravel_pytree
+
+
+
 def deep_gru(obs, prev_state, layers):
 
     gru = hk.DeepRNN([hk.GRU(hidden_size) for hidden_size in layers])
@@ -12,19 +15,21 @@ def deep_gru(obs, prev_state, layers):
 
 def gaussian_proj(state, d):
 
-    net = hk.Linear(2*d, 
+    net = hk.Linear(2*d,
         w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-        b_init=hk.initializers.RandomNormal(),)
+        b_init=hk.initializers.RandomNormal())
 
     out = net(state.out)
     
-    out1, out2 = jnp.split(out,2)
+    eta1, out2 = out[:d], out[d:]
+    # eta2_chol = chol_from_vec(out2, d)
 
-    out2 = -jnp.diag(nn.softplus(out2))
+    # eta2 = - (eta2_chol @ eta2_chol.T + jnp.eye(1))
+    eta2 = -jnp.diag(nn.softplus(out2))
 
     return Gaussian.Params(
-                    eta1=out1, 
-                    eta2=out2)
+                    eta1=eta1, 
+                    eta2=eta2)
 
 
 def backwd_update_forward(varying_params, next_state, layers, state_dim):
@@ -45,27 +50,21 @@ def backwd_update_forward(varying_params, next_state, layers, state_dim):
     return out.mean, out.scale
 
 def backwd_net(aux, obs, layers, state_dim):
-
-    net = hk.nets.MLP((*layers, 2*state_dim),
+    d = state_dim
+    net = hk.nets.MLP((*layers, 2*d),
                 w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
                 b_init=hk.initializers.RandomNormal(),
                 activation=nn.tanh,
-                activate_final=True)
-    eta1, eta2 = jnp.split(net(jnp.concatenate([aux, obs])), 2)
-    return eta1, -jnp.diag(nn.softplus(eta2))
-
-# def backwd_eta2_net(aux, obs, layers, state_dim):
-
-#     net = hk.nets.MLP((*layers, state_dim),
-#                 w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-#                 b_init=hk.initializers.RandomNormal(),
-#                 activation=nn.tanh,
-#                 activate_final=False)
+                activate_final=False)
     
-#     log_prec_diag = net(jnp.concatenate([aux, obs]))
-#     return 
+    out = net(obs)
+    eta1 = out[:d]
+    out2 = out[d:]
+    # eta_2_chol = jnp.diagonal(nn.softplus(out2))
+    # eta2 = -(eta_2_chol @ eta_2_chol.T + jnp.eye(d))
+    eta2 = -jnp.diag(nn.softplus(out2))
 
-
+    return eta1, eta2
 
 def johnson_anisotropic(obs, layers, state_dim):
 

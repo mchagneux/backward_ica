@@ -152,7 +152,7 @@ class OfflineVariationalAdditiveSmoothing:
 
         tau, aux = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
         
-        aux = (tree_get_idx(0, aux[0]), tree_get_idx(0, aux[1]), jnp.transpose(aux[1], (1,0,2)), jnp.transpose(aux[2], (1,0,2)))
+        aux = (tree_get_idx(0, aux[0]), tree_get_idx(0, aux[1]), jnp.transpose(aux[2], (1,0,2)), jnp.transpose(aux[3], (1,0,2)))
         return jnp.mean(tau, axis=0) / len(obs_seq), aux
 
 GeneralBackwardELBO = lambda p, q, num_samples: OfflineVariationalAdditiveSmoothing(p, q, offline_elbo_functional(p,q), num_samples)
