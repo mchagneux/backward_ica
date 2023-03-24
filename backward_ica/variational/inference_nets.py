@@ -15,17 +15,25 @@ def deep_gru(obs, prev_state, layers):
 
 def gaussian_proj(state, d):
 
-    net = hk.Linear(2*d,
+    net_eta1 = hk.Linear(d,
         w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
         b_init=hk.initializers.RandomNormal())
 
-    out = net(state.out)
-    
-    eta1, out2 = out[:d], out[d:]
-    # eta2_chol = chol_from_vec(out2, d)
 
-    # eta2 = - (eta2_chol @ eta2_chol.T + jnp.eye(1))
-    eta2 = -jnp.diag(nn.softplus(out2))
+    net_eta2 = hk.nets.MLP((d,),
+        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+        b_init=hk.initializers.RandomNormal(),
+        activate_final=True,
+        activation=nn.softplus)
+    
+    eta1 = net_eta1(state.out)
+    eta2 = -jnp.diag(net_eta2(state.out)) - jnp.eye(d)
+    
+    # eta1, out2 = out[:d], out[d:]
+    # # eta2_chol = chol_from_vec(out2, d)
+
+    # # eta2 = - (eta2_chol @ eta2_chol.T + jnp.eye(1))
+    # eta2 = -jnp.diag(nn.relu(out2))
 
     return Gaussian.Params(
                     eta1=eta1, 
@@ -51,18 +59,26 @@ def backwd_update_forward(varying_params, next_state, layers, state_dim):
 
 def backwd_net(aux, obs, layers, state_dim):
     d = state_dim
-    net = hk.nets.MLP((*layers, 2*d),
-                w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-                b_init=hk.initializers.RandomNormal(),
-                activation=nn.tanh,
-                activate_final=False)
+
+
+    net_eta1 = hk.nets.MLP((*layers, d),
+        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+        b_init=hk.initializers.RandomNormal(),
+        activate_final=False,
+        activation=nn.softplus)
     
-    out = net(obs)
-    eta1 = out[:d]
-    out2 = out[d:]
+    net_eta2 = hk.nets.MLP((*layers, d),
+        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+        b_init=hk.initializers.RandomNormal(),
+        activate_final=True,
+        activation=nn.softplus)
+    
+    eta1 = net_eta1(obs)
+    eta2 = -jnp.diag(net_eta2(obs)) - jnp.eye(d)
+
     # eta_2_chol = jnp.diagonal(nn.softplus(out2))
     # eta2 = -(eta_2_chol @ eta_2_chol.T + jnp.eye(d))
-    eta2 = -jnp.diag(nn.softplus(out2))
+    # eta2 = -jnp.diag(nn.softplus(out2))
 
     return eta1, eta2
 

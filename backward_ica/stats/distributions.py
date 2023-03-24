@@ -133,7 +133,7 @@ class Gaussian:
         
         @property
         def vec(self):
-            return jnp.concatenate((self.eta1, jnp.tril(self.eta2).flatten()))
+            return jnp.concatenate((self.eta1, jnp.diag(self.eta2).flatten()))
 
         @property
         def mean(self):
@@ -162,7 +162,7 @@ class Gaussian:
             if hasattr(self, '_eta2'):
                 return self._eta2
             else: 
-                return -0.5*self._scale.prec 
+                return -0.5 * self._scale.prec 
             
         def tree_flatten(self):
             attrs = vars(self)

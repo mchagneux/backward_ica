@@ -56,8 +56,17 @@ def elbo_h_0_online(data, models):
     y_0 = data['t']['y']
     theta = data['tm1']['theta']
 
-    return p.emission_kernel.logpdf(y_0, x_0, theta.emission) \
-            + p.prior_dist.logpdf(x_0, theta.prior) - log_q_0_x_0
+    # print('x_0_online', x_0)
+
+    p_emission_term = p.emission_kernel.logpdf(y_0, x_0, theta.emission)
+
+    p_prior_term =  p.prior_dist.logpdf(x_0, theta.prior)
+    q_initial_term = log_q_0_x_0
+    result = p_emission_term + p_prior_term - q_initial_term
+    # print('h_0_online', result)
+    # print('p_terms_0_online', p_prior_term + p_emission_term)
+
+    return result
 
 def elbo_h_t_online(data, models):
 
@@ -65,6 +74,7 @@ def elbo_h_t_online(data, models):
     q = models['q']
 
     x_t = data['t']['x']
+    # print('x_1_online', x_t)
 
     y_t = data['t']['y']
     
@@ -74,12 +84,19 @@ def elbo_h_t_online(data, models):
     log_q_t_x_t = data['t']['log_q_x']
     log_q_tm1_x_tm1 = data['tm1']['log_q_x']
     log_q_tm1_t_x_tm1_x_t = data['tm1']['log_q_backwd_x']
-    return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
-            + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
+
+    p_transition_term = p.transition_kernel.logpdf(x_t, x_tm1, theta.transition)
+    p_emission_term = p.emission_kernel.logpdf(y_t, x_t, theta.emission)
+    # print('p_emission_term_1_online', p_emission_term)
+    result = p_transition_term \
+            + p_emission_term \
             + log_q_tm1_x_tm1 \
             - log_q_t_x_t \
-            - log_q_tm1_t_x_tm1_x_t \
+            - log_q_tm1_t_x_tm1_x_t
+    
+    # print('h_t_online', result)
 
+    return result
 
 
 
@@ -96,12 +113,24 @@ def elbo_h_0_offline(data, models):
     y_t = data['t']['y']
     params_q_t_tp1 = data['t']['params_backwd']
     
+    p_prior_term = p.prior_dist.logpdf(x_t, theta.prior)
+    p_transition_term = p.transition_kernel.logpdf(x_tp1, x_t, theta.transition)
+    p_emission_terms = p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission) + p.emission_kernel.logpdf(y_t, x_t, theta.emission)
+    q_backwd_term = q.backwd_kernel.logpdf(x_t, x_tp1, params_q_t_tp1)
+    # print('x_0_offline', x_t)
 
-    return p.prior_dist.logpdf(x_t, theta.prior) \
-        + p.transition_kernel.logpdf(x_tp1, x_t, theta.transition) \
-        + p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission) \
-        + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
-        - q.backwd_kernel.logpdf(x_t, x_tp1, params_q_t_tp1)
+    # print('p_terms_0_offline', p_prior_term + p.emission_kernel.logpdf(y_t, x_t, theta.emission))
+    # print('p_emission_term_1_offline',  p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission))
+
+    result =  p_prior_term \
+        +  p_transition_term \
+        + p_emission_terms \
+        - q_backwd_term
+
+    # print('h_0_offline', result)
+    return result 
+
+
 
 def elbo_h_t_offline(data, models):
 
@@ -115,10 +144,18 @@ def elbo_h_t_offline(data, models):
     x_t = data['t']['x']
     params_q_t_tp1 = data['t']['params_backwd']
     
+    p_transition_term = p.transition_kernel.logpdf(x_tp1, x_t, theta.transition)
+    p_emission_term = p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission)
+    # print('p_emission_term_1_online', p_emission_term)
+    q_backwd_term = q.backwd_kernel.logpdf(x_t, x_tp1, params_q_t_tp1)
 
-    return p.transition_kernel.logpdf(x_tp1, x_t, theta.transition) \
-            + p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission) \
-            - q.backwd_kernel.logpdf(x_t, x_tp1, params_q_t_tp1)
+    result =  p_transition_term \
+            + p_emission_term\
+            - q_backwd_term
+    
+
+    # print('h_t_offline', result)
+    return result 
 
 def elbo_h_T_offline(data, models):
 
@@ -127,9 +164,14 @@ def elbo_h_T_offline(data, models):
     x_t = data['t']['x']
     params_q_t = data['t']['params_q']
     
-    return -q.filt_dist.logpdf(x_t, params_q_t)
 
+    # print('x_1_offline', x_t)
+    q_terminal_term = q.filt_dist.logpdf(x_t, params_q_t)
 
+    result = -q_terminal_term
+
+    # print('h_T_offline', result)
+    return result 
 
 def state_smoothing_h_t(data, models):
     return data['t']['x']
@@ -246,7 +288,7 @@ def get_defaults(args):
 
     if 'neural_backward' or 'johnson' in args.model:
         ## variational family
-        args.update_layers = (16,) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (100,) # number of layers in the GRU which updates the variational filtering dist
         # args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     if 'johnson' in args.model:
@@ -254,7 +296,7 @@ def get_defaults(args):
 
     if 'neural_backward' in args.model:
         if not 'explicit_transition' in args.model_options:
-            args.backwd_layers = (16,)
+            args.backwd_layers = (100,)
         else: 
             args.backwd_layers = 0
 
@@ -540,7 +582,7 @@ class lazy_property(object):
 ## normalizers 
 def exp_and_normalize(x):
 
-    x = jnp.exp(x- x.max())
+    x = jnp.exp(x - x.max())
     return x / x.sum()
 
 
@@ -548,6 +590,12 @@ def normalize(x):
     w = jnp.exp(x)
 
     return w / w.sum()
+
+def cosine_similarity(oracle, estimate):
+    return (oracle @ estimate) / (jnp.linalg.norm(oracle, ord=2) \
+                                  * jnp.linalg.norm(estimate, ord=2))
+
+
 
 
 def params_to_dict(params):

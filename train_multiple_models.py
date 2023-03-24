@@ -1,27 +1,27 @@
 import subprocess
 import os
 from datetime import datetime 
-p_model = 'nonlinear_emission'
+p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 q_models = ['neural_backward__online']
 
-num_epochs = 800
-dims = '1 1'
+num_epochs = 26
+dims = '5 5'
 load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
-loaded_seq = False
+loaded_seq = True
 
 batch_size = 1
 num_seqs = 1
-seq_length = 2000
+seq_length = 500
 store_every = 0
 
-num_samples_list = [20]
+num_samples_list = [10]
 learning_rates = [0.01] #,0.01]
 
 
-online_list = [False,]
-online_elbo_list = [False]
+online_list = [False]
+online_elbo_list = [True]
 
 os.makedirs(base_dir, exist_ok=True)
 

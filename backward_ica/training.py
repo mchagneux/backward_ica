@@ -102,34 +102,30 @@ class SVITrainer:
             if online_elbo: 
                 self.elbo = OnlinePaRISELBO(self.p, self.q, num_samples)
                 self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
+                self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
+                                                                self.q.format_params(params))[0]
                 self.get_montecarlo_keys = get_keys
                 def online_elbo(key, data, compute_up_to, params):
 
-                    offline_value, _  = self.offline_elbo_for_check(
-                                                                key, 
-                                                                data, 
-                                                                compute_up_to,
-                                                                self.formatted_theta_star, 
-                                                                self.q.format_params(params))
-                    carry, (ess, normalizing_csts, means_q_t, covs_q_t, eta1, eta2, particles) = self.elbo.batch_compute(key, 
+                    carry, aux = self.elbo.batch_compute(key, 
                                                 data, 
                                                 self.formatted_theta_star, 
                                                 params)
                     
-                    return -(carry, (-offline_value, ess, normalizing_csts, means_q_t, covs_q_t, eta1, eta2, particles)
+                    return -carry, aux
                 self.loss = online_elbo
             else: 
 
                 self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                 self.get_montecarlo_keys = get_keys
                 def offline_elbo(key, data, compute_up_to, params):
-                    value, (means_q_t_offline, covs_q_t_offline, eta1_offline, eta2_offline) = self.elbo(
+                    value, aux = self.elbo(
                                     key, 
                                     data, 
                                     compute_up_to, 
                                     self.formatted_theta_star, 
                                     q.format_params(params))
-                    return -value, (means_q_t_offline, covs_q_t_offline, eta1_offline, eta2_offline)
+                    return -value, aux
 
                 self.loss = offline_elbo
         if self.online: 
@@ -224,19 +220,21 @@ class SVITrainer:
             def step(carry, x):
                 def batch_step(params, opt_state, batch, keys):
                     (neg_elbo_values, aux), grads = vmap(value_and_grad(self.loss, argnums=3, has_aux=True), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
-
+                    
                     avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                     updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
                     params = optax.apply_updates(params, updates)
 
-                    
-                    aux = [jnp.mean(aux_elem, axis=0) for aux_elem in aux]
 
-                    if self.online_elbo:
-                        aux[0] = -aux[0]
+                    monitor_neg_elbo_values, monitor_grads = vmap(value_and_grad(self.monitor_elbo, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
+                    avg_monitor_elbo_values = jnp.mean(monitor_neg_elbo_values, axis=0)
+                    avg_monitor_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), monitor_grads)
 
+                    similarity_gradients = cosine_similarity(ravel_pytree(avg_monitor_grads)[0], ravel_pytree(avg_grads)[0])
 
+                    aux = [jnp.mean(aux_elem, axis=0) for aux_elem in aux] + [avg_monitor_elbo_values, similarity_gradients]
 
+                
                     return params, \
                         opt_state, \
                         -jnp.mean(neg_elbo_values), ravel_pytree(avg_grads)[0], aux
@@ -298,27 +296,36 @@ class SVITrainer:
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
             avg_grads_epoch = jnp.mean(avg_grads_batches, axis=0)
             if self.online_elbo:
-                avg_monitor_elbo_batches = aux[0]
-                avg_monitor_elbo_epoch = jnp.mean(avg_monitor_elbo_batches)
-                avg_ess_epoch = jnp.mean(aux[1], axis=0)[1:]
-                avg_normalizing_cst_epoch = jnp.mean(aux[2], axis=0)[1:]
+
+                avg_ess_epoch = jnp.mean(aux[0], axis=0)[1:]
+                avg_normalizing_cst_epoch = jnp.mean(aux[1], axis=0)[1:]
+                avg_eta1_filt = jnp.mean(aux[2], axis=0)
+                avg_eta2_filt = jnp.mean(aux[3], axis=0)
+                avg_log_weights = jnp.mean(aux[4], axis=0)[1:]
+                avg_monitor_elbo_batches = aux[-2]
+                avg_monitor_elbo_epoch = jnp.mean(avg_monitor_elbo_batches, axis=0)
+                avg_similarity_elbo_epoch = jnp.mean(aux[-1], axis=0)
+
+                # print('Min:', jnp.min(avg_eta2_filt))
+                # print('Max:', jnp.max(avg_eta2_filt))
+            else: 
+                avg_eta1_filt = jnp.mean(aux[0], axis=0)
+                avg_eta2_filt = jnp.mean(aux[1], axis=0)
 
 
-                avg_means_epoch = jnp.mean(aux[3], axis=0)
-                avg_covs_epoch = jnp.mean(aux[4], axis=0)
-                avg_eta1_epoch = jnp.mean(aux[5], axis=0)[1:]
-                avg_eta2_epoch = jnp.mean(aux[6], axis=0)[1:]
-                particles = jnp.mean(aux[7], axis=0)
+            #     avg_means_epoch = jnp.mean(aux[3], axis=0)
+            #     avg_covs_epoch = jnp.mean(aux[4], axis=0)
+            #     avg_eta1_epoch = jnp.mean(aux[5], axis=0)[1:]
+            #     avg_eta2_epoch = jnp.mean(aux[6], axis=0)[1:]
+            #     particles = jnp.mean(aux[7], axis=0)
 
 
-            else:
-                avg_means_epoch = jnp.mean(aux[0], axis=0)
-                avg_covs_epoch = jnp.mean(aux[1], axis=0)
-                avg_eta1_epoch = jnp.mean(aux[2], axis=0)[:-1]
-                avg_eta2_epoch = jnp.mean(aux[3], axis=0)[:-1]
+            # else:
+            #     avg_means_epoch = jnp.mean(aux[0], axis=0)
+
                 
             
-            aux_list.append([params, avg_means_epoch, avg_covs_epoch, avg_eta1_epoch, avg_eta2_epoch])
+            aux_list.append(params)
 
 
             # norm_type = 'min'
@@ -350,21 +357,26 @@ class SVITrainer:
                         tf.summary.scalar('Max ESS (over t and particles)', jnp.max(avg_ess_epoch), epoch_nb)
                         tf.summary.scalar('Min ESS (over t and particles)', jnp.min(avg_ess_epoch), epoch_nb)
                         tf.summary.scalar('Mean ESS (over t and particles)', jnp.mean(avg_ess_epoch), epoch_nb)
-                        tf.summary.scalar('Min position particles', jnp.min(particles), epoch_nb)
-                        tf.summary.scalar('Max position particles', jnp.max(particles), epoch_nb)
+                        # tf.summary.scalar('Min position particles', jnp.min(particles), epoch_nb)
+                        # tf.summary.scalar('Max position particles', jnp.max(particles), epoch_nb)
 
-                        # tf.summary.scalar('Mean (over t and particles) normalizing cst', jnp.mean(mean_normalizing_const, axis=0), epoch_nb)
-                        # tf.summary.scalar('Mean (over t) of min (over particles) normalizing cst', jnp.mean(min_normalizing_const, axis=0), epoch_nb)
+                        # tf.summary.scalar('Mean (over t and particles) normalizing cst', jnp.mean(avg_normalizing_cst_epoch), epoch_nb)
+                        # tf.summary.scalar('Mean (over t) of min (over particles) normalizing cst', jnp.mean(min_normalizing_const), epoch_nb)
                         tf.summary.scalar('Mean (over t and particles) normalizing cst', jnp.mean(avg_normalizing_cst_epoch), epoch_nb)
                         tf.summary.scalar('Min (over t and particles) normalizing cst', jnp.min(avg_normalizing_cst_epoch), epoch_nb)
                         tf.summary.scalar('Max (over t and particles) normalizing cst', jnp.max(avg_normalizing_cst_epoch), epoch_nb)
+                        tf.summary.scalar('Min log weight', jnp.min(avg_log_weights), epoch_nb)
+                        tf.summary.scalar('Max log weight', jnp.max(avg_log_weights), epoch_nb)
+                        tf.summary.scalar('Avg similarity gradient', avg_similarity_elbo_epoch, epoch_nb)
 
+                    tf.summary.histogram('Avg eta1 filt', avg_eta1_filt, epoch_nb)
+                    tf.summary.histogram('Avg eta2 filt', avg_eta2_filt, epoch_nb)
 
-                    tf.summary.histogram('mu', avg_means_epoch, epoch_nb)
-                    tf.summary.histogram('diag(Sigma)', avg_covs_epoch, epoch_nb)
+                    # tf.summary.histogram('mu', avg_means_epoch, epoch_nb)
+                    # tf.summary.histogram('diag(Sigma)', avg_covs_epoch, epoch_nb)
 
-                    tf.summary.histogram('eta_1', avg_eta1_epoch, epoch_nb)
-                    tf.summary.histogram('diag(-eta_2)', -avg_eta2_epoch, epoch_nb)
+                    # tf.summary.histogram('eta_1', avg_eta1_epoch, epoch_nb)
+                    # tf.summary.histogram('diag(-eta_2)', -avg_eta2_epoch, epoch_nb)
 
                     for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
                         tf.summary.scalar('Minibatch ELBO', 

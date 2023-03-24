@@ -98,24 +98,25 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
         else: 
             
-            def _backwd_map(aux, input, state_dim):
-                eta1_filt, eta2_filt = aux.eta1, aux.eta2
-                mu_filt = aux.mean
-
-
-                eta1_potential, eta2_potential = inference_nets.backwd_net(aux.vec, input, backwd_layers, state_dim)
-                eta1_backwd, eta2_backwd = eta1_filt + eta1_potential - 2 * eta2_potential.T @ mu_filt, eta2_filt + eta2_potential 
+            def _backwd_map(aux, x_1, state_dim):
+                eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
+                mu_0 = aux[0].mean
+                mu_1 = aux[1].mean
+                eta1_potential, eta2_potential = inference_nets.backwd_net(aux[0].vec, x_1-mu_1, backwd_layers, state_dim)
+                # eta1_backwd, eta2_backwd = eta1_potential + eta1_filt, eta2_potential + eta2_filt
+                eta1_backwd, eta2_backwd = eta1_filt + eta1_potential - 2 * eta2_potential.T @ mu_0, eta2_filt + eta2_potential 
                 out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
                 return (out_params.mean, out_params.scale), (eta1_potential, eta2_potential)
                             
+
+            dummy_gaussian_params = Gaussian.Params(eta1=jnp.empty((self.state_dim,)),
+                                                    eta2=jnp.eye(self.state_dim))
             backwd_kernel_def = {
                             'map_type':'nonlinear',
                             'map_info' : {
                                         'homogeneous': False, 
                                         'dummy_varying_params':
-                                                Gaussian.Params(
-                                                    eta1=jnp.empty((self.state_dim,)),
-                                                    eta2=jnp.eye(self.state_dim)) 
+                                                (dummy_gaussian_params, dummy_gaussian_params)
                                                 },
                             'map': _backwd_map}
             
@@ -131,16 +132,14 @@ class NeuralBackwardSmoother(BackwardSmoother):
                 filt_params_0, filt_params_1 = aux
 
                 mu_0 = filt_params_0.mean
-                mu_1 = filt_params_1.mean
 
+                eta1, eta2 = self.backwd_kernel.nonlinear_map_apply(params, aux, x_1)[1]
 
-                eta1, eta2 = self.backwd_kernel.nonlinear_map_apply(params, filt_params_0, x_1 - mu_1)[1]
-
-                           
-                return (x_0 - mu_0).T @ eta2 @ (x_0 - mu_0) + eta1.T @ (x_0 - mu_0), eta1, eta2
+                
+                return (x_0 - mu_0).T @ eta2 @ (x_0 - mu_0) + eta1.T @ (x_0 - mu_0)#, eta1, eta2
             
             def backwd_params_from_state(filt_params_0, filt_params_1, params):
-                return (params.backwd, filt_params_0), (params.backwd, (filt_params_0, filt_params_1))
+                return params.backwd, (filt_params_0, filt_params_1)
             
 
             self._log_transition_function = lambda x_0, x_1, params: _log_transition_function(params[0], x_0, x_1, params[1])

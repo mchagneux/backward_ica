@@ -13,28 +13,38 @@ from jax.flatten_util import ravel_pytree as ravel
 import pandas as pd 
 import matplotlib.pyplot as plt 
 import argparse
+
+
+experiment_path = 'experiments/p_nonlinear_emission/2023_03_22__18_30_41/neural_backward__online' 
+
 enable_x64(True)
-jax.config.update('jax_disable_jit', False)
 
-args_p = argparse.Namespace()
-args_p.model = 'chaotic_rnn'
-args_p.state_dim, args_p.obs_dim = 5,5
-args_p.seq_length = 2000
-args_p.transition_bias = False
-args_p.emission_bias = False
-args_p.loaded_seq = True
-args_p.load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
-args_p = utils.get_defaults(args_p)
-set_parametrization(args_p)
+if experiment_path != '': 
+    args_p = utils.load_args('args', os.path.split(experiment_path)[0])
+    args_q = utils.load_args('args', experiment_path)
 
+else: 
 
-args_q = argparse.Namespace()
-args_q.model = 'neural_backward'
-args_q.state_dim, args_q.obs_dim = args_p.state_dim, args_p.obs_dim
-args_q = utils.get_defaults(args_q)
-args_q.transition_matrix_conditionning = 'diagonal'
-args_q.range_transition_map_params = [0.9,1]
-args_q.transition_bias = True
+    jax.config.update('jax_disable_jit', False)
+
+    args_p = argparse.Namespace()
+    args_p.model = 'chaotic_rnn'
+    args_p.state_dim, args_p.obs_dim = 5,5
+    args_p.seq_length = 2000
+    args_p.transition_bias = False
+    args_p.emission_bias = False
+    args_p.loaded_seq = False
+    args_p.load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
+    args_p = utils.get_defaults(args_p)
+    set_parametrization(args_p)
+
+    args_q = argparse.Namespace()
+    args_q.model = 'neural_backward'
+    args_q.state_dim, args_q.obs_dim = args_p.state_dim, args_p.obs_dim
+    args_q = utils.get_defaults(args_q)
+    args_q.transition_matrix_conditionning = 'diagonal'
+    args_q.range_transition_map_params = [0.9,1]
+    args_q.transition_bias = True
 
 num_samples_oracle = 10000
 
@@ -53,16 +63,12 @@ key, key_theta = jax.random.split(key, 2)
 p, theta = get_generative_model(args_p, key_theta)
 q = get_variational_model(args_q)
 
-path = f'experiments/online/compare_naive_and_{name_method_2}'
+path = f'experiments/online/bias_investigation'
 
 os.makedirs(path, exist_ok=True)
 
 def scalar_relative_error(oracle, estimate):
     return (oracle - estimate) / jnp.abs(oracle)
-
-def cosine_similarity(oracle, estimate):
-    return (oracle @ estimate) / (jnp.linalg.norm(oracle, ord=2) \
-                                  * jnp.linalg.norm(estimate, ord=2))
 
 if isinstance(p, LinearGaussianHMM) and isinstance(q, LinearGaussianHMM):
     oracle = LinearGaussianELBO(p, q)
@@ -130,6 +136,8 @@ def offline_elbo_and_grad_func(key, obs_seq, theta, phi):
 jit_offline_elbo_and_grad_func = jax.jit(jax.vmap(
                                             offline_elbo_and_grad_func,  
                                             in_axes=(0,None, None, None)))
+
+
 
 
 def online_elbo_and_grad_func(key, obs_seq, theta, phi):
