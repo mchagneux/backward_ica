@@ -11,7 +11,7 @@ from jax.flatten_util import ravel_pytree
 from backward_ica.online_smoothing import OnlineELBO, OnlineELBOAndGrad
 from backward_ica.offline_smoothing import GeneralBackwardELBO
 
-experiment_path = 'experiments/p_chaotic_rnn/2023_03_29__18_20_11/neural_backward__online' 
+experiment_path = 'experiments/p_chaotic_rnn/2023_03_29__19_51_59/neural_backward__offline' 
 p_and_data_path = os.path.split(experiment_path)[0]
 epoch_nb = 1380
 num_samples = 100000

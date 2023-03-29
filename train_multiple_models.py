@@ -4,7 +4,7 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['neural_backward__online', 'neural_backward__offline']
+q_models = ['neural_backward__offline']
 
 num_epochs = 3000
 dims = '5 5'
@@ -16,12 +16,12 @@ num_seqs = 1
 seq_length = 2
 store_every = 0
 
-num_samples_list = [10, 10]
-learning_rates = [0.01, 0.01] #,0.01]
+num_samples_list = [10]
+learning_rates = [0.01] #,0.01]
 
 
-online_list = [False, False]
-online_elbo_list = [True, False]
+online_list = [False]
+online_elbo_list = [False]
 
 os.makedirs(base_dir, exist_ok=True)
 

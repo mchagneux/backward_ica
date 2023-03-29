@@ -142,9 +142,6 @@ def init_PaRIS(
                                             num_samples,
                                             stop_grad=False)
 
-    # x_0 = jnp.zeros((num_samples, p.state_dim))
-    # log_q_x_0 = jax.vmap(q.filt_dist.logpdf, in_axes=(0,None))(x_0, filt_params)
-    
     data_0 = {'x':x_0,
             'log_q_x':log_q_x_0,
             'state':state_0,
@@ -162,7 +159,7 @@ def init_PaRIS(
             'stats':{'tau': tau_0}}
 
     
-    return carry, x_0
+    return carry, (log_q_x_0, log_q_x_0, filt_params.eta1, jnp.diagonal(filt_params.eta2), jnp.empty((num_samples,num_samples)))
 
 def update_PaRIS(
         carry_tm1, 
@@ -186,15 +183,11 @@ def update_PaRIS(
     filt_params_tm1 = jax.lax.stop_gradient(q.filt_params_from_state(state_tm1, phi_t))
     filt_params_t = q.filt_params_from_state(state_t, phi_t)
 
-    # x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
-    #                                         key_t, 
-    #                                         filt_params_t,
-    #                                         num_samples,
-    #                                         stop_grad=False)
-
-    x_t = jnp.zeros((num_samples, p.state_dim))
-    log_q_t_x_t = jax.vmap(q.filt_dist.logpdf, in_axes=(0,None))(x_t, filt_params_t)
-
+    x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
+                                            key_t, 
+                                            filt_params_t,
+                                            num_samples,
+                                            stop_grad=False)
 
     params_q_tm1_t = q.backwd_params_from_state(filt_params_tm1, filt_params_t, phi_t)
 
@@ -229,27 +222,18 @@ def update_PaRIS(
 
         h_tm1_t = jax.vmap(_h)(x_tm1, log_q_tm1_x_tm1)
 
-        result = (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze()
-
-        # result = tau_tm1 + h_tm1_t
-        return result, 1 / (w_tm1_t**2).sum(), jnp.exp(w_tm1_t).sum(), log_w_tm1_t
+        return (w_tm1_t.reshape(-1,1).T @ (tau_tm1 + h_tm1_t).reshape(-1,1)).squeeze(), 1 / (w_tm1_t**2).sum(), jnp.exp(w_tm1_t).sum(), log_w_tm1_t
     
 
-    tau_t, ess_t, normalizing_const, log_weights = update(x_t[0], log_q_t_x_t[0])
 
-    tau_t = jnp.ones((num_samples,)) * tau_t
-    ess_t = jnp.ones((num_samples,)) * ess_t
-    normalizing_const = jnp.ones((num_samples,)) * normalizing_const
-    log_weights = jnp.ones((num_samples,)) * log_weights
-
-    # tau_t, ess_t, normalizing_const, log_weights = update)(x_t, log_q_t_x_t)
+    tau_t, ess_t, normalizing_const, log_weights = jax.vmap(update)(x_t, log_q_t_x_t)
 
     carry_t = {'state':state_t, 
             'x':x_t, 
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
     
-    return carry_t, x_t
+    return carry_t, (ess_t, normalizing_const, filt_params_t.eta1, jnp.diagonal(filt_params_t.eta2), log_weights)
 
 
 def init_carry_gradients_reparam(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
@@ -374,7 +358,7 @@ def update_gradients_reparam(
 
         def sum_of_grads(grad_w_t, w_t, unweighted_term_t, jac_Omega_tm1, grad_h_t):
 
-            return tree_map(lambda x,y,z: (x * unweighted_term_t + w_t * (y+z)).T, grad_w_t, jac_Omega_tm1, grad_h_t)
+            return tree_map(lambda x,y,z: (x.T * unweighted_term_t.reshape(-1,1) + w_t.reshape(-1,1) * (y+z).T).T, grad_w_t, jac_Omega_tm1, grad_h_t)
         
         all_terms_grad  = jax.vmap(sum_of_grads)(grad_w_t, w_t, unweighted_term, jac_Omega_tm1, grad_h_t)
 
