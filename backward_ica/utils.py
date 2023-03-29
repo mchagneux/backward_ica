@@ -193,9 +193,12 @@ def x1_x2_functional_offline_t(data, models):
 
 
 
-def samples_and_log_probs(dist, key, params_dist, num_samples):
+def samples_and_log_probs(dist, key, params_dist, num_samples, stop_grad=False):
     samples = vmap(dist.sample, in_axes=(0, None))(random.split(key, num_samples), params_dist)
     log_probs = vmap(dist.logpdf, in_axes=(0, None))(samples, params_dist)
+
+    if stop_grad: 
+        return jax.lax.stop_gradient(samples), jax.lax.stop_gradient(log_probs)
     return samples, log_probs
 
 class AdditiveFunctional:
@@ -288,7 +291,7 @@ def get_defaults(args):
 
     if 'neural_backward' or 'johnson' in args.model:
         ## variational family
-        args.update_layers = (100,) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (16,) # number of layers in the GRU which updates the variational filtering dist
         # args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     if 'johnson' in args.model:
@@ -296,7 +299,7 @@ def get_defaults(args):
 
     if 'neural_backward' in args.model:
         if not 'explicit_transition' in args.model_options:
-            args.backwd_layers = (100,)
+            args.backwd_layers = (16,)
         else: 
             args.backwd_layers = 0
 

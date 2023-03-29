@@ -81,7 +81,7 @@ class SVITrainer:
         # zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
 
         self.optimizer = optax.chain(
-                                optax.clip(1.0), 
+                                # optax.clip(1.0),
                                 base_optimizer)
         self.online = online
 
@@ -100,7 +100,7 @@ class SVITrainer:
             self.loss = closed_form_elbo
         else: 
             if online_elbo: 
-                self.elbo = OnlinePaRISELBO(self.p, self.q, num_samples)
+                self.elbo = OnlineELBO(self.p, self.q, num_samples)
                 self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
                 self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
                                                                 self.q.format_params(params))[0]
@@ -112,7 +112,7 @@ class SVITrainer:
                                                 self.formatted_theta_star, 
                                                 params)
                     
-                    return -carry, aux
+                    return -carry['tau'], aux
                 self.loss = online_elbo
             else: 
 
@@ -226,13 +226,14 @@ class SVITrainer:
                     params = optax.apply_updates(params, updates)
 
 
-                    monitor_neg_elbo_values, monitor_grads = vmap(value_and_grad(self.monitor_elbo, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
-                    avg_monitor_elbo_values = jnp.mean(monitor_neg_elbo_values, axis=0)
-                    avg_monitor_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), monitor_grads)
+                    if self.online_elbo:
+                        monitor_neg_elbo_values, monitor_grads = vmap(value_and_grad(self.monitor_elbo, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
+                        avg_monitor_elbo_values = jnp.mean(monitor_neg_elbo_values, axis=0)
+                        avg_monitor_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), monitor_grads)
 
-                    similarity_gradients = cosine_similarity(ravel_pytree(avg_monitor_grads)[0], ravel_pytree(avg_grads)[0])
+                        similarity_gradients = cosine_similarity(ravel_pytree(avg_monitor_grads)[0], ravel_pytree(avg_grads)[0])
 
-                    aux = [jnp.mean(aux_elem, axis=0) for aux_elem in aux] + [avg_monitor_elbo_values, similarity_gradients]
+                        aux = [jnp.mean(aux_elem, axis=0) for aux_elem in aux] + [avg_monitor_elbo_values, similarity_gradients]
 
                 
                     return params, \
