@@ -100,6 +100,8 @@ def elbo_h_t_online(data, models):
 
 
 
+
+
 def elbo_h_0_offline(data, models): 
 
     p = models['p']
@@ -113,24 +115,12 @@ def elbo_h_0_offline(data, models):
     y_t = data['t']['y']
     params_q_t_tp1 = data['t']['params_backwd']
     
-    p_prior_term = p.prior_dist.logpdf(x_t, theta.prior)
-    p_transition_term = p.transition_kernel.logpdf(x_tp1, x_t, theta.transition)
-    p_emission_terms = p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission) + p.emission_kernel.logpdf(y_t, x_t, theta.emission)
-    q_backwd_term = q.backwd_kernel.logpdf(x_t, x_tp1, params_q_t_tp1)
-    # print('x_0_offline', x_t)
 
-    # print('p_terms_0_offline', p_prior_term + p.emission_kernel.logpdf(y_t, x_t, theta.emission))
-    # print('p_emission_term_1_offline',  p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission))
-
-    result =  p_prior_term \
-        +  p_transition_term \
-        + p_emission_terms \
-        - q_backwd_term
-
-    # print('h_0_offline', result)
-    return result 
-
-
+    return p.prior_dist.logpdf(x_t, theta.prior) \
+        + p.transition_kernel.logpdf(x_tp1, x_t, theta.transition) \
+        + p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission) \
+        + p.emission_kernel.logpdf(y_t, x_t, theta.emission) \
+        - q.backwd_kernel.logpdf(x_t, x_tp1, params_q_t_tp1)
 
 def elbo_h_t_offline(data, models):
 
@@ -144,18 +134,10 @@ def elbo_h_t_offline(data, models):
     x_t = data['t']['x']
     params_q_t_tp1 = data['t']['params_backwd']
     
-    p_transition_term = p.transition_kernel.logpdf(x_tp1, x_t, theta.transition)
-    p_emission_term = p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission)
-    # print('p_emission_term_1_online', p_emission_term)
-    q_backwd_term = q.backwd_kernel.logpdf(x_t, x_tp1, params_q_t_tp1)
 
-    result =  p_transition_term \
-            + p_emission_term\
-            - q_backwd_term
-    
-
-    # print('h_t_offline', result)
-    return result 
+    return p.transition_kernel.logpdf(x_tp1, x_t, theta.transition) \
+            + p.emission_kernel.logpdf(y_tp1, x_tp1, theta.emission) \
+            - q.backwd_kernel.logpdf(x_t, x_tp1, params_q_t_tp1)
 
 def elbo_h_T_offline(data, models):
 
@@ -164,17 +146,11 @@ def elbo_h_T_offline(data, models):
     x_t = data['t']['x']
     params_q_t = data['t']['params_q']
     
+    return -q.filt_dist.logpdf(x_t, params_q_t)
 
-    # print('x_1_offline', x_t)
-    q_terminal_term = q.filt_dist.logpdf(x_t, params_q_t)
-
-    result = -q_terminal_term
-
-    # print('h_T_offline', result)
-    return result 
 
 def state_smoothing_h_t(data, models):
-    return jnp.linalg.norm(data['t']['x']).reshape((1,1))
+    return jnp.linalg.norm(data['t']['x'])
 
 def x1_x2_functional_online_0(data, models):
     return jnp.zeros((models['p'].state_dim,))

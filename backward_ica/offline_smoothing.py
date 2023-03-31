@@ -4,7 +4,6 @@ from .stats.hmm import *
 from .utils import *
 from backward_ica.stats import BackwardSmoother, TwoFilterSmoother
 
-
 class OfflineVariationalAdditiveSmoothing:
 
     def __init__(self, p: HMM, q: BackwardSmoother, functional, num_samples=200):
@@ -16,22 +15,21 @@ class OfflineVariationalAdditiveSmoothing:
 
     def __call__(self, key, obs_seq, T, theta: HMM.Params, phi):
 
+        # theta.compute_covs()
 
         def t_strictly_greater_than_T(carry_tp1, input_t):
 
-            return carry_tp1, (jnp.zeros((self.p.state_dim,)), jnp.zeros((self.p.state_dim,)))
+            return carry_tp1, None
 
         def t_smaller_or_equal_to_T(carry_tp1, input_t):
 
             def t_equals_T(carry_tp1, input_t):
 
                 key_t = input_t['key']
-                state_t, state_tp1 = tree_get_idx(0,input_t['state']), tree_get_idx(1, input_t['state'])
-
+                state_t = input_t['state']
 
                 params_q_t = self.q.filt_params_from_state(state_t, phi)
                 x_t = self.q.filt_dist.sample(key_t, params_q_t)
-                # x_t = 0.5*jnp.ones((self.p.state_dim,)) #hard coding the last sample
 
                 data_t = {'x':x_t, 'params_q':params_q_t}
             
@@ -40,7 +38,7 @@ class OfflineVariationalAdditiveSmoothing:
 
                 carry_t = {'x':x_t, 'y': input_t['y'], 'tau': tau_t}
 
-                return carry_t, (params_q_t.eta1, jnp.diagonal(params_q_t.eta2))
+                return carry_t, None
                 
 
             def t_strictly_lower_than_T(carry_tp1, input_t):
@@ -52,21 +50,12 @@ class OfflineVariationalAdditiveSmoothing:
                     y_tp1 = carry_tp1['y']
 
                     key_t = input_t['key']
-                    state_t = tree_get_idx(0,input_t['state'])
-                    state_tp1 = tree_get_idx(1, input_t['state'])
-                    params_q_tp1 = self.q.filt_params_from_state(state_tp1, phi)
+                    state_t = input_t['state']
                     y_t = input_t['y']
 
-                    params_q_t = self.q.filt_params_from_state(state_t, phi)
-                    params_q_t_tp1 = self.q.backwd_params_from_state(
-                                    params_q_t,
-                                    params_q_tp1,
-                                    phi)
-
+                    params_q_t_tp1 = self.q.backwd_params_from_state(state_t, phi)
 
                     x_t = self.q.backwd_kernel.sample(key_t, x_tp1, params_q_t_tp1)
-
-                    # _, eta1, eta2 = self.q.log_transition_function(x_t, x_tp1, params_potential)
 
                     data_tp1 = {'x': x_tp1, 'y':y_tp1, 'theta': theta}
 
@@ -79,7 +68,8 @@ class OfflineVariationalAdditiveSmoothing:
 
                     carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t}
 
-                    return carry_t, (params_q_t.eta1, jnp.diagonal(params_q_t.eta2))
+                    return carry_t, None
+
 
                 def t_strictly_greater_than_0(carry_tp1, input_t):
 
@@ -87,18 +77,10 @@ class OfflineVariationalAdditiveSmoothing:
                     y_tp1 = carry_tp1['y']
 
                     key_t = input_t['key']
-                    state_t = tree_get_idx(0, input_t['state'])
-                    state_tp1 = tree_get_idx(1, input_t['state'])
+                    state_t = input_t['state']
 
-                    params_q_t = self.q.filt_params_from_state(state_t, phi)
-                    params_q_t_tp1 = self.q.backwd_params_from_state(
-                                                        params_q_t,
-                                                        self.q.filt_params_from_state(state_tp1, phi),
-                                                        phi)
-                    
+                    params_q_t_tp1 = self.q.backwd_params_from_state(state_t, phi)
                     x_t = self.q.backwd_kernel.sample(key_t, x_tp1, params_q_t_tp1)
-
-                    # _, eta1, eta2 = self.q.log_transition_function(x_t, x_tp1, params_potential)
 
                     data_tp1 = {'x': x_tp1, 'y':y_tp1, 'theta': theta}
                     data_t = {'x': x_t, 'params_backwd':params_q_t_tp1}
@@ -108,8 +90,8 @@ class OfflineVariationalAdditiveSmoothing:
 
                     carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t}
 
-                    return carry_t, (params_q_t.eta1, jnp.diagonal(params_q_t.eta2))
-                
+                    return carry_t, None
+
                 return lax.cond(input_t['t'] > 0, 
                                 t_strictly_greater_than_0, t_equals_0, 
                                 carry_tp1, input_t)
@@ -134,9 +116,8 @@ class OfflineVariationalAdditiveSmoothing:
                                             formatted_params=phi)
         def evaluate_one_path(key):
 
-
             inputs = {'t': t_seq,
-                    'state': tree_get_strides(2, tree_append(state_seq, tree_get_idx(0, state_seq))),
+                    'state': state_seq,
                     'y': obs_seq, 
                     'key': jax.random.split(key, len(obs_seq))}
 
@@ -144,15 +125,13 @@ class OfflineVariationalAdditiveSmoothing:
                             'y': jnp.empty((self.p.obs_dim,)),
                             'tau':jnp.empty((*self.functional.out_shape,))}
             
-            carry, aux = lax.scan(compute, 
+            return lax.scan(compute, 
                             init=dummy_carry, 
-                            xs=inputs, reverse=True)
-            
-            return carry['tau'], aux
+                            xs=inputs, reverse=True)[0]['tau']
 
-        tau, aux = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
+        tau = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
         
-        return jnp.mean(tau, axis=0) / len(obs_seq), tree_get_idx(0, aux)
+        return jnp.mean(tau, axis=0) / len(obs_seq), 0
 
 GeneralBackwardELBO = lambda p, q, num_samples: OfflineVariationalAdditiveSmoothing(p, q, offline_elbo_functional(p,q), num_samples)
 
@@ -213,7 +192,7 @@ def check_linear_gaussian_elbo(p: LinearGaussianHMM, num_seqs, seq_length):
     elbo = LinearGaussianELBO(p, p)
 
     evidence_reference = vmap(lambda seq: p.likelihood_seq(
-        seq, theta))(seqs) / seq_length
+        seq, theta))(seqs)
     theta = p.format_params(theta)
     evidence_elbo = vmap(lambda seq: elbo(seq, len(seq)-1, theta, theta)[0])(seqs)
 
@@ -230,10 +209,15 @@ def check_general_elbo(mc_key, p: LinearGaussianHMM, num_seqs, seq_length, num_s
     mc_keys = jax.random.split(mc_key, num_seqs)
     elbo = GeneralBackwardELBO(p, p, num_samples)
 
-    evidence_reference = vmap(lambda seq: p.likelihood_seq(seq, theta))(seqs) / seq_length
 
     theta = p.format_params(theta)
+    reference_elbo = vmap(lambda seq:LinearGaussianELBO(p,p)(seq, len(seq)-1, theta, theta)[0])(seqs)
+
     evidence_elbo = vmap(lambda key, seq: elbo(
-        key, seq, len(seq) - 1, theta, theta))(mc_keys, seqs)
+        key, seq, len(seq) - 1, theta, theta)[0])(mc_keys, seqs)
     print('ELBO sanity check:', jnp.mean(
-        jnp.abs(evidence_elbo - evidence_reference)))
+        jnp.abs(evidence_elbo - reference_elbo)))
+
+
+# if '__name__' == '__main__':
+#     check_general_elbo(jax.random.PRNGKey(0))

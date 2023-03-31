@@ -11,9 +11,9 @@ vmap_ravel = jax.vmap(lambda x: ravel_pytree(x)[0])
 
 def value_and_jac(fun, argnums=0, has_aux=False):
     if has_aux:
-        return lambda *args: (fun(*args), jax.jacrev(fun, argnums=argnums, has_aux=True)(*args)[0])
+        return lambda *args: (fun(*args), jax.jacobian(fun, argnums=argnums, has_aux=True)(*args)[0])
     else: 
-        return lambda *args: (fun(*args), jax.jacrev(fun, argnums=argnums, has_aux=False)(*args))
+        return lambda *args: (fun(*args), jax.jacobian(fun, argnums=argnums, has_aux=False)(*args))
 
 class OnlineVariationalAdditiveSmoothing:
 
@@ -200,7 +200,7 @@ def update_PaRIS(
                                             num_samples,
                                             stop_grad=False)
 
-    params_q_tm1_t = q.backwd_params_from_state(filt_params_tm1, filt_params_t, phi_t)
+    params_q_tm1_t = q.backwd_params_from_state(state_tm1, phi_t)
 
 
     h = partial(h, models={'p':p, 'q':q})
@@ -333,7 +333,7 @@ def update_gradients_reparam(
         s_t = q.new_state(y_t, s_tm1, phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         params_q_tm1 = q.filt_params_from_state(s_tm1, phi)
-        params_q_tm1_t = q.backwd_params_from_state(params_q_tm1, params_q_t, phi)
+        params_q_tm1_t = q.backwd_params_from_state(s_tm1, phi)
         x_tm1 = jax.vmap(q.filt_dist.sample, in_axes=(0,None))(random.split(base_key_tm1, num_samples), params_q_tm1)
         x_t = q.filt_dist.sample(key_t, params_q_t)
 
@@ -347,7 +347,7 @@ def update_gradients_reparam(
         s_t = q.new_state(y_t, s_tm1, phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         params_q_tm1 = q.filt_params_from_state(s_tm1, phi)
-        params_q_tm1_t = q.backwd_params_from_state(params_q_tm1, params_q_t, phi)
+        params_q_tm1_t = q.backwd_params_from_state(s_tm1, phi)
         x_tm1 = q.filt_dist.sample(key_tm1, params_q_tm1)
         x_t = q.filt_dist.sample(key_t, params_q_t)
 
@@ -410,6 +410,21 @@ def update_gradients_reparam(
 
 
 
+def init_carry_gradients_F(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
+
+    dummy_x = jnp.empty((num_samples, state_dim))
+    dummy_H = jnp.empty((num_samples, *out_shape))
+    dummy_F = jax.jacrev(lambda phi:dummy_H)(unformatted_params)
+    dummy_G = jax.jacrev(lambda phi:dummy_H)(unformatted_params)
+
+    carry = {'s': dummy_state, 
+            'x':dummy_x, 
+            'stats':{'H':dummy_H, 
+                    'F':dummy_F, 
+                    'G':dummy_G}}
+
+    return carry
+
 def init_gradients_F(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
 
@@ -445,7 +460,7 @@ def init_gradients_F(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samp
             's':s_0, 
             'x':x_0}
 
-    return carry
+    return carry, None
 
 def update_gradients_F(
         carry_tm1, 
@@ -520,10 +535,8 @@ def update_gradients_F(
             's':s_t, 
             'x':x_t}
 
-    return carry_t
+    return carry_t, None
 
-
-# no_normalize = lambda x: jnp.exp()
 
 
 
@@ -537,14 +550,22 @@ OnlineELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(
                                                     exp_and_normalize,
                                                     num_samples)
 
-
-
 OnlineELBOAndGrad = lambda p,q, num_samples: OnlineVariationalAdditiveSmoothing(p, 
                                                                                 q, 
-                                                                                init_carry_gradients_reparam, 
-                                                                                init_gradients_reparam,
-                                                                                update_gradients_reparam,
+                                                                                init_carry_gradients_F, 
+                                                                                init_gradients_F,
+                                                                                update_gradients_F,
                                                                                 online_elbo_functional(p,q),
                                                                                 exp_and_normalize,
                                                                                 num_samples)
 
+
+# ThreePaRIS = lambda p,q,functional,num_samples: OnlineVariationalAdditiveSmoothing(
+#                                                         p, 
+#                                                         q, 
+#                                                         init_carry_gradients_F, 
+#                                                         init_gradients_F, 
+#                                                         update_gradients_F, 
+#                                                         functional,
+#                                                         exp_and_normalize,
+#                                                         num_samples)

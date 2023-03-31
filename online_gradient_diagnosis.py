@@ -2,7 +2,7 @@ from backward_ica.stats.hmm import get_generative_model, LinearGaussianHMM
 from backward_ica.variational import get_variational_model
 from backward_ica.stats import set_parametrization
 import backward_ica.utils as utils
-from backward_ica.online_smoothing import OnlineNormalizedISELBO, OnlinePaRISELBO
+from backward_ica.online_smoothing import OnlineELBO
 from backward_ica.offline_smoothing import LinearGaussianELBO, GeneralBackwardELBO
 import jax, jax.numpy as jnp
 from functools import partial
@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import argparse
 
 
-experiment_path = 'experiments/p_nonlinear_emission/2023_03_22__18_30_41/neural_backward__online' 
+experiment_path = '' 
 
 enable_x64(True)
 
@@ -28,18 +28,20 @@ else:
     jax.config.update('jax_disable_jit', False)
 
     args_p = argparse.Namespace()
-    args_p.model = 'chaotic_rnn'
+    args_p.model = 'linear'
     args_p.state_dim, args_p.obs_dim = 5,5
     args_p.seq_length = 2000
     args_p.transition_bias = False
     args_p.emission_bias = False
     args_p.loaded_seq = False
+    args_p.transition_matrix_conditionning = 'diagonal'
+    args_p.range_transition_map_params = (0.9,1)
     args_p.load_from = '../online_var_fil/outputs/2022-10-18_15-28-00_Train_run'
     args_p = utils.get_defaults(args_p)
     set_parametrization(args_p)
 
     args_q = argparse.Namespace()
-    args_q.model = 'neural_backward'
+    args_q.model = 'linear'
     args_q.state_dim, args_q.obs_dim = args_p.state_dim, args_p.obs_dim
     args_q = utils.get_defaults(args_q)
     args_q.transition_matrix_conditionning = 'diagonal'
@@ -49,12 +51,12 @@ else:
 num_samples_oracle = 10000
 
 
-num_samples = 100
+num_samples = 1000
 num_replicas = 100
 seq_length = 50
 num_runs = 5
 compute_grads = False
-online_methods = True
+online_methods = False
 name_method_2 = 'same'
 
 key = jax.random.PRNGKey(5)
@@ -68,7 +70,7 @@ path = f'experiments/online/bias_investigation'
 os.makedirs(path, exist_ok=True)
 
 def scalar_relative_error(oracle, estimate):
-    return (oracle - estimate) / jnp.abs(oracle)
+    return (oracle - estimate) #/ jnp.abs(oracle)
 
 if isinstance(p, LinearGaussianHMM) and isinstance(q, LinearGaussianHMM):
     oracle = LinearGaussianELBO(p, q)
@@ -77,8 +79,8 @@ else:
 
 offline_elbo = GeneralBackwardELBO(p, q, num_samples)
 
-online_elbo = OnlineNormalizedISELBO(p, q, num_samples)
-online_elbo_2 = OnlineNormalizedISELBO(p, q, num_samples)
+online_elbo = OnlineELBO(p, q, num_samples)
+online_elbo_2 = OnlineELBO(p, q, num_samples)
 
 if not isinstance(oracle, LinearGaussianELBO):
     oracle_elbo = lambda obs_seq, compute_up_to, theta, phi: oracle(
@@ -214,7 +216,7 @@ def experiment(key, exp_id, exp_name):
                         jax.random.split(key, num_replicas), obs_seq, theta, phi)
     offline_elbo_errors = jax.vmap(scalar_relative_error, in_axes=(None,0))(
                         oracle_elbo, offline_elbos)
-    offline_grad_elbo_errors = jax.vmap(cosine_similarity, in_axes=(None, 0))(
+    offline_grad_elbo_errors = jax.vmap(utils.cosine_similarity, in_axes=(None, 0))(
                         oracle_grad_elbo, offline_grads_elbo)
 
     if online_methods: 
@@ -226,7 +228,7 @@ def experiment(key, exp_id, exp_name):
                         theta, 
                         phi)
         online_elbo_errors = jax.vmap(scalar_relative_error, in_axes=(None,0))(oracle_elbo, online_elbos)
-        if compute_grads: online_grad_elbo_errors = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, online_grads_elbo)
+        if compute_grads: online_grad_elbo_errors = jax.vmap(utils.cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, online_grads_elbo)
         # jnp.save(os.path.join(path, 'weights_method_1.npy'), weights)
 
         print('Computing recursive results method 2...')
@@ -236,7 +238,7 @@ def experiment(key, exp_id, exp_name):
         # jnp.save(os.path.join(path, 'weights_method_2.npy'), weights)
 
         if compute_grads: 
-            online_grad_elbo_errors_2 = jax.vmap(cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, online_grads_elbo_2)
+            online_grad_elbo_errors_2 = jax.vmap(utils.cosine_similarity, in_axes=(None, 0))(oracle_grad_elbo, online_grads_elbo_2)
 
         elbo_errors = pd.DataFrame(jnp.array([
                                         offline_elbo_errors, 
