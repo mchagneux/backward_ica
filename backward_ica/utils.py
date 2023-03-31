@@ -174,9 +174,7 @@ def elbo_h_T_offline(data, models):
     return result 
 
 def state_smoothing_h_t(data, models):
-    return data['t']['x']
-
-
+    return jnp.linalg.norm(data['t']['x']).reshape((1,1))
 
 def x1_x2_functional_online_0(data, models):
     return jnp.zeros((models['p'].state_dim,))
@@ -225,7 +223,7 @@ offline_elbo_functional = lambda p, q: AdditiveFunctional(h_0=elbo_h_0_offline,
 
 
 state_smoothing_functional = lambda p, q: AdditiveFunctional(h_t=state_smoothing_h_t, 
-                                                            out_shape=(p.state_dim,))
+                                                            out_shape=())
 
 online_x1_x2_functional = lambda p, q: AdditiveFunctional(h_0=x1_x2_functional_online_0, 
                                                         out_shape=(p.state_dim,),

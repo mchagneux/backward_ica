@@ -263,6 +263,13 @@ class SVITrainer:
 
         params = self.q.get_random_params(key_params, args)
 
+        # with open(os.path.join('experiments/p_chaotic_rnn/2023_03_29__19_51_59/neural_backward__offline' ,'data'), 'rb') as f: 
+        #     all_params_through_epochs = dill.load(f)
+
+
+        # params = all_params_through_epochs[-1]
+
+
         params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
                         params, 
                         self.frozen_params)

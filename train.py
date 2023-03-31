@@ -7,7 +7,7 @@ import backward_ica.stats.hmm as hmm
 import backward_ica.variational as variational
 import backward_ica.stats as stats
 from backward_ica.training import SVITrainer, define_frozen_tree
-# jax.config.update('jax_disable_jit', True)
+jax.config.update('jax_disable_jit', False)
 
     
 def main(args):
@@ -82,7 +82,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=200)
     parser.add_argument('--num_samples', type=int, default=10)
     
-    parser.add_argument('--optimizer', type=str, default='adam')
+    parser.add_argument('--optimizer', type=str, default='sgd')
     parser.add_argument('--store_every', type=int, default=0)
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--online_elbo',action='store_true')

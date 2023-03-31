@@ -5,7 +5,7 @@ from collections import namedtuple
 def set_parametrization(args):
     Scale.parametrization = args.parametrization
 from jax import lax, numpy as jnp 
-
+from jax.flatten_util import ravel_pytree
 
 State = namedtuple('State', ['out','hidden'])
 GeneralBackwdState = namedtuple('BackwardState', ['inner', 'varying'])
@@ -119,6 +119,7 @@ class BackwardSmoother(metaclass=ABCMeta):
     def new_proposal_params(self, transition_params, filt_params):
         raise NotImplementedError
 
+        
 
 class TwoFilterSmoother(metaclass=ABCMeta):
         
