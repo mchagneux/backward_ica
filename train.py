@@ -44,14 +44,13 @@ def main(args):
                         num_samples=args.num_samples,
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
-                        online=args.online,
                         seq_length=data.shape[1],
-                        online_elbo=args.online_elbo)
+                        online_mode=args.online_mode)
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
 
-    print('Online ELBO:', args.online_elbo)
+    print('Online mode:', args.online_mode)
 
     params = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
                                                             data=data, 
@@ -75,7 +74,7 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='linear')
     parser.add_argument('--exp_dir', type=str, default='experiments/p_linear/2023_01_16__16_58_54')
 
-    parser.add_argument('--online', action='store_true')
+    parser.add_argument('--online_mode', type=str, default='off')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--learning_rate', type=float, default=0.01)
@@ -85,7 +84,6 @@ if __name__ == '__main__':
     parser.add_argument('--optimizer', type=str, default='sgd')
     parser.add_argument('--store_every', type=int, default=0)
     parser.add_argument('--seed', type=int, default=1)
-    parser.add_argument('--online_elbo',action='store_true')
 
     args = parser.parse_args()
 
@@ -105,7 +103,7 @@ if __name__ == '__main__':
 
     args = utils.get_defaults(args)
     args.transition_matrix_conditionning = 'diagonal'
-    args.range_transition_map_params = [0.99,1]
+    args.range_transition_map_params = [-1,1]
     args.transition_bias = False
         
     utils.save_args(args, 'args', args.save_dir)

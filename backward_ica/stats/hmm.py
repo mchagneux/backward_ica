@@ -206,8 +206,9 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         return State(out=(mean, cov), hidden=jnp.empty_like(mean))
     
-    def backwd_params_from_state(self, state, params):
+    def backwd_params_from_states(self, states, params):
 
+        state = states[0]
         return self.linear_gaussian_backwd_params_from_transition_and_filt(state.out[0], state.out[1], params.transition)
 
     def filt_params_from_state(self, state, params):

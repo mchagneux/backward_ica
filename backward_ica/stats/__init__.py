@@ -43,7 +43,7 @@ class BackwardSmoother(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def backwd_params_from_state(self, state, params):
+    def backwd_params_from_states(self, state, params):
         raise NotImplementedError
 
     @abstractmethod
@@ -114,7 +114,7 @@ class BackwardSmoother(metaclass=ABCMeta):
         return vmap(self.filt_params_from_state, in_axes=(0,None))(state_seq, formatted_params)
 
     def compute_backwd_params_seq(self, state_seq, formatted_params):
-        return vmap(self.backwd_params_from_state, in_axes=(0,None))(tree_droplast(state_seq), formatted_params)
+        return vmap(self.backwd_params_from_states, in_axes=(0,None))(tree_droplast(state_seq), formatted_params)
     
     def new_proposal_params(self, transition_params, filt_params):
         raise NotImplementedError

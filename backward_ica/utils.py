@@ -153,10 +153,10 @@ def state_smoothing_h_t(data, models):
     return jnp.linalg.norm(data['t']['x'])
 
 def x1_x2_functional_online_0(data, models):
-    return jnp.zeros((models['p'].state_dim,))
+    return 0.0
 
 def x1_x2_functional_online_t(data, models):
-    return data['tm1']['x'] * data['t']['x']
+    return jnp.linalg.norm(data['tm1']['x'] * data['t']['x'])
 
 def x1_x2_functional_offline_T(data, models):
     return jnp.zeros((models['p'].state_dim,))
@@ -202,7 +202,7 @@ state_smoothing_functional = lambda p, q: AdditiveFunctional(h_t=state_smoothing
                                                             out_shape=())
 
 online_x1_x2_functional = lambda p, q: AdditiveFunctional(h_0=x1_x2_functional_online_0, 
-                                                        out_shape=(p.state_dim,),
+                                                        out_shape=(),
                                                         h_t=x1_x2_functional_online_t)
 
             
@@ -265,7 +265,7 @@ def get_defaults(args):
 
     if 'neural_backward' or 'johnson' in args.model:
         ## variational family
-        args.update_layers = (16,) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (8,) # number of layers in the GRU which updates the variational filtering dist
         # args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     if 'johnson' in args.model:
@@ -273,7 +273,7 @@ def get_defaults(args):
 
     if 'neural_backward' in args.model:
         if not 'explicit_transition' in args.model_options:
-            args.backwd_layers = (16,)
+            args.backwd_layers = (8,)
         else: 
             args.backwd_layers = 0
 
@@ -647,3 +647,18 @@ def load_train_logs(save_dir):
     with open(os.path.join(save_dir, 'train_logs'), 'rb') as f: 
         train_logs = dill.load(f)
     return train_logs
+
+
+if __name__ == '__main__':
+    enable_x64(False)
+    key = jax.random.PRNGKey(0)
+    A = jax.random.uniform(key, shape=(5,5))
+    cov = A @ A.T 
+    chol = jnp.linalg.cholesky(cov)
+    print((cov - mat_from_chol(chol)).sum())
+    print((chol - cholesky(cov)).sum())
+    print((jnp.linalg.inv(cov) - inv(cov)).sum())
+
+
+
+

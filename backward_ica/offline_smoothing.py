@@ -36,7 +36,7 @@ class OfflineVariationalAdditiveSmoothing:
                 tau_t = self.functional.end(models={'p':self.p, 'q':self.q}, 
                                             data={'t':data_t})
 
-                carry_t = {'x':x_t, 'y': input_t['y'], 'tau': tau_t}
+                carry_t = {'x':x_t, 'y': input_t['y'], 'tau': tau_t, 'state':state_t}
 
                 return carry_t, None
                 
@@ -53,7 +53,9 @@ class OfflineVariationalAdditiveSmoothing:
                     state_t = input_t['state']
                     y_t = input_t['y']
 
-                    params_q_t_tp1 = self.q.backwd_params_from_state(state_t, phi)
+
+                    states = (state_t, carry_tp1['state'])
+                    params_q_t_tp1 = self.q.backwd_params_from_states(states, phi)
 
                     x_t = self.q.backwd_kernel.sample(key_t, x_tp1, params_q_t_tp1)
 
@@ -66,7 +68,7 @@ class OfflineVariationalAdditiveSmoothing:
                     tau_t = carry_tp1['tau'] + self.functional.init(models={'p':self.p, 'q':self.q}, 
                                                         data={'tp1':data_tp1, 't': data_t})
 
-                    carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t}
+                    carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t, 'state':state_t}
 
                     return carry_t, None
 
@@ -79,7 +81,9 @@ class OfflineVariationalAdditiveSmoothing:
                     key_t = input_t['key']
                     state_t = input_t['state']
 
-                    params_q_t_tp1 = self.q.backwd_params_from_state(state_t, phi)
+
+                    states = (state_t, carry_tp1['state'])
+                    params_q_t_tp1 = self.q.backwd_params_from_states(states, phi)
                     x_t = self.q.backwd_kernel.sample(key_t, x_tp1, params_q_t_tp1)
 
                     data_tp1 = {'x': x_tp1, 'y':y_tp1, 'theta': theta}
@@ -88,7 +92,7 @@ class OfflineVariationalAdditiveSmoothing:
                     tau_t = carry_tp1['tau'] + self.functional.update(models={'p':self.p, 'q':self.q}, 
                                                     data={'tp1':data_tp1, 't': data_t})
 
-                    carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t}
+                    carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t, 'state':state_t}
 
                     return carry_t, None
 
@@ -123,7 +127,8 @@ class OfflineVariationalAdditiveSmoothing:
 
             dummy_carry = {'x': jnp.empty((self.p.state_dim,)),
                             'y': jnp.empty((self.p.obs_dim,)),
-                            'tau':jnp.empty((*self.functional.out_shape,))}
+                            'tau':jnp.empty((*self.functional.out_shape,)),
+                            'state':tree_get_idx(-1,state_seq)}
             
             return lax.scan(compute, 
                             init=dummy_carry, 
@@ -153,7 +158,7 @@ class LinearGaussianELBO:
 
             def true_fun(state, kl_term, obs):
 
-                q_backwd_params = self.q.backwd_params_from_state(state, phi)
+                q_backwd_params = self.q.backwd_params_from_states((state,), phi)
 
                 kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_params) \
                     + transition_term_integrated_under_backward(q_backwd_params, theta.transition) \

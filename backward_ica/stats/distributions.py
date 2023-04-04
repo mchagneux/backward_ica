@@ -95,7 +95,6 @@ class Scale:
         if parametrization == 'prec_chol':scale=1/scale
         return {parametrization:scale}
 
-
 class Gaussian: 
 
 

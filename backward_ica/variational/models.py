@@ -74,14 +74,14 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                         'range_params':(0,1)}}
             
             
-            def backwd_params_from_state(filt_params_0, filt_params_1, params):
+            def backwd_params_from_states(filt_params_0, filt_params_1, params):
                 mean_filt_1 = filt_params_1.mean
                 mean_filt_0, cov_filt_0 = filt_params_0.mean, filt_params_0.scale.cov
                 
 
                 return LinearBackwardSmoother.linear_gaussian_backwd_params_from_transition_and_filt(mean_filt_0, cov_filt_0, params.backwd), (params.backwd, mean_filt_0, mean_filt_1)
 
-            self._backwd_params_from_state = backwd_params_from_state
+            self._backwd_params_from_state = backwd_params_from_states
 
             def _log_transition_function(x_0, x_1, params_potential):
                 kernel_params, mu_0, mu_1 = params_potential[0], params_potential[1], params_potential[2]
@@ -138,13 +138,13 @@ class NeuralBackwardSmoother(BackwardSmoother):
                 
                 return (x_0 - mu_0).T @ eta2 @ (x_0 - mu_0) + eta1.T @ (x_0 - mu_0)#, eta1, eta2
             
-            def backwd_params_from_state(filt_params_0, filt_params_1, params):
+            def backwd_params_from_states(filt_params_0, filt_params_1, params):
                 return params.backwd, (filt_params_0, filt_params_1)
             
 
             self._log_transition_function = lambda x_0, x_1, params: _log_transition_function(params[0], x_0, x_1, params[1])
                 
-            self._backwd_params_from_state = backwd_params_from_state
+            self._backwd_params_from_state = backwd_params_from_states
 
             
 
@@ -247,7 +247,10 @@ class NeuralBackwardSmoother(BackwardSmoother):
     def filt_params_from_state(self, state, params):
         return self._filt_net.apply(params.filt, state)
 
-    def backwd_params_from_state(self, filt_params_0, filt_params_1, params):
+
+    def backwd_params_from_states(self, states, params):
+        filt_params_0 = self.filt_params_from_state(states[0], params)
+        filt_params_1 = self.filt_params_from_state(states[1], params)
         return self._backwd_params_from_state(filt_params_0, filt_params_1, params)
 
     def print_num_params(self):
@@ -327,7 +330,7 @@ class JohnsonSmoother:
                                                                     v, 
                                                                     Scale.parametrization)
             elif k == 'default_prior_base_scale':
-                new_params.prior.scale = Scale.set_default(params.prior.scale, 
+                new_params.prior._scale = Scale.set_default(params.prior.scale, 
                                                            v, 
                                                            Scale.parametrization)
         return new_params
@@ -379,21 +382,22 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
 
     def init_state(self, obs, params):
         out = self._net.apply(params.net, obs)
-        return Gaussian.Params.from_nat_params(out[0] + params.prior.eta1, out[1] + params.prior.eta2)
+        return Gaussian.Params(eta1=out[0] + params.prior.eta1, eta2=out[1] + params.prior.eta2)
 
     def new_state(self, obs, prev_state, params):
 
         pred_mean, pred_cov = Kalman.predict(prev_state.mean, prev_state.scale.cov, params.transition)  
 
-        pred = Gaussian.Params.from_mean_cov(pred_mean, pred_cov)
+        pred = Gaussian.Params(mean=pred_mean, scale=Scale(cov=pred_cov))
         out = self._net.apply(params.net, obs)
 
-        return Gaussian.Params.from_nat_params(out[0] + pred.eta1, out[1] + pred.eta2)
+        return Gaussian.Params(eta1=out[0] + pred.eta1, eta2=out[1] + pred.eta2)
 
     def filt_params_from_state(self, state, params):
         return state
 
-    def backwd_params_from_state(self, state, params):
+    def backwd_params_from_states(self, states, params):
+        state = states[0]
         return self.linear_gaussian_backwd_params_from_transition_and_filt(
                                                             state.mean, 
                                                             state.scale.cov, 
@@ -405,7 +409,7 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
     def empty_state(self):
         eta1 = jnp.empty((self.state_dim,))
         eta2 = jnp.empty((self.state_dim, self.state_dim))
-        return Gaussian.Params.from_nat_params(eta1, eta2)
+        return Gaussian.Params(eta1=eta1, eta2=eta2)
         
 
 

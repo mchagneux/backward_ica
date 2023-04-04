@@ -15,19 +15,13 @@ def deep_gru(obs, prev_state, layers):
 
 def gaussian_proj(state, d):
 
-    net_eta1 = hk.Linear(d,
+    net = hk.Linear(2*d,
         w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
         b_init=hk.initializers.RandomNormal())
 
 
-    net_eta2 = hk.nets.MLP((d,),
-        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-        b_init=hk.initializers.RandomNormal(),
-        activate_final=True,
-        activation=nn.softplus)
-    
-    eta1 = net_eta1(state.out)
-    eta2 = -jnp.diag(net_eta2(state.out)) - jnp.eye(d)
+    eta1, out2 = jnp.split(net(state.out),2)
+    eta2 = -jnp.diag(nn.softplus(out2))# - jnp.eye(d)
     
     # eta1, out2 = out[:d], out[d:]
     # # eta2_chol = chol_from_vec(out2, d)
@@ -40,41 +34,17 @@ def gaussian_proj(state, d):
                     eta2=eta2)
 
 
-def backwd_update_forward(varying_params, next_state, layers, state_dim):
-
-    d = state_dim
-    out_dim = d + (d * (d+1)) // 2
-
-    net = hk.nets.MLP((*layers, out_dim),
-                w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-                b_init=hk.initializers.RandomNormal(),
-                activation=nn.tanh,
-                activate_final=False)
-    
-    out = net(jnp.concatenate((varying_params, next_state)))
-
-    out = Gaussian.Params.from_vec(out, d, diag=False)
-
-    return out.mean, out.scale
-
 def backwd_net(aux, obs, layers, state_dim):
     d = state_dim
 
-
-    net_eta1 = hk.nets.MLP((*layers, d),
+    
+    net = hk.nets.MLP((*layers, 2*d),
         w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
         b_init=hk.initializers.RandomNormal(),
-        activate_final=False,
-        activation=nn.softplus)
+        activate_final=False)
     
-    net_eta2 = hk.nets.MLP((*layers, d),
-        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
-        b_init=hk.initializers.RandomNormal(),
-        activate_final=True,
-        activation=nn.softplus)
-    
-    eta1 = net_eta1(obs)
-    eta2 = -jnp.diag(net_eta2(obs)) - jnp.eye(d)
+    eta1, out2 = jnp.split(net(obs),2)
+    eta2 = -jnp.diag(nn.softplus(out2))# - jnp.eye(d)
 
     # eta_2_chol = jnp.diagonal(nn.softplus(out2))
     # eta2 = -(eta_2_chol @ eta_2_chol.T + jnp.eye(d))
@@ -98,6 +68,22 @@ def johnson_anisotropic(obs, layers, state_dim):
     eta1 = out[:d]
     eta2 = mat_from_chol_vec(out[d:],d)
 
+    return eta1, eta2
+
+
+def johnson(obs, layers, state_dim):
+
+
+    d = state_dim 
+    rec_net = hk.nets.MLP((*layers, 2*d),
+                w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+                b_init=hk.initializers.RandomNormal(),
+                activation=nn.tanh,
+                activate_final=False)
+
+
+    eta1, out2 = jnp.split(rec_net(obs), 2)
+    eta2 = -jnp.diag(nn.softplus(out2))
     return eta1, eta2
 
 # def linear_gaussian_proj(state, d):
