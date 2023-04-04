@@ -5,13 +5,7 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 q_models = ['linear__offline', 
-            'neural_backward__offline',
-
-            'linear__online_autodiff', 
-            'neural_backward__online_autodiff',
-
-            'linear__online_recursions',
-            'neural_backward__online_recursions']
+            'linear__online_autodiff']
             #'johnson_backward__online_elbo_and_grads']
 
 num_epochs = 10000
@@ -24,12 +18,12 @@ num_seqs = 1
 seq_length = 50
 store_every = 0
 
-num_samples_list = [50, 50, 50, 50, 50, 50]
-learning_rates = [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+num_samples_list = [20, 20]
 
-online_modes = ['off', 'off', 
-                'autodiffed_online_elbo', 'autodiffed_online_elbo', 
-                'online_elbo_and_grads', 'online_elbo_and_grads']
+learning_rates = [0.01, 0.01]
+
+online_modes = ['off', 'autodiffed_online_elbo']
+
 os.makedirs(base_dir, exist_ok=True)
 
 date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
