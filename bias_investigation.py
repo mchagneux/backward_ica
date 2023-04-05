@@ -7,7 +7,7 @@ import argparse
 import jax, jax.numpy as jnp
 import matplotlib.pyplot as plt 
 from jax.flatten_util import ravel_pytree
-
+jax.config.update('jax_platform_name', 'cpu')
 from backward_ica.online_smoothing import *
 from backward_ica.offline_smoothing import *
 
