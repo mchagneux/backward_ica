@@ -13,7 +13,6 @@ from backward_ica.offline_smoothing import *
 
 experiment_path = 'experiments/p_chaotic_rnn/2023_04_03__15_03_01/johnson_backward' 
 p_and_data_path = os.path.split(experiment_path)[0]
-epoch_nb = 10
 num_samples = 1000
 num_samples_oracle = 10000
 T = 2
@@ -155,13 +154,18 @@ def oracle_smoothing_of_gradients(key):
     
     gradients = jax.vmap(jax.grad(log_joint, argnums=1), in_axes=(0,None))(joint_trajectories, phi)
     
-    return ravel_pytree(tree_map(partial(jnp.mean, axis=0), gradients))[0]
+    gradients = tree_map(partial(jnp.mean, axis=0), gradients)
+
+    return ravel_pytree(gradients)[0]
 
 
 
 
 
+print('Computing oracle smoothing of gradients...')
 oracle_G = oracle_smoothing_of_gradients(key)
+
+print('Computing online smoothing of gradients...')
 online_G = online_smoothing_value_and_grad(key)[-1]
 
 print(utils.cosine_similarity(oracle_G, online_G))
