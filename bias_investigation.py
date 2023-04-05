@@ -14,9 +14,9 @@ from backward_ica.offline_smoothing import *
 experiment_path = 'experiments/p_chaotic_rnn/2023_04_03__15_03_01/johnson_backward' 
 p_and_data_path = os.path.split(experiment_path)[0]
 epoch_nb = 10
-num_samples = 10
+num_samples = 1000
 num_samples_oracle = 10000
-T = 200
+T = 2
 utils.enable_x64(True)
 jax.config.update('jax_disable_jit', False)
 
@@ -89,7 +89,7 @@ def offline_smoothing_value_and_grad(key):
 def online_smoothing_value_and_grad(key):
     def f(phi):
         results = OnlineSmoother.batch_compute(key, y, p.format_params(theta), phi)[0]
-        return results['H'], ravel_pytree(results['F'])[0]
+        return results['H'], ravel_pytree(results['F'])[0], ravel_pytree(results['G'])[0]
     # (value, grad), autodiff_grad = jax.value_and_grad(f, has_aux=True)(phi)
     return f(phi)
 
@@ -108,40 +108,96 @@ def online_smooth_and_autodiff_from_recursions(key):
     return f(phi)
 
 
+@jax.jit
+def oracle_smoothing_of_gradients(key):
+
+    formatted_phi = q.format_params(phi)
+    state_seq = q.compute_state_seq(y, T-1, formatted_phi)
+    
+
+    def sample_joint(key):
+        key, subkey = jax.random.split(key, 2)
+        filt_params_T = q.filt_params_from_state(tree_get_idx(-1, state_seq), formatted_phi)
+        sample_T = q.filt_dist.sample(subkey, filt_params_T)
+        def sample_backwd(sample_tp1, key_and_states):
+            key, state_t, state_tp1 = key_and_states
+            backwd_params = q.backwd_params_from_states((state_t, state_tp1), formatted_phi)
+            sample_t = q.backwd_kernel.sample(key, sample_tp1, backwd_params)
+            return sample_t, sample_t
+        
+        samples_0_Tm1 = jax.lax.scan(
+                                sample_backwd, 
+                                init=sample_T, 
+                                xs=(jax.random.split(key, T-1), 
+                                    tree_droplast(state_seq), 
+                                    tree_dropfirst(state_seq)),
+                                reverse=True)[1]
+        
+        return tree_append(samples_0_Tm1, sample_T)
+    
+    joint_trajectories = jax.vmap(sample_joint)(random.split(key, num_samples_oracle))
+    
+
+    def log_joint(trajectory, phi):
+        formatted_phi = q.format_params(phi)
+        state_seq = q.compute_state_seq(y, T-1, formatted_phi)
+        filt_params_T = q.filt_params_from_state(tree_get_idx(-1, state_seq), formatted_phi)
+        log_q_T = q.filt_dist.logpdf(trajectory[-1], filt_params_T)
+
+        def log_backwd_t_tp1(x_t, x_tp1, state_t, state_tp1):
+            backwd_params = q.backwd_params_from_states((state_t, state_tp1), formatted_phi)
+            return q.backwd_kernel.logpdf(x_t, x_tp1, backwd_params)
+
+        return log_q_T + jnp.sum(jax.vmap(log_backwd_t_tp1)(trajectory[:-1], 
+                                                            trajectory[1:], 
+                                                            tree_droplast(state_seq),
+                                                            tree_dropfirst(state_seq)))
+    
+    gradients = jax.vmap(jax.grad(log_joint, argnums=1), in_axes=(0,None))(joint_trajectories, phi)
+    
+    return ravel_pytree(tree_map(partial(jnp.mean, axis=0), gradients))[0]
 
 
-print('Computing oracle...')
-offline_values, offline_grads = offline_smoothing_value_and_grad(key)
 
-print('Computing online...')
-online_values, online_grads = online_smoothing_value_and_grad(key)
 
-print('Computing online via autodiff...')
-online_values_autodiff, online_grads_autodiff = online_smoothing_and_autodiff(key)
 
-print('Computing online via autodiff recursions...')
-online_values_autodiff_recursions, online_grads_autodiff_recursions = online_smooth_and_autodiff_from_recursions(key)
+oracle_G = oracle_smoothing_of_gradients(key)
+online_G = online_smoothing_value_and_grad(key)[-1]
 
-print('Offline oracle:', offline_values)
-print('Online 3-PaRIS:', online_values)
-print('Online autodiff:', online_values_autodiff)
-print('Online autodiff recursions:', online_values_autodiff_recursions)
+print(utils.cosine_similarity(oracle_G, online_G))
 
-print('Similarity offline and online 3-PaRIS:', utils.cosine_similarity(
-                                                        offline_grads, 
-                                                        online_grads))
+# print('Computing oracle...')
+# offline_values, offline_grads = offline_smoothing_value_and_grad(key)
 
-print('Similarity offline and online autodiff:',utils.cosine_similarity(
-                                                        offline_grads, 
-                                                        online_grads_autodiff))
+# print('Computing online...')
+# online_values, online_grads = online_smoothing_value_and_grad(key)
 
-print('Similarity offline and online autodiff recursions:',utils.cosine_similarity(
-                                                        offline_grads, 
-                                                        online_grads_autodiff_recursions))
+# print('Computing online via autodiff...')
+# online_values_autodiff, online_grads_autodiff = online_smoothing_and_autodiff(key)
 
-print('Similarity online autodiff and online autodiff recursions:',utils.cosine_similarity(
-                                                        online_grads_autodiff, 
-                                                        online_grads_autodiff_recursions))
+# print('Computing online via autodiff recursions...')
+# online_values_autodiff_recursions, online_grads_autodiff_recursions = online_smooth_and_autodiff_from_recursions(key)
+
+# print('Offline oracle:', offline_values)
+# print('Online 3-PaRIS:', online_values)
+# print('Online autodiff:', online_values_autodiff)
+# print('Online autodiff recursions:', online_values_autodiff_recursions)
+
+# print('Similarity offline and online 3-PaRIS:', utils.cosine_similarity(
+#                                                         offline_grads, 
+#                                                         online_grads))
+
+# print('Similarity offline and online autodiff:',utils.cosine_similarity(
+#                                                         offline_grads, 
+#                                                         online_grads_autodiff))
+
+# print('Similarity offline and online autodiff recursions:',utils.cosine_similarity(
+#                                                         offline_grads, 
+#                                                         online_grads_autodiff_recursions))
+
+# print('Similarity online autodiff and online autodiff recursions:',utils.cosine_similarity(
+#                                                         online_grads_autodiff, 
+#                                                         online_grads_autodiff_recursions))
 
 
 # print(jnp.sum(jnp.linalg.norm(pykalman_smooth_seq(y, q.format_params(phi))[0], axis=-1)))

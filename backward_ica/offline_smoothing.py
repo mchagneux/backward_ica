@@ -120,10 +120,12 @@ class OfflineVariationalAdditiveSmoothing:
                                             formatted_params=phi)
         def evaluate_one_path(key):
 
-            inputs = {'t': t_seq,
+            inputs = {
+                    't': t_seq,
                     'state': state_seq,
                     'y': obs_seq, 
-                    'key': jax.random.split(key, len(obs_seq))}
+                    'key': jax.random.split(key, len(obs_seq))
+                    }
 
             dummy_carry = {'x': jnp.empty((self.p.state_dim,)),
                             'y': jnp.empty((self.p.obs_dim,)),
@@ -132,7 +134,8 @@ class OfflineVariationalAdditiveSmoothing:
             
             return lax.scan(compute, 
                             init=dummy_carry, 
-                            xs=inputs, reverse=True)[0]['tau']
+                            xs=inputs, 
+                            reverse=True)[0]['tau']
 
         tau = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
         

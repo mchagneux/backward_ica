@@ -165,8 +165,6 @@ def x1_x2_functional_offline_t(data, models):
     return data['t']['x'] * data['tp1']['x']
 
 
-
-
 def samples_and_log_probs(dist, key, params_dist, num_samples, stop_grad=False):
     samples = vmap(dist.sample, in_axes=(0, None))(random.split(key, num_samples), params_dist)
     log_probs = vmap(dist.logpdf, in_axes=(0, None))(samples, params_dist)
