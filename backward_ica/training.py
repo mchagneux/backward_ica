@@ -119,12 +119,19 @@ class SVITrainer:
                 self.get_montecarlo_keys = get_keys
                 def online_elbo(key, data, compute_up_to, params):
 
+                    _, unravel = ravel_pytree(params)
                     carry, aux = self.elbo.batch_compute(key, 
                                                 data, 
                                                 self.formatted_theta_star, 
                                                 params)
-                    
-                    return (-carry['H'], tree_map(lambda x: -x, carry['F'])), aux
+                    H = carry['stats']['H']
+
+                    F = vmap_ravel(carry['stats']['F'])
+                    grad_log_q = vmap_ravel(carry['grad_log_q'])
+                    elbo = jnp.mean(H, axis=0) / (compute_up_to + 1)
+                    grad = unravel(-jnp.mean(jax.vmap(lambda a,b,c: a*b + c)(H, grad_log_q, F), axis=0) / (compute_up_to + 1))
+
+                    return (-elbo, grad), aux
                 self.loss = online_elbo
 
 

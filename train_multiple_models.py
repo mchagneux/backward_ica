@@ -5,7 +5,7 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 q_models = ['johnson_backward__offline', 
-            'johnson_backward__online_autodiff']
+            'johnson_backward__online_grads']
             #'johnson_backward__online_elbo_and_grads']
 
 num_epochs = 10000
@@ -22,7 +22,7 @@ num_samples_list = [50, 50]
 
 learning_rates = [0.01, 0.01]
 
-online_modes = ['off', 'autodiffed_online_elbo']
+online_modes = ['off', 'online_elbo_and_grads']
 
 os.makedirs(base_dir, exist_ok=True)
 

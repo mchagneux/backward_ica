@@ -10,11 +10,12 @@ from jax.flatten_util import ravel_pytree
 jax.config.update('jax_platform_name', 'cpu')
 from backward_ica.online_smoothing import *
 from backward_ica.offline_smoothing import *
+import pandas as pd 
 
 experiment_path = 'experiments/p_chaotic_rnn/2023_04_03__15_03_01/johnson_backward' 
 p_and_data_path = os.path.split(experiment_path)[0]
-num_samples = 1000
-num_samples_oracle = 10000
+num_samples = 200
+num_samples_oracle = 100000
 T = 2
 utils.enable_x64(True)
 jax.config.update('jax_disable_jit', False)
@@ -23,7 +24,7 @@ base_key = jax.random.PRNGKey(0)
 args_p = utils.load_args('args',p_and_data_path)
 args_q = utils.load_args('args', experiment_path)
 args_q.state_dim, args_q.obs_dim = args_p.state_dim, args_p.obs_dim
-
+num_runs = 30
 p = get_generative_model(args_p)
 q = get_variational_model(args_q)
 
@@ -32,7 +33,8 @@ theta = utils.load_params('theta_star', p_and_data_path)
 with open(os.path.join(experiment_path, 'data'), 'rb') as f: 
     phi = dill.load(f)[-1]
 
-y = jnp.load(os.path.join(p_and_data_path, 'obs_seqs.npy')).squeeze()[:T]
+y = jnp.load(os.path.join(p_and_data_path, 
+                          'obs_seqs.npy')).squeeze()[:T]
 
 OfflineSmoother = OfflineVariationalAdditiveSmoothing(
                                                 p, 
@@ -86,29 +88,42 @@ def offline_smoothing_value_and_grad(key):
 
 @jax.jit
 def online_smoothing_value_and_grad(key):
+    
     def f(phi):
         results = OnlineSmoother.batch_compute(key, y, p.format_params(theta), phi)[0]
-        return results['H'], ravel_pytree(results['F'])[0], ravel_pytree(results['G'])[0]
+        H = results['stats']['H']
+        F = vmap_ravel(results['stats']['F'])
+        grad_log_q = vmap_ravel(results['grad_log_q'])
+        elbo = jnp.mean(H, axis=0) / len(y)
+        grad = jnp.mean(jax.vmap(lambda a,b,c: a*b + c)(H, grad_log_q, F), axis=0) / len(y)
+        return elbo, grad
     # (value, grad), autodiff_grad = jax.value_and_grad(f, has_aux=True)(phi)
     return f(phi)
 
 @jax.jit
 def online_smoothing_and_autodiff(key):
     def f(phi):
-        return OnlineSmootherAutodiff.batch_compute(key, y, p.format_params(theta), phi)[0]['tau']
+        tau = OnlineSmootherAutodiff.batch_compute(key, 
+                                                    y, 
+                                                    p.format_params(theta), 
+                                                    phi)[0]['stats']['tau']
+        return jnp.mean(tau, axis=0) / len(y)
     value, grad = jax.value_and_grad(f)(phi)
     return value, ravel_pytree(grad)[0]
 
 @jax.jit
 def online_smooth_and_autodiff_from_recursions(key):
     def f(phi):
-        results = OnlineSmootherAutodiffFromRecursions.batch_compute(key, y, p.format_params(theta), phi)[0]
+        results = OnlineSmootherAutodiffFromRecursions.batch_compute(key, 
+                                                                     y,
+                                                                     p.format_params(theta), 
+                                                                     phi)[0]
         return results['tau'], ravel_pytree(results['grad_tau'])[0]
     return f(phi)
 
 
-@jax.jit
-def oracle_smoothing_of_gradients(key):
+@partial(jax.jit, static_argnums=1)
+def oracle_smoothing_of_gradients(key, num_samples):
 
     formatted_phi = q.format_params(phi)
     state_seq = q.compute_state_seq(y, T-1, formatted_phi)
@@ -134,7 +149,8 @@ def oracle_smoothing_of_gradients(key):
         
         return tree_append(samples_0_Tm1, sample_T)
     
-    joint_trajectories = jax.vmap(sample_joint)(random.split(key, num_samples_oracle))
+    joint_trajectories = jax.vmap(sample_joint)(random.split(key, num_samples))
+    
     
 
     def log_joint(trajectory, phi):
@@ -152,41 +168,90 @@ def oracle_smoothing_of_gradients(key):
                                                             tree_droplast(state_seq),
                                                             tree_dropfirst(state_seq)))
     
-    gradients = jax.vmap(jax.grad(log_joint, argnums=1), in_axes=(0,None))(joint_trajectories, phi)
+    def log_last(trajectory, phi):
+        formatted_phi = q.format_params(phi)
+        state_seq = q.compute_state_seq(y, T-1, formatted_phi)
+        filt_params_T = q.filt_params_from_state(tree_get_idx(-1, state_seq), formatted_phi)
+        return q.filt_dist.logpdf(trajectory[-1], filt_params_T)
     
+    gradients = jax.vmap(jax.grad(log_joint, argnums=1), in_axes=(0,None))(joint_trajectories, phi)
+    gradients_last = jax.vmap(jax.grad(log_last, argnums=1), in_axes=(0,None))(joint_trajectories, phi)
+
     gradients = tree_map(partial(jnp.mean, axis=0), gradients)
+    gradients_last = tree_map(partial(jnp.mean, axis=0), gradients_last)
 
-    return ravel_pytree(gradients)[0]
-
-
-
+    return ravel_pytree(gradients)[0], ravel_pytree(gradients_last)[0]
 
 
-print('Computing oracle smoothing of gradients...')
-oracle_G = oracle_smoothing_of_gradients(key)
 
-print('Computing online smoothing of gradients...')
-online_G = online_smoothing_value_and_grad(key)[-1]
 
-print(utils.cosine_similarity(oracle_G, online_G))
 
-# print('Computing oracle...')
-# offline_values, offline_grads = offline_smoothing_value_and_grad(key)
+# print('Computing oracle smoothing of gradients...')
+# oracle_G, oracle_G_last = oracle_smoothing_of_gradients(key, 100)
 
-# print('Computing online...')
-# online_values, online_grads = online_smoothing_value_and_grad(key)
+# print((oracle_G - oracle_G_last).sum())
+# #%%
 
-# print('Computing online via autodiff...')
-# online_values_autodiff, online_grads_autodiff = online_smoothing_and_autodiff(key)
+
+
+# # 
+# print((oracle_G - oracle_G_last).sum())
+
+# #%%
+# # offline_G = jax.vmap(oracle_smoothing_of_gradients, 
+# #                      in_axes=(0,None))(jax.random.split(key, num_runs), 
+# #                                                                       num_samples)
+
+# # print('Computing online smoothing of gradients...')
+# # online_G = jax.vmap(lambda key: online_smoothing_value_and_grad(key)[-1])(jax.random.split(key, num_runs))
+
+# # print('Computing errors...')
+
+# # similarities_online = jax.vmap(utils.cosine_similarity, 
+# #                                in_axes=(None,0))(oracle_value, online_G)
+
+# # similarities_offline = jax.vmap(utils.cosine_similarity, 
+# #                                 in_axes=(None,0))(oracle_value, offline_G)
+
+# # df = pd.DataFrame(jnp.array([
+# #                         similarities_online,
+# #                         similarities_offline]).T,
+# #                         columns=['Offline similarity', 
+# #                                  'Online similarity'])
+
+
+# df.plot(kind='box')
+#%%
+
+
+
+print('Computing oracle...')
+offline_values, offline_grads = offline_smoothing_value_and_grad(key)
+
+print('Computing online...')
+online_values, online_grads = jax.vmap(online_smoothing_value_and_grad)(jax.random.split(key, num_runs))
+
+print('Computing online via autodiff...')
+online_values_autodiff, online_grads_autodiff = jax.vmap(online_smoothing_and_autodiff)(jax.random.split(key, num_runs))
 
 # print('Computing online via autodiff recursions...')
 # online_values_autodiff_recursions, online_grads_autodiff_recursions = online_smooth_and_autodiff_from_recursions(key)
 
-# print('Offline oracle:', offline_values)
+
+
+
+print('Offline oracle:', offline_values)
 # print('Online 3-PaRIS:', online_values)
 # print('Online autodiff:', online_values_autodiff)
 # print('Online autodiff recursions:', online_values_autodiff_recursions)
 
+offline_similarities = jax.vmap(utils.cosine_similarity, in_axes=(None,0))(offline_grads, online_grads)
+online_similarities = jax.vmap(utils.cosine_similarity, in_axes=(None,0))(offline_grads, online_grads_autodiff)
+
+
+pd.DataFrame(jnp.array([offline_similarities, online_similarities]).T, 
+             columns=['Online', 'Online autodiff']).plot(kind='box')
+#%%
 # print('Similarity offline and online 3-PaRIS:', utils.cosine_similarity(
 #                                                         offline_grads, 
 #                                                         online_grads))

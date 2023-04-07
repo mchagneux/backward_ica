@@ -8,6 +8,7 @@ import backward_ica.variational as variational
 import backward_ica.stats as stats
 from backward_ica.training import SVITrainer, define_frozen_tree
 jax.config.update('jax_disable_jit', False)
+jax.config.update('jax_platform_name', 'cpu')
 
     
 def main(args):
