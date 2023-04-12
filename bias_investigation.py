@@ -16,7 +16,7 @@ experiment_path = 'experiments/p_chaotic_rnn/2023_04_03__15_03_01/johnson_backwa
 p_and_data_path = os.path.split(experiment_path)[0]
 num_samples = 100
 num_samples_oracle = 100000
-T = 1
+T = 2
 utils.enable_x64(True)
 
 jax.config.update('jax_disable_jit', False)

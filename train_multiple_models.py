@@ -4,24 +4,25 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['neural_backward__offline',
-            'neural_backward__online_autodiff', 
-            'neural_backward__online_grads']
-            #'johnson_backward__online_elbo_and_grads']ww
+q_models = ['johnson_backward__offline',
+            'johnson_backward__online_autodiff',
+            'johnson_backward__true_online']
 
-num_epochs = 1000
+num_epochs = 5000
 dims = '5 5'
 load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
 batch_size = 1
 num_seqs = 1
-seq_length = 10
+seq_length = 100
 store_every = 0
 
-num_samples_list = [5, 5, 5]
+num_samples_list = [10, 10, 10]
 
 learning_rates = [1e-3, 1e-3, 1e-3]
-online_modes = ['off', 'autodiffed_online_elbo', 'online_elbo_and_grads']
+online_modes = ['off', 
+                'autodiffed_online_elbo',
+                'online_elbo_and_grads']
 
 os.makedirs(base_dir, exist_ok=True)
 
@@ -59,7 +60,7 @@ processes = [subprocess.Popen(f'python train.py \
                                         learning_rates)]
 
          
-tensorboard_process = subprocess.Popen(f'tensorboard --logdir {exp_dir} --port=6009', shell=True)
+tensorboard_process = subprocess.Popen(f'tensorboard --logdir {exp_dir}', shell=True)
 tensorboard_process.wait()
 
 for process in processes: 
