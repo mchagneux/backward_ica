@@ -108,7 +108,10 @@ class SVITrainer:
                                                 self.formatted_theta_star, 
                                                 params)
                     
-                    return -carry['tau'], aux
+                    tau = carry['stats']['tau']
+                    elbo = jnp.mean(tau, axis=0) / (compute_up_to + 1)
+                    
+                    return -elbo, aux
                 self.loss = online_elbo
             elif self.online_mode == 'online_elbo_and_grads':
 
@@ -128,8 +131,9 @@ class SVITrainer:
 
                     F = vmap_ravel(carry['stats']['F'])
                     grad_log_q = vmap_ravel(carry['grad_log_q'])
-                    elbo = jnp.mean(H, axis=0) / (compute_up_to + 1)
-                    grad = unravel(-jnp.mean(jax.vmap(lambda a,b,c: a*b + c)(H, grad_log_q, F), axis=0) / (compute_up_to + 1))
+                    moving_average_H = jnp.mean(H, axis=0)
+                    elbo = moving_average_H / (compute_up_to + 1)
+                    grad = unravel(-jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)(H, grad_log_q, F), axis=0) / (compute_up_to + 1))
 
                     return (-elbo, grad), aux
                 self.loss = online_elbo

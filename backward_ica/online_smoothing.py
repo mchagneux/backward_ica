@@ -145,9 +145,8 @@ def init_PaRIS(
     x_0, log_q_x_0 = samples_and_log_probs(q.filt_dist, 
                                             key_0, 
                                             filt_params, 
-                                            num_samples,
-                                            stop_grad=False)
-
+                                            num_samples)
+    
     data_0 = {'x':x_0,
             'log_q_x':log_q_x_0,
             'state':state_0,
@@ -192,8 +191,7 @@ def update_PaRIS(
     x_t, log_q_t_x_t = samples_and_log_probs(q.filt_dist, 
                                             key_t, 
                                             filt_params_t,
-                                            num_samples,
-                                            stop_grad=False)
+                                            num_samples)
 
 
     states = (state_tm1, state_t)
@@ -588,13 +586,21 @@ def init_gradients_F(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samp
     y_0 = input_0['y']
     key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
 
-    phi_0 = q.format_params(unformatted_phi_0)
-    s_0 = q.init_state(y_0, phi_0)
-    q_0_params = q.filt_params_from_state(s_0, phi_0)
 
-    x_0, log_q_0 = samples_and_log_probs(q.filt_dist, key_0, q_0_params, num_samples)
 
-        
+
+    def _log_q_0(unformatted_phi, key):
+        phi = q.format_params(unformatted_phi)
+        s_0 = q.init_state(y_0, phi)
+        params_q_t = q.filt_params_from_state(s_0, phi)
+        x_t = q.filt_dist.sample(key, params_q_t)
+        x_t = jax.lax.stop_gradient(x_t)
+        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, s_0)
+
+    (log_q_0, (x_0, s_0)), grad_log_q_0 = jax.vmap(jax.value_and_grad(_log_q_0, has_aux=True), 
+                                            in_axes=(None,0))(unformatted_phi_0, 
+                                                              jax.random.split(key_0, num_samples))
+    
     h = partial(h_0, models={'p':p, 'q':q})
 
 
@@ -607,10 +613,10 @@ def init_gradients_F(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samp
 
     carry = {'stats':{'F':F_0, 
                       'H':H_0},
-            's':s_0, 
+            's':tree_get_idx(0, s_0), 
             'x':x_0,
             'log_q':log_q_0,
-            'grad_log_q':F_0}
+            'grad_log_q':grad_log_q_0}
 
     return carry, 0.0
 
@@ -655,18 +661,20 @@ def update_gradients_F(
         x_t = jax.lax.stop_gradient(x_t)
         return q.filt_dist.logpdf(x_t, params_q_t), (x_t, s_t)
     
-
-    (log_q_t, (x_t, s_t)), grad_log_q_t = jax.vmap(jax.value_and_grad(_log_q_t, has_aux=True),
-                                            in_axes=(None, 0))(unformatted_phi_t,
-                                                               jax.random.split(key_t, num_samples))
     
 
-    s_t = tree_get_idx(0, s_t)
 
-    def update(x_t, log_q_t):
+    def update(key_t):
+    
+        (log_q_t, (x_t, s_t)), grad_log_q_t = jax.value_and_grad(_log_q_t, has_aux=True)(
+                                                        unformatted_phi_t, 
+                                                        key_t)
+    
 
         log_q_tm1_t, grad_log_q_tm1_t = jax.vmap(jax.value_and_grad(_log_q_tm1_t),
-                                                 in_axes=(None,0,None))(unformatted_phi_t, x_tm1, x_t)
+                                                 in_axes=(None,0,None))(unformatted_phi_t, 
+                                                                        x_tm1, 
+                                                                        x_t)
         
         log_w_t = log_q_tm1_t - log_q_tm1
 
@@ -685,20 +693,21 @@ def update_gradients_F(
                        in_axes=(0,0))(x_tm1, log_m_t)
 
         H_t = jax.vmap(lambda w, H, h: w * (H+h))(w_t, H_tm1, h_t)
-
-        F_t = jax.vmap(lambda w, F, H, grad_log_backwd: w*F + grad_log_backwd*H)(
+        moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
+        F_t = jax.vmap(lambda w, F, H, h, grad_log_backwd: w*(F + grad_log_backwd*(H+h-moving_average_H)))(
                                                                                 w_t, 
                                                                                 F_tm1, 
-                                                                                H_t, 
+                                                                                H_tm1,
+                                                                                h_t, 
                                                                                 grad_log_q_tm1_t)
         
 
-        return unravel(jnp.sum(F_t, axis=0)), jnp.sum(H_t, axis=0)
+        return unravel(jnp.sum(F_t, axis=0)), jnp.sum(H_t, axis=0), x_t, s_t, log_q_t, grad_log_q_t
 
-    F_t, H_t = jax.vmap(update)(x_t, log_q_t)
+    F_t, H_t, x_t, s_t, log_q_t, grad_log_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
 
     carry_t = {'stats':{'F':F_t, 'H':H_t},
-            's':s_t, 
+            's':tree_get_idx(0,s_t), 
             'x':x_t,
             'log_q':log_q_t,
             'grad_log_q':grad_log_q_t}

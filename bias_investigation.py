@@ -14,17 +14,19 @@ import pandas as pd
 
 experiment_path = 'experiments/p_chaotic_rnn/2023_04_03__15_03_01/johnson_backward' 
 p_and_data_path = os.path.split(experiment_path)[0]
-num_samples = 200
+num_samples = 100
 num_samples_oracle = 100000
-T = 2
+T = 1
 utils.enable_x64(True)
+
 jax.config.update('jax_disable_jit', False)
 
 base_key = jax.random.PRNGKey(0)
 args_p = utils.load_args('args',p_and_data_path)
 args_q = utils.load_args('args', experiment_path)
 args_q.state_dim, args_q.obs_dim = args_p.state_dim, args_p.obs_dim
-num_runs = 30
+num_runs = 100
+
 p = get_generative_model(args_p)
 q = get_variational_model(args_q)
 
@@ -186,12 +188,15 @@ def oracle_smoothing_of_gradients(key, num_samples):
 
 
 
-# print('Computing oracle smoothing of gradients...')
-# oracle_G, oracle_G_last = oracle_smoothing_of_gradients(key, 100)
 
-# print((oracle_G - oracle_G_last).sum())
-# #%%
 
+print('Computing oracle smoothing of gradients...')
+oracle_G, oracle_G_last = oracle_smoothing_of_gradients(key, 100000)
+
+print(oracle_G.mean())
+
+print(oracle_G_last.mean())
+#%%
 
 
 # # 
@@ -241,8 +246,8 @@ online_values_autodiff, online_grads_autodiff = jax.vmap(online_smoothing_and_au
 
 
 print('Offline oracle:', offline_values)
-# print('Online 3-PaRIS:', online_values)
-# print('Online autodiff:', online_values_autodiff)
+print('Online 3-PaRIS:', online_values)
+print('Online autodiff:', online_values_autodiff)
 # print('Online autodiff recursions:', online_values_autodiff_recursions)
 
 offline_similarities = jax.vmap(utils.cosine_similarity, in_axes=(None,0))(offline_grads, online_grads)
@@ -251,46 +256,9 @@ online_similarities = jax.vmap(utils.cosine_similarity, in_axes=(None,0))(offlin
 
 pd.DataFrame(jnp.array([offline_similarities, online_similarities]).T, 
              columns=['Online', 'Online autodiff']).plot(kind='box')
+
+plt.savefig('New online gradient method T=1')
 #%%
-# print('Similarity offline and online 3-PaRIS:', utils.cosine_similarity(
-#                                                         offline_grads, 
-#                                                         online_grads))
-
-# print('Similarity offline and online autodiff:',utils.cosine_similarity(
-#                                                         offline_grads, 
-#                                                         online_grads_autodiff))
-
-# print('Similarity offline and online autodiff recursions:',utils.cosine_similarity(
-#                                                         offline_grads, 
-#                                                         online_grads_autodiff_recursions))
-
-# print('Similarity online autodiff and online autodiff recursions:',utils.cosine_similarity(
-#                                                         online_grads_autodiff, 
-#                                                         online_grads_autodiff_recursions))
-
-
-# print(jnp.sum(jnp.linalg.norm(pykalman_smooth_seq(y, q.format_params(phi))[0], axis=-1)))
-
-# from pykalman.standard import KalmanFilter
-# def pykalman_smooth_seq(obs_seq, hmm_params):
-
-#     engine = KalmanFilter(transition_matrices=hmm_params.transition.map.w, 
-#                         observation_matrices=hmm_params.emission.map.w,
-#                         transition_covariance=hmm_params.transition.noise.scale.cov,
-#                         observation_covariance=hmm_params.emission.noise.scale.cov,
-#                         transition_offsets=hmm_params.transition.map.b,
-#                         observation_offsets=hmm_params.emission.map.b,
-#                         initial_state_mean=hmm_params.prior.mean,
-#                         initial_state_covariance=hmm_params.prior.scale.cov)
-                        
-#     return engine.smooth(obs_seq)
-
-        
-# oracle_elbo_value, oracle_elbo_grad_value = oracle_elbo_and_grad()
-# offline_elbo_value, offline_elbo_grad_value = offline_elbo_and_grad(jax.random.PRNGKey(1))
-# # online_elbo_value, online_elbo_grad_value = online_elbo_and_grad(key)
-
-
 
 # print('Diff elbo oracle and offline:', oracle_elbo_value - offline_elbo_value)
 # print('Similarity grad oracle and offline:', utils.cosine_similarity(oracle_elbo_grad_value, offline_elbo_grad_value))
