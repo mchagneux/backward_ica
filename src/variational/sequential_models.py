@@ -8,6 +8,9 @@ from jax.tree_util import tree_leaves
 from jax import numpy as jnp, lax
 from src.utils import * 
 import copy
+
+
+
 from typing import Any 
 import src.variational.inference_nets as inference_nets
 from collections import namedtuple
@@ -410,6 +413,9 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
         eta2 = jnp.empty((self.state_dim, self.state_dim))
         return Gaussian.Params(eta1=eta1, eta2=eta2)
         TwoFilterSmoother
+
+
+
 
 
 

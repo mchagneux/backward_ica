@@ -1,7 +1,7 @@
 from src.offline_smoothing import *
 from src.online_smoothing import *
 from src.stats.hmm import * 
-from src.variational.models import *
+from src.variational.sequential_models import *
 
 import tensorflow as tf 
 from jax.tree_util import tree_flatten
@@ -336,6 +336,9 @@ class SVITrainer:
         
         tensorboard_subdir = os.path.join(log_dir, 'tensorboard_logs')
         os.makedirs(tensorboard_subdir, exist_ok=True)
+
+
+
         for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
             log_writer = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}'))
             if self.online_mode != 'off':

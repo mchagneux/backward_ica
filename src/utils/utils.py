@@ -18,14 +18,60 @@ import pandas as pd
 import jax
 from jaxlib.xla_extension import DeviceArray
 import collections.abc
+import haiku as hk 
+import dataclasses
 
 # Containers for parameters of various objects 
+
+
+
+class Serializer:
+    def __init__(self, path=''):
+        self.path = path 
+
+    def load_config(self):
+        with open(os.path.join(self.path, 'config.json'), 'r') as f:
+            config = json.load(f)
+        return config 
+
+    def load_params(self, params_name='trained_weights'):
+        with open(os.path.join(self.path, params_name), 'rb') as f:
+            config = dill.load(f)
+        return config 
+
+    def save_config(self, config):
+        with open(os.path.join(self.path, 'config.json'), 'w') as f:
+            config = json.dump(dataclasses.asdict(config), f)
+        return config 
+
+    def save_params(self, params, params_name='trained_weights'):
+        with open(os.path.join(self.path, params_name), 'wb') as f:
+            config = dill.dump(params, f)
+        return config 
+    
+    def get(self, attribute):
+        return self.load_config()[attribute]
 
 
 # @partial(jit, static_argnums=(1,))
 def moving_window(a, size: int):
     starts = jnp.arange(len(a) - size + 1)
     return vmap(lambda start: lax.dynamic_slice_in_dim(a, start, size))(starts)
+
+
+NUM_CLASSES = 4
+
+def classify_fn(latents: jax.Array) -> jax.Array:
+  """Standard LeNet-300-100 MLP network."""
+  mlp = hk.Sequential([
+      hk.Flatten(),
+      hk.Linear(300), jax.nn.relu,
+      hk.Linear(100), jax.nn.relu,
+      hk.Linear(NUM_CLASSES),
+  ])
+  return mlp(latents)
+
+
 
 
 
