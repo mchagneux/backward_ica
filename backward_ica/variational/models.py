@@ -1,6 +1,6 @@
 from backward_ica.stats.distributions import * 
 from backward_ica.stats.kernels import * 
-from backward_ica.stats import LinearBackwardSmoother, TwoFilterSmoother, State, BackwardSmoother
+from backward_ica.stats import LinearBackwardSmoother, State, BackwardSmoother
 from backward_ica.stats.kalman import Kalman
 from backward_ica.stats.hmm import HMM
 
@@ -379,7 +379,6 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
         
         LinearBackwardSmoother.__init__(self, state_dim)
 
-
     def init_state(self, obs, params):
         out = self._net.apply(params.net, obs)
         return Gaussian.Params(eta1=out[0] + params.prior.eta1, eta2=out[1] + params.prior.eta2)
@@ -410,7 +409,7 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
         eta1 = jnp.empty((self.state_dim,))
         eta2 = jnp.empty((self.state_dim, self.state_dim))
         return Gaussian.Params(eta1=eta1, eta2=eta2)
-        
+        TwoFilterSmoother
 
 
 

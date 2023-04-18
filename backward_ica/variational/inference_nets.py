@@ -33,7 +33,6 @@ def gaussian_proj(state, d):
                     eta1=eta1, 
                     eta2=eta2)
 
-
 def backwd_net(aux, obs, layers, state_dim):
     d = state_dim
 
@@ -70,7 +69,6 @@ def johnson_anisotropic(obs, layers, state_dim):
 
     return eta1, eta2
 
-
 def johnson(obs, layers, state_dim):
 
 
@@ -85,6 +83,8 @@ def johnson(obs, layers, state_dim):
     eta1, out2 = jnp.split(rec_net(obs), 2)
     eta2 = -jnp.diag(nn.softplus(out2))
     return eta1, eta2
+
+
 
 # def linear_gaussian_proj(state, d):
 

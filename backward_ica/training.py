@@ -97,9 +97,9 @@ class SVITrainer:
         else: 
             if self.online_mode == 'autodiffed_online_elbo': 
                 self.elbo = OnlineELBO(self.p, self.q, num_samples)
-                self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
-                self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
-                                                                self.q.format_params(params))[0]
+                # self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
+                # self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
+                #                                                 self.q.format_params(params))[0]
                 self.get_montecarlo_keys = get_keys
                 def online_elbo(key, data, compute_up_to, params):
 
@@ -116,9 +116,9 @@ class SVITrainer:
             elif self.online_mode == 'online_elbo_and_grads':
 
                 self.elbo = OnlineELBOAndGrad(self.p, self.q, num_samples)
-                self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
-                self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
-                                                                self.q.format_params(params))[0]
+                # self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
+                # self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
+                #                                                 self.q.format_params(params))[0]
                 self.get_montecarlo_keys = get_keys
                 def online_elbo(key, data, compute_up_to, params):
 
@@ -166,14 +166,14 @@ class SVITrainer:
                     params = optax.apply_updates(params, updates)
 
 
-                    if self.online_mode != 'off':
-                        monitor_neg_elbo_values, monitor_grads = vmap(value_and_grad(self.monitor_elbo, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
-                        avg_monitor_elbo_values = jnp.mean(monitor_neg_elbo_values, axis=0)
-                        avg_monitor_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), monitor_grads)
+                    # if self.online_mode != 'off':
+                    #     monitor_neg_elbo_values, monitor_grads = vmap(value_and_grad(self.monitor_elbo, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
+                    #     avg_monitor_elbo_values = jnp.mean(monitor_neg_elbo_values, axis=0)
+                    #     avg_monitor_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), monitor_grads)
 
-                        similarity_gradients = cosine_similarity(ravel_pytree(avg_monitor_grads)[0], ravel_pytree(avg_grads)[0])
-
-                        aux = [jnp.mean(aux_elem, axis=0) for aux_elem in aux] + [avg_monitor_elbo_values, similarity_gradients]
+                    #     similarity_gradients = cosine_similarity(ravel_pytree(avg_monitor_grads)[0], ravel_pytree(avg_grads)[0])
+                    # if self.online_mode != 'off':
+                    #     aux = [jnp.mean(aux_elem, axis=0) for aux_elem in aux]
 
                 
                     return params, \
@@ -243,10 +243,10 @@ class SVITrainer:
             # print(jnp.linalg.norm(jax.flatten_util.ravel_pytree(avg_grads)[0]))
             avg_elbo_epoch = jnp.mean(avg_elbo_batches)
             avg_grads_epoch = jnp.mean(avg_grads_batches, axis=0)
-            if self.online_mode != 'off':
+            # if self.online_mode != 'off':
 
-                avg_monitor_elbo_batches = aux[-2]
-                avg_monitor_elbo_epoch = jnp.mean(avg_monitor_elbo_batches, axis=0)
+            #     avg_monitor_elbo_batches = aux[-2]
+            #     avg_monitor_elbo_epoch = jnp.mean(avg_monitor_elbo_batches, axis=0)
 
                 # print('Min:', jnp.min(avg_eta2_filt))
                 # print('Max:', jnp.max(avg_eta2_filt))
@@ -306,18 +306,18 @@ class SVITrainer:
                                           avg_elbo_batch, 
                                           epoch_nb*len(batch_start_indices) + batch_nb)
                         
-            if log_writer_monitor is not None:
-                with log_writer_monitor.as_default():
-                    tf.summary.scalar('Epoch ELBO', avg_monitor_elbo_epoch, epoch_nb)
-                    # tf.summary.histogram('ESS', avg_ess_epoch, epoch_nb)
-                    # tf.summary.scalar('Min ESS', jnp.min(avg_ess_epoch), epoch_nb)
+            # if log_writer_monitor is not None:
+            #     with log_writer_monitor.as_default():
+            #         tf.summary.scalar('Epoch ELBO', avg_monitor_elbo_epoch, epoch_nb)
+            #         # tf.summary.histogram('ESS', avg_ess_epoch, epoch_nb)
+            #         # tf.summary.scalar('Min ESS', jnp.min(avg_ess_epoch), epoch_nb)
     
-                    # print(avg_ess_epoch.shape)
-                    for batch_nb, avg_monitor_elbo_batch in enumerate(avg_monitor_elbo_batches):
-                        tf.summary.scalar( 
-                                        'Minibatch ELBO', 
-                                        avg_monitor_elbo_batch, 
-                                        epoch_nb*len(batch_start_indices) + batch_nb)
+            #         # print(avg_ess_epoch.shape)
+            #         for batch_nb, avg_monitor_elbo_batch in enumerate(avg_monitor_elbo_batches):
+            #             tf.summary.scalar( 
+            #                             'Minibatch ELBO', 
+            #                             avg_monitor_elbo_batch, 
+            #                             epoch_nb*len(batch_start_indices) + batch_nb)
             avg_elbos.append(avg_elbo_epoch)
             all_params.append(params)
         t.close()
@@ -339,7 +339,8 @@ class SVITrainer:
         for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
             log_writer = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}'))
             if self.online_mode != 'off':
-                log_writer_monitor = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}_monitor'))
+                log_writer_monitor = None
+                # log_writer_monitor = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}_monitor'))
             else:
                 log_writer_monitor = None
             print(f'Fit {fit_nb+1}/{num_fits}')

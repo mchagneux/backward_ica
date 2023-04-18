@@ -645,6 +645,7 @@ def load_train_logs(save_dir):
     return train_logs
 
 
+
 if __name__ == '__main__':
     enable_x64(False)
     key = jax.random.PRNGKey(0)

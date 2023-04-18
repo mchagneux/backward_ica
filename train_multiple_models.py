@@ -5,8 +5,8 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 q_models = ['johnson_backward__offline',
-            'johnson_backward__online_autodiff',
-            'johnson_backward__true_online']
+            'johnson_backward__online_elbo_autodiff_batch',
+            'johnson_backward__online_grads_batch']
 
 num_epochs = 5000
 dims = '5 5'
@@ -14,10 +14,10 @@ load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
 batch_size = 1
 num_seqs = 1
-seq_length = 100
+seq_length = 20
 store_every = 0
 
-num_samples_list = [10, 10, 10]
+num_samples_list = [50, 50, 50]
 
 learning_rates = [1e-3, 1e-3, 1e-3]
 online_modes = ['off', 
