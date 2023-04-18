@@ -7,7 +7,7 @@ from src.stats.distributions import *
 from src.stats.kernels import * 
 from jax.flatten_util import ravel_pytree
 from jax import lax, vmap
-from src.utils import * 
+from src.utils.misc import * 
 
 
 from functools import partial

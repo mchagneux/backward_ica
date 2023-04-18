@@ -1,10 +1,10 @@
 import jax, jax.numpy as jnp
-from src.utils import Serializer
+from src.utils.misc import Serializer
 from src.variational.inference_nets import build_model
 import os
 import datetime
 import dataclasses
-from src.video_datasets import load_dataset
+from src.utils.video_datasets import load_dataset
 
 
 date = datetime.datetime.now().strftime('%Y_%m_%d__%H_%M_%S')

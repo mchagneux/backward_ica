@@ -2,7 +2,7 @@ import jax
 from jax import vmap, lax, numpy as jnp
 from jax.flatten_util import ravel_pytree as ravel
 from .stats.hmm import *
-from .utils import *
+from .utils.misc import *
 from src.stats import BackwardSmoother
 from src.variational import NeuralBackwardSmoother
 

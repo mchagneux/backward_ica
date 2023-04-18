@@ -6,7 +6,7 @@ import tensorflow_datasets as tfds
 import shutil 
 from datetime import datetime
 import numpy as np
-from src.utils import Serializer
+from src.utils.misc import Serializer
 import dataclasses
 
 class Batch(NamedTuple):

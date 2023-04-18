@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp 
 import os 
-import src.utils as utils
+import src.utils.misc as misc
 import src.stats.hmm as hmm
 import src.stats as stats
 from src.offline_smoothing import check_linear_gaussian_elbo
@@ -9,7 +9,7 @@ from src.offline_smoothing import check_linear_gaussian_elbo
 def main(args):
     
     if args.float64: 
-        utils.enable_x64(True)
+        misc.enable_x64(True)
 
     stats.set_parametrization(args)
 
@@ -19,7 +19,7 @@ def main(args):
                                             args, 
                                             key_for_random_params=key_params)
 
-    utils.save_params(theta_star, 'theta_star', args.exp_dir)
+    misc.save_params(theta_star, 'theta_star', args.exp_dir)
 
     state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, 
                                             theta_star, 
@@ -82,8 +82,8 @@ if __name__ == '__main__':
     args.emission_bias = False 
 
     os.makedirs(args.exp_dir, exist_ok=True)
-    args = utils.get_defaults(args)
-    utils.save_args(args, 'args', args.exp_dir)
+    args = misc.get_defaults(args)
+    misc.save_args(args, 'args', args.exp_dir)
     main(args)
 
 

@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from src import variational
 
-import src.utils as utils
+import src.utils.misc as misc
 import src.stats.hmm as hmm
 import src.variational as variational
 import src.stats as stats
@@ -15,11 +15,11 @@ def main(args):
 
 
     if args.float64: 
-        utils.enable_x64(True)
+        misc.enable_x64(True)
     stats.set_parametrization(args)
 
-    p = hmm.get_generative_model(utils.load_args('args', args.exp_dir))
-    theta_star = utils.load_params('theta_star', args.exp_dir)
+    p = hmm.get_generative_model(misc.load_args('args', args.exp_dir))
+    theta_star = misc.load_params('theta_star', args.exp_dir)
     data = jnp.load(os.path.join(args.exp_dir, 'obs_seqs.npy'))
 
 
@@ -61,7 +61,7 @@ def main(args):
                                                             args=args)[0] # returns the best fit (based on the last value of the elbo)
     
     # utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), args.save_dir, plot=True, best_epochs_only=True)
-    utils.save_params(params, 'phi', args.save_dir)
+    misc.save_params(params, 'phi', args.save_dir)
 
 if __name__ == '__main__':
 
@@ -102,13 +102,13 @@ if __name__ == '__main__':
     args.model = args.model.split('__')[0]
 
 
-    args = utils.get_defaults(args)
+    args = misc.get_defaults(args)
     args.transition_matrix_conditionning = 'diagonal'
     args.range_transition_map_params = [-1,1]
     args.transition_bias = False
         
-    utils.save_args(args, 'args', args.save_dir)
-    args_p = utils.load_args('args', args.exp_dir)
+    misc.save_args(args, 'args', args.save_dir)
+    args_p = misc.load_args('args', args.exp_dir)
     args.state_dim, args.obs_dim = args_p.state_dim, args_p.obs_dim
 
 

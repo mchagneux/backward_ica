@@ -1,4 +1,4 @@
-from src.utils import * 
+from src.utils.misc import * 
 import jax.scipy.stats as stats
 from jax.scipy.special import gammaln
 

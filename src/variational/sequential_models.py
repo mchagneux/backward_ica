@@ -6,7 +6,7 @@ from src.stats.hmm import HMM
 
 from jax.tree_util import tree_leaves
 from jax import numpy as jnp, lax
-from src.utils import * 
+from src.utils.misc import * 
 import copy
 
 

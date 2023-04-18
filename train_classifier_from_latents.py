@@ -27,11 +27,11 @@ import tensorflow_datasets as tfds
 import dill 
 import os 
 from src.variational.inference_nets import build_model
-from src.video_datasets import load_dataset
+from src.utils.video_datasets import load_dataset
 import dataclasses
 import datetime
-from src.utils import Serializer
-from src.utils import classify_fn, NUM_CLASSES
+from src.utils.misc import Serializer
+from src.utils.misc import classify_fn, NUM_CLASSES
 
 date = datetime.datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
 

@@ -1,12 +1,12 @@
 #%%
 import matplotlib.pyplot as plt 
 from src.variational.inference_nets import build_model
-from src.video_datasets import load_dataset, Batch
-from src.utils import Serializer
+from src.utils.video_datasets import load_dataset, Batch
+from src.utils.misc import Serializer
 import jax 
 import numpy as np
 import haiku as hk
-from src.utils import classify_fn
+from src.utils.misc import classify_fn
 
 nb_images_to_show = 10
 def visualize(vae_path=None, classif_path=None, dataset_path=None):

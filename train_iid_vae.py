@@ -11,12 +11,10 @@ import optax
 import tensorflow as tf
 import os
 import datetime
-import dill
-from src.video_datasets import load_dataset, Batch
+from src.utils.video_datasets import load_dataset, Batch
 from src.variational.inference_nets import build_model
-import json
 
-from src.utils import Serializer
+from src.utils.misc import Serializer
 jax.config.update('jax_disable_jit', False)
 jax.config.update('jax_enable_x64', False)
 

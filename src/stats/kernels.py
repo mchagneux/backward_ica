@@ -1,7 +1,7 @@
 from .distributions import * 
 import haiku as hk 
 from jax import nn 
-from src.utils import _conditionnings
+from src.utils.misc import _conditionnings
 from collections import namedtuple
 
 class Maps:
