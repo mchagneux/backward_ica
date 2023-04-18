@@ -1,22 +1,17 @@
-# Codebase for the paper "Amortized backward variational inference for nonlinear state-space models"
+# Sequential VAEs 
 
-## Installation 
+## TODO 
+Re-add the sequential factorization with a very simple dynamical model on the latents
+- [ ] Consider latents as observations and run Kalman smoothing on them 
+- [ ] Train a sequential VAE, with:
+    - [ ] Frozen image-by-image VAE and we train the GRU (decoded frozen)
+    - [ ] Pretrained image-by-image VAE and we finetune GRU + encoder (decoder frozen) 
+    - [ ] (Same but decoder unfrozen)
+    - [ ] For the classifier part: (i) run it on smoothed latents (ii) retrain it on smoothed latents
 
-1. Create an environment:
-```shell 
-python3 -m venv <path-to-your-new-env>
-source <path-to-your-new-env>/bin/activate
-pip install --upgrade pip
-``` 
-2. Install JAX
-```shell
-pip install --upgrade "jax[cpu]"
-```
+Analyze the evolution of the latents with / without smoothing.
+- How do they evolve w.r.t the motion of the objects ? 
+- Is it continuous / nonlinear, etc. 
+- Cosine sim. / tSNE, etc 
 
-*In case of problems here, refer to [JAX installation instructions](https://github.com/google/jax#installation) for more informations.*
 
-3. Install remaining dependencies: 
-
-```shell 
-pip install -r requirements.txt
-```
