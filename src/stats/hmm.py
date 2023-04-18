@@ -218,28 +218,46 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         return Kalman.filter_seq(obs_seq, self.format_params(params))[-1]
     
-    def fit_kalman_rmle(self, key, data, optimizer, learning_rate, batch_size, num_epochs, theta_star=None):
+    def fit_kalman_rmle(self, 
+                        key, 
+                        data, 
+                        optimizer='adam', 
+                        learning_rate=1e-3, 
+                        batch_size=1, 
+                        num_epochs=100, 
+                        theta_star=None):
                 
         
         key_init_params, key_batcher = random.split(key, 2)
         base_optimizer = getattr(optax, optimizer)(learning_rate)
         optimizer = base_optimizer
-        # optimizer = optax.masked(base_optimizer, mask=HMM.Params(prior_mask, transition_mask, emission_mask))
 
         params = self.get_random_params(key_init_params)
 
-        prior_scale = theta_star.prior.scale
-        transition_scale = theta_star.transition.noise.scale
-        emission_params = theta_star.emission
+        I = jnp.ones(self.state_dim)
+                                                                   
 
         def build_params(params):
-            return HMM.Params(prior=Gaussian.Params(mean=params[0], scale=prior_scale), 
-                            transition=Kernel.Params(params[1], transition_scale), 
-                            emission=emission_params)
+            return HMM.Params(
+                            prior=Gaussian.Params(
+                                                mean=params[0], 
+                                                scale=params[1]),
+                            transition=Kernel.Params(
+                                                    map=params[2], 
+                                                    noise=Gaussian.NoiseParams(params[3])),
+                            emission=Kernel.Params(map=Maps.LinearMapParams(w=jnp.eye(self.state_dim)),
+                                        noise=Gaussian.NoiseParams(params[4])))
+                                                                   
         
-        params = (params.prior.mean, params.transition.map)
 
-        loss = lambda seq, params: -self.likelihood_seq(seq, build_params(params))
+
+        params = (params.prior.mean, 
+                  params.prior.scale,
+                  params.transition.map,
+                  params.transition.noise.scale,
+                  params.emission.noise.scale)
+
+        loss = lambda seq, params: -self.likelihood_seq(seq, build_params(params)) / len(seq)
 
         opt_state = optimizer.init(params)
         num_seqs = data.shape[0]
@@ -264,9 +282,10 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         avg_logls = []
         all_params = []
+        t = tqdm(total=num_epochs, desc='Epoch')
 
-        for epoch_nb in tqdm(range(num_epochs), 'Epoch'):
-
+        for _ in range(num_epochs):
+            t.update(1)
             key_batcher, subkey_batcher = random.split(key_batcher, 2)
             
             data = random.permutation(subkey_batcher, data)
@@ -274,13 +293,15 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
             (_, params, opt_state), avg_logl_batches = lax.scan(batch_step, 
                                                                 init=(data, params, opt_state), 
                                                                 xs=batch_start_indices)
-            avg_logls.append(avg_logl_batches.sum())
+            avg_logls.append(jnp.mean(avg_logl_batches))
             all_params.append(params)
+            t.set_postfix({'Avg logl epoch':avg_logls[-1]})
 
         best_optim = jnp.argmax(jnp.array(avg_logls))
         print(f'Best fit is epoch {best_optim} with logl {avg_logls[best_optim]}.')
         best_params = all_params[best_optim]
-        
+        t.close()
+
         return build_params(best_params), avg_logls, best_optim
     
     def compute_state_seq(self, obs_seq, compute_up_to, formatted_params):

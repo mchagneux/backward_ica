@@ -125,6 +125,16 @@ class Decoder(hk.Module):
 
     return out
   
+  def build_model(config):
+
+    def model(latent):
+      decoder = Decoder(config['decoder_hidden_size'])
+      return decoder(latent)
+    
+    return hk.without_apply_rng(hk.transform(model))
+
+
+
 
 class BernoulliVAEOutput(NamedTuple):
   image: jax.Array
