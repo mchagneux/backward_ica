@@ -34,7 +34,7 @@ load_from = f'--load_from {load_from}' if load_from != '' else ''
 exp_dir = os.path.join(base_dir, date)
 os.makedirs(exp_dir, exist_ok=True)
 
-subprocess.run(f'python generate_data.py {loaded_seq} {load_from} \
+subprocess.run(f'python generate_toy_sequential_data.py {loaded_seq} {load_from} \
                         --model {p_model} \
                         --dims {dims} \
                         --num_seqs {num_seqs} \
