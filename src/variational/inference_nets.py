@@ -115,6 +115,7 @@ class Decoder(hk.Module):
   output_shape: Sequence[int]
   hidden_size: int = 512
 
+
   def __call__(self, z: jax.Array) -> jax.Array:
     """Decodes a latent code into Bernoulli log-odds over an output image."""
     z = hk.Linear(self.hidden_size)(z)
@@ -124,15 +125,6 @@ class Decoder(hk.Module):
     out = jnp.reshape(out, (-1, *self.output_shape))
 
     return out
-  
-  def build_model(config):
-
-    def model(latent):
-      decoder = Decoder(config['decoder_hidden_size'])
-      return decoder(latent)
-    
-    return hk.without_apply_rng(hk.transform(model))
-
 
 
 
@@ -160,7 +152,9 @@ class BernoulliVariationalAutoEncoder(hk.Module):
     image = jax.random.bernoulli(hk.next_rng_key(), p)
 
     return BernoulliVAEOutput(image, mean, jnp.square(stddev), logits)
-
+  
+  def decode(self, z: jax.Array):
+    return self.decoder(z)
 
 class GaussianVAEOutput(NamedTuple):
   image: jax.Array
@@ -188,6 +182,9 @@ class GaussianVariationalAutoEncoder(hk.Module):
                              variance_z=jnp.square(stddev_z), 
                              mean_x=mean_x,
                              variance_x=jnp.ones_like(mean_x) * 0.1)
+  
+  def decode(self, z: jax.Array):
+    return jax.nn.sigmoid(self.decoder(z))
   
 def build_model(latent_size=None,
                 encoder_hidden_size=None, 
@@ -218,11 +215,48 @@ def build_model(latent_size=None,
           encoder=Encoder(latent_size=latent_size, 
                           hidden_size=encoder_hidden_size),
           decoder=Decoder(output_shape=x.shape[1:], 
-                                  hidden_size=decoder_hidden_size),
+                          hidden_size=decoder_hidden_size),
       )
       return vae(x)
   
   return model
+
+def build_decoder(output_shape,
+                latent_size=None,
+                encoder_hidden_size=None, 
+                decoder_hidden_size=None,
+                bernoulli=False,
+                config=None):
+  if config is not None: 
+    latent_size = config['latent_size']
+    encoder_hidden_size = config['encoder_hidden_size']
+    decoder_hidden_size = config['decoder_hidden_size']
+    bernoulli = config['vae_type'] == 'bernoulli'
+
+  if bernoulli: 
+    @hk.transform
+    def model(x):
+      vae = BernoulliVariationalAutoEncoder(
+          encoder=Encoder(latent_size=latent_size, 
+                          hidden_size=encoder_hidden_size),
+          decoder=Decoder(output_shape=output_shape, 
+                                   hidden_size=decoder_hidden_size),
+      )
+      return vae.decode(x)
+    
+  else:
+    @hk.transform
+    def model(x):
+      vae = GaussianVariationalAutoEncoder(
+          encoder=Encoder(latent_size=latent_size, 
+                          hidden_size=encoder_hidden_size),
+          decoder=Decoder(output_shape=output_shape, 
+                          hidden_size=decoder_hidden_size),
+      )
+      return vae.decode(x)
+  
+  return model    
+
 
 
 

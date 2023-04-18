@@ -1,13 +1,14 @@
 #%%
 import jax, jax.numpy as jnp
 from src.utils.misc import Serializer
-from src.variational.inference_nets import build_model, Decoder
+from src.variational.inference_nets import build_model, Decoder, build_decoder
 import os
 import datetime
 import dataclasses
 from src.utils.video_datasets import load_dataset
 from src.stats.hmm import LinearGaussianHMM
 key = jax.random.PRNGKey(0)
+# jax.config.update('jax_platform_name', 'cpu')
 
 date = datetime.datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
 
@@ -15,7 +16,7 @@ date = datetime.datetime.now().strftime('%Y_%m_%d__%H_%M_%S')
 @dataclasses.dataclass
 class Config: 
   vae_path: str = 'experiments/gaussian_vae_training/2023_04_18__10_29_12'
-  output_dir: str = os.path.join('data', date)
+  output_dir: str = os.path.join('experiments', 'latent_smoothing', date)
 
 
 config = Config()
@@ -35,7 +36,7 @@ dataset_path = config_vae['dataset_path']
 
 ds = load_dataset(dataset_path,
                   split='train',
-                  batch_size=128,
+                  batch_size=1080,
                   seed=0,
                   repeat=False)
 
@@ -57,11 +58,14 @@ def extract_latents(model, dataset):
 
   latents = jnp.array([x for _, x in sorted(zip(frame_nbs, results), 
                                             key=lambda pair: pair[0])])
+  
+  images = jnp.array([x for _, x in sorted(zip(frame_nbs, images), 
+                                            key=lambda pair: pair[0])])
 
   return latents, images
 
 
-latent_sequence, reconstructed_images = extract_latents(vae_encoder, ds)
+latent_sequence, images = extract_latents(vae_encoder, ds)
 
 p = LinearGaussianHMM(state_dim=config_vae['latent_size'], 
                       obs_dim=config_vae['latent_size'],
@@ -80,15 +84,43 @@ fitted_params, training_curve, _ = p.fit_kalman_rmle(
                                       1, 
                                       100)
 
+smoothed_latents, _ = p.smooth_seq(latent_sequence, 
+                                fitted_params)
+
+import matplotlib.pyplot as plt
+plt.plot(training_curve)
+plt.savefig(os.path.join(config.output_dir, 'training_curve'))
+#%%
 
 
-vae_encoder = Decoder(latent_size=config_vae['latent_size'], 
-                      hidden_size=config_vae['decoder_hidden_size'])
+vae_decoder = build_decoder(output_shape=images[0].shape[:-1], 
+                            config=config_vae)
 
+reconstructions_from_original_latents = vae_decoder.apply(vae_weights, key, latent_sequence)
 
+reconstructions_from_smoothed_latents = vae_decoder.apply(vae_weights, key, smoothed_latents)
 
+images_dir = os.path.join(config.output_dir, 'images')
+os.makedirs(images_dir)
+for image_nb, (image, reconstruction_from_original, reconstruction_from_smoothed) in enumerate(zip(images, 
+                                                                                                   reconstructions_from_original_latents, 
+                                                                                                   reconstructions_from_smoothed_latents)):
+  fig, (ax0, ax1, ax2) = plt.subplots(1,3)
+  ax0.imshow(image[...,0])
+  ax0.set_title('Original image')
 
-# X_smoothed = p.smooth_seq(Y.squeeze(), 
+  ax1.imshow(reconstruction_from_original)
+  ax1.set_title('Reconstruction from original latent')
+
+  ax2.imshow(reconstruction_from_smoothed)
+  ax2.set_title('Reconstruction from smoothed latent')
+  plt.autoscale(True)
+  plt.tight_layout()
+  plt.savefig(os.path.join(images_dir, f'{image_nb}'))
+
+#%%
+
+# X_smoothed = p.smooth_seq(Y[0], 
 #                           fitted_params)#%%
 
 
