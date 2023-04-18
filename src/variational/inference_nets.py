@@ -1,8 +1,8 @@
 import haiku as hk 
 from jax import numpy as jnp, nn 
-from backward_ica.utils import *
-from backward_ica.stats.distributions import * 
-from backward_ica.stats.kernels import * 
+from src.utils import *
+from src.stats.distributions import * 
+from src.stats.kernels import * 
 from jax.flatten_util import ravel_pytree
 
 

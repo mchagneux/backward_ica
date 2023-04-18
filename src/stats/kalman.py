@@ -1,6 +1,6 @@
 from jax import numpy as jnp, lax, jit
 from jax.scipy.stats.multivariate_normal import logpdf as jax_gaussian_logpdf
-from backward_ica.utils import * 
+from src.utils import * 
 
 
 class Kalman: 

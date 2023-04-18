@@ -1,4 +1,4 @@
-from backward_ica.utils import * 
+from src.utils import * 
 import jax.scipy.stats as stats
 from jax.scipy.special import gammaln
 

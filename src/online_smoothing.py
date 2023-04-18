@@ -3,8 +3,8 @@ from jax import vmap, lax, numpy as jnp
 from jax.flatten_util import ravel_pytree as ravel
 from .stats.hmm import *
 from .utils import *
-from backward_ica.stats import BackwardSmoother
-from backward_ica.variational import NeuralBackwardSmoother
+from src.stats import BackwardSmoother
+from src.variational import NeuralBackwardSmoother
 
 vmap_ravel = jax.vmap(lambda x: ravel_pytree(x)[0])
 

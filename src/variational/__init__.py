@@ -1,5 +1,5 @@
-from backward_ica.stats.hmm import LinearGaussianHMM
-from backward_ica.variational.models import NeuralBackwardSmoother, JohnsonBackward
+from src.stats.hmm import LinearGaussianHMM
+from src.variational.models import NeuralBackwardSmoother, JohnsonBackward
 
 def get_variational_model(args, p=None, key_for_random_params=None):
 

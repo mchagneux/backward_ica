@@ -2,7 +2,7 @@ import jax
 from jax import vmap, lax, numpy as jnp
 from .stats.hmm import *
 from .utils import *
-from backward_ica.stats import BackwardSmoother, TwoFilterSmoother
+from src.stats import BackwardSmoother, TwoFilterSmoother
 
 class OfflineVariationalAdditiveSmoothing:
 

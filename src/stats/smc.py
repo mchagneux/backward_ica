@@ -1,7 +1,7 @@
 from jax.scipy.special import logsumexp
 
 
-from backward_ica.utils import *
+from src.utils import *
 
 def compute_pred_likel(probs):
     return 

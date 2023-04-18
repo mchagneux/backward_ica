@@ -1,12 +1,12 @@
 import jax 
 import jax.numpy as jnp
-from backward_ica import variational
+from src import variational
 
-import backward_ica.utils as utils
-import backward_ica.stats.hmm as hmm
-import backward_ica.variational as variational
-import backward_ica.stats as stats
-from backward_ica.training import SVITrainer, define_frozen_tree
+import src.utils as utils
+import src.stats.hmm as hmm
+import src.variational as variational
+import src.stats as stats
+from src.training import SVITrainer, define_frozen_tree
 jax.config.update('jax_disable_jit', False)
 jax.config.update('jax_platform_name', 'cpu')
 

@@ -1,13 +1,13 @@
 from jax import numpy as jnp, random, value_and_grad, tree_util, grad
 from jax.tree_util import tree_leaves
-from backward_ica.stats import LinearBackwardSmoother, State
-from backward_ica.stats.kalman import Kalman
-from backward_ica.stats.smc import SMC
-from backward_ica.stats.distributions import * 
-from backward_ica.stats.kernels import * 
+from src.stats import LinearBackwardSmoother, State
+from src.stats.kalman import Kalman
+from src.stats.smc import SMC
+from src.stats.distributions import * 
+from src.stats.kernels import * 
 from jax.flatten_util import ravel_pytree
 from jax import lax, vmap
-from backward_ica.utils import * 
+from src.utils import * 
 
 
 from functools import partial

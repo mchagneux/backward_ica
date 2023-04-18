@@ -1,10 +1,10 @@
 import jax
 import jax.numpy as jnp 
 import os 
-import source.utils as utils
-import source.stats.hmm as hmm
-import source.stats as stats
-from source.offline_smoothing import check_linear_gaussian_elbo
+import src.utils as utils
+import src.stats.hmm as hmm
+import src.stats as stats
+from src.offline_smoothing import check_linear_gaussian_elbo
 
 def main(args):
     

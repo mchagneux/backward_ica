@@ -1,15 +1,15 @@
-from backward_ica.stats.distributions import * 
-from backward_ica.stats.kernels import * 
-from backward_ica.stats import LinearBackwardSmoother, State, BackwardSmoother
-from backward_ica.stats.kalman import Kalman
-from backward_ica.stats.hmm import HMM
+from src.stats.distributions import * 
+from src.stats.kernels import * 
+from src.stats import LinearBackwardSmoother, State, BackwardSmoother
+from src.stats.kalman import Kalman
+from src.stats.hmm import HMM
 
 from jax.tree_util import tree_leaves
 from jax import numpy as jnp, lax
-from backward_ica.utils import * 
+from src.utils import * 
 import copy
 from typing import Any 
-import backward_ica.variational.inference_nets as inference_nets
+import src.variational.inference_nets as inference_nets
 from collections import namedtuple
 from jax.flatten_util import ravel_pytree
 
