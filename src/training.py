@@ -237,7 +237,7 @@ class SVITrainer:
             init_carry = jax.vmap(self.elbo.init_carry, 
                                   axis_size=batch_size, 
                                   in_axes=(None,))(self.q.get_random_params(jax.random.PRNGKey(0)))
-            timesteps = self.timesteps(seq_length, delta=10)
+            timesteps = self.timesteps(seq_length, delta=2)
 
             def batch_step(carry, x):
 

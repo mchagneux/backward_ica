@@ -13,14 +13,14 @@ load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
 batch_size = 1
 num_seqs = 1
-seq_length = 1000
+seq_length = 2000
 store_every = 0
 
 num_samples_list = [20, 20]
 
 learning_rates = [1e-3, 1e-3]
-optimizer = 'adam'
-online_modes = ['online_elbo_and_grads', 'off']
+optimizer = 'adamw'
+online_modes = ['autodiffed_online_elbo', 'off']
 
 os.makedirs(base_dir, exist_ok=True)
 
