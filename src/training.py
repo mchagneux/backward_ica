@@ -192,15 +192,19 @@ class SVITrainer:
                     params, opt_state, avg_elbo_batch, avg_grads_batch, aux = step(params, opt_state, batch_obs_seq, batch_keys)
 
                     return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads_batch, aux)
-            
+        
         else: 
             self.elbo = OnlineELBOAndGrad(self.p, self.q, num_samples)
             self.get_montecarlo_keys = get_keys
-            def online_step(key, elbo_carry, data, timesteps, params):
+            def online_step(key, 
+                            elbo_carry, 
+                            data, 
+                            timesteps, 
+                            params):
                 _, unravel = ravel_pytree(params)
                 key, subkey = jax.random.split(key, 2)
                 keys = jax.random.split(subkey, len(timesteps))
-                T = timesteps[-1] + 1
+                T = timesteps[-1]
 
                 def _step(carry, x):
                     key, t = x
@@ -210,12 +214,14 @@ class SVITrainer:
                             'y': data[t], 
                             'phi':params}
                     
+                    carry['theta'] = self.formatted_theta_star
                     carry, aux = self.elbo.step(carry, input_t)
                     return carry, aux
 
+            
                 elbo_carry, aux = jax.lax.scan(_step, 
                                           init=elbo_carry, 
-                                          xs=(keys ,timesteps))
+                                          xs=(keys, timesteps))
                 
                 H = elbo_carry['stats']['H']
 
@@ -225,19 +231,20 @@ class SVITrainer:
                 elbo = moving_average_H / (T + 1)
                 grad = unravel(-jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)(H, grad_log_q, F), axis=0) / (T + 1))
                 
-                return (-elbo, grad, key, elbo_carry, aux)
+                return -elbo, grad, key, elbo_carry, aux
             self.loss = online_step
 
             init_carry = jax.vmap(self.elbo.init_carry, 
-                                  axis_size=batch_size)(self.q.get_random_params(jax.random.PRNGKey(0)))
-            
+                                  axis_size=batch_size, 
+                                  in_axes=(None,))(self.q.get_random_params(jax.random.PRNGKey(0)))
+            timesteps = self.timesteps(seq_length, delta=10)
+
             def batch_step(carry, x):
 
                 data, params, opt_state, subkeys_epoch = carry
                 batch_start = x
                 data = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
                 keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
-                timesteps = self.timesteps(seq_length, delta=10)
                 def step(carry, timesteps):
                     keys, params, opt_state, elbo_carry = carry
                     neg_elbo_values, grads, keys, elbo_carry, aux = vmap(self.loss, 
@@ -268,8 +275,9 @@ class SVITrainer:
         self.batch_step = batch_step
 
     def timesteps(self, seq_length, delta):
-        return jnp.array_split(jnp.arange(0, seq_length), 
-                               seq_length // delta) 
+
+        return jnp.array(jnp.array_split(jnp.arange(0, seq_length), 
+                                         seq_length // delta))
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None, log_writer_monitor=None):
 
