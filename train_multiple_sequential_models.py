@@ -4,9 +4,7 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['johnson_backward__offline',
-            'johnson_backward__online_elbo_autodiff_batch',
-            'johnson_backward__online_grads_batch']
+q_models = ['johnson_backward__offline']
 
 num_epochs = 5000
 dims = '5 5'
@@ -14,15 +12,13 @@ load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
 batch_size = 1
 num_seqs = 1
-seq_length = 20
+seq_length = 100
 store_every = 0
 
-num_samples_list = [50, 50, 50]
+num_samples_list = [20]
 
-learning_rates = [1e-3, 1e-3, 1e-3]
-online_modes = ['off', 
-                'autodiffed_online_elbo',
-                'online_elbo_and_grads']
+learning_rates = [1e-3]
+online_modes = ['off']
 
 os.makedirs(base_dir, exist_ok=True)
 
@@ -43,7 +39,7 @@ subprocess.run(f'python generate_toy_sequential_data.py {loaded_seq} {load_from}
                 shell=True)
 
 
-processes = [subprocess.Popen(f'python train.py \
+processes = [subprocess.Popen(f'python train_multiple_sequential_models.py \
                                 --online_mode {online_mode} \
                                 --model {model} \
                                 --exp_dir {exp_dir} \
@@ -60,8 +56,8 @@ processes = [subprocess.Popen(f'python train.py \
                                         learning_rates)]
 
          
-tensorboard_process = subprocess.Popen(f'tensorboard --logdir {exp_dir}', shell=True)
-tensorboard_process.wait()
+# tensorboard_process = subprocess.Popen(f'tensorboard --logdir {exp_dir}', shell=True)
+# tensorboard_process.wait()
 
 for process in processes: 
     process.wait()

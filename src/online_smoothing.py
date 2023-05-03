@@ -67,7 +67,7 @@ class OnlineVariationalAdditiveSmoothing:
     def _update(self, carry, input):
         return self._update_func(carry, input)
     
-    def compute(self, carry, input):
+    def step(self, carry, input):
 
         carry, output = lax.cond(input['t'] != 0, 
                         self._update, 
@@ -86,7 +86,7 @@ class OnlineVariationalAdditiveSmoothing:
             t, key_t, obs_t = x
             input_t = {'t':t, 'key':key_t, 'ys':obs_seq, 'y': obs_t, 'phi':phi}            
             carry['theta'] = theta
-            carry_t, output_t = self.compute(carry, input_t)
+            carry_t, output_t = self.step(carry, input_t)
             return carry_t, output_t
         
 
@@ -577,8 +577,6 @@ def update_gradients_F2(
             'x':x_t}
 
     return carry_t, 0.0
-
-
 
 def init_gradients_F(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 

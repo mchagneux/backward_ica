@@ -7,6 +7,7 @@ import datetime
 import dataclasses
 from src.utils.video_datasets import load_dataset
 from src.stats.hmm import LinearGaussianHMM
+from src.utils.misc import cosine_similarity
 key = jax.random.PRNGKey(0)
 # jax.config.update('jax_platform_name', 'cpu')
 
@@ -35,7 +36,7 @@ vae_encoder = lambda batch: build_model(config=config_vae) \
 dataset_path = config_vae['dataset_path']
 
 ds = load_dataset(dataset_path,
-                  split='train',
+                  split='valid',
                   batch_size=1080,
                   seed=0,
                   repeat=False)
@@ -90,6 +91,7 @@ smoothed_latents, _ = p.smooth_seq(latent_sequence,
 import matplotlib.pyplot as plt
 plt.plot(training_curve)
 plt.savefig(os.path.join(config.output_dir, 'training_curve'))
+plt.close()
 #%%
 
 
@@ -100,6 +102,26 @@ reconstructions_from_original_latents = vae_decoder.apply(vae_weights, key, late
 
 reconstructions_from_smoothed_latents = vae_decoder.apply(vae_weights, key, smoothed_latents)
 
+
+
+def compute_pairwise_cosine_similarities(latent_sequence):
+
+  cosine_sims = []
+  for latent0, latent1 in zip(latent_sequence[:-1], latent_sequence[1:]):
+    cosine_sims.append(cosine_similarity(latent0, latent1))
+
+  return cosine_sims
+
+
+cosine_sims_original = compute_pairwise_cosine_similarities(latent_sequence)
+cosine_sims_smoothed = compute_pairwise_cosine_similarities(smoothed_latents)
+
+plt.plot(cosine_sims_original)
+plt.plot(cosine_sims_smoothed)
+plt.savefig(os.path.join(config.output_dir, 'cosine_sims'))
+plt.close()
+
+#%%
 images_dir = os.path.join(config.output_dir, 'images')
 os.makedirs(images_dir)
 for image_nb, (image, reconstruction_from_original, reconstruction_from_smoothed) in enumerate(zip(images, 
@@ -110,13 +132,15 @@ for image_nb, (image, reconstruction_from_original, reconstruction_from_smoothed
   ax0.set_title('Original image')
 
   ax1.imshow(reconstruction_from_original)
-  ax1.set_title('Reconstruction from original latent')
+  ax1.set_title('From original latent')
 
   ax2.imshow(reconstruction_from_smoothed)
-  ax2.set_title('Reconstruction from smoothed latent')
+  ax2.set_title('From smoothed latent')
   plt.autoscale(True)
   plt.tight_layout()
   plt.savefig(os.path.join(images_dir, f'{image_nb}'))
+  plt.close()
+
 
 #%%
 
