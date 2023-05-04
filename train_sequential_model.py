@@ -46,13 +46,13 @@ def main(args):
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
                         seq_length=data.shape[1],
-                        online_mode=args.online_mode,
-                        online=(args.online_mode == 'online_elbo_and_grads'))
+                        elbo_mode=args.elbo_mode,
+                        online=(args.elbo_mode == 'online_elbo_and_grads'))
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
 
-    print('Online mode:', args.online_mode)
+    print('Elbo mode:', args.elbo_mode)
 
     params = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
                                                             data=data, 
@@ -76,7 +76,7 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='johnson_backward__online')
     parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_03__16_14_28')
 
-    parser.add_argument('--online_mode', type=str, default='online_elbo_and_grads')
+    parser.add_argument('--elbo_mode', type=str, default='online_elbo_and_grads')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--learning_rate', type=float, default=1e-3)

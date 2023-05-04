@@ -4,8 +4,7 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['johnson_backward__online', 
-            'johnson_backward__offline']
+q_models = ['johnson_backward__online']
 
 num_epochs = 5000
 dims = '5 5'
@@ -16,11 +15,12 @@ num_seqs = 1
 seq_length = 2000
 store_every = 0
 
-num_samples_list = [20, 20]
+num_samples_list = [10]
 
-learning_rates = [1e-3, 1e-3]
-optimizer = 'adamw'
-online_modes = ['autodiffed_online_elbo', 'off']
+learning_rates = [1e-3]
+optimizer = 'adam'
+elbo_modes = ['online_score', 
+              'online_autodiff']
 
 os.makedirs(base_dir, exist_ok=True)
 
@@ -42,7 +42,7 @@ subprocess.run(f'python generate_toy_sequential_data.py {loaded_seq} {load_from}
 
 
 processes = [subprocess.Popen(f'python train_sequential_model.py \
-                                --online_mode {online_mode} \
+                                --elbo_mode {elbo_mode} \
                                 --model {model} \
                                 --exp_dir {exp_dir} \
                                 --batch_size {batch_size} \
@@ -52,10 +52,10 @@ processes = [subprocess.Popen(f'python train_sequential_model.py \
                                 --num_samples {num_samples} \
                                 --optimizer {optimizer}', 
                             shell=True) \
-                for model, num_samples, online_mode, learning_rate in zip(
+                for model, num_samples, elbo_mode, learning_rate in zip(
                                         q_models, 
                                         num_samples_list, 
-                                        online_modes,
+                                        elbo_modes,
                                         learning_rates)]
 
          
