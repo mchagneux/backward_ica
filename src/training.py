@@ -51,7 +51,7 @@ class SVITrainer:
                 num_samples=1, 
                 force_full_mc=False,
                 frozen_params=None,
-                elbo_mode='off',
+                elbo_mode='autodiff_on_backward',
                 online=False):
 
         self.num_epochs = num_epochs
@@ -141,7 +141,7 @@ class SVITrainer:
                         return (-elbo, grad), aux
                     self.loss = online_elbo
 
-                else: 
+                elif self.elbo_mode == 'autodiff_on_backward': 
                     print('Setting up offline elbo.')
                     self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                     self.get_montecarlo_keys = get_keys
@@ -213,10 +213,10 @@ class SVITrainer:
                 
 
             elif self.elbo_mode == 'autodiff_on_forward':
-                self.elbo = OnlineELBO(self.p, self.q, num_samples)
+                self.elbo = OnlineELBOAndGradAutodiff(self.p, self.q, num_samples)
                 def postprocess(elbo_carry, T, *args):
                     elbo_value = jnp.mean(elbo_carry['stats']['tau'], axis=0) / T
-                    grad_elbo_value = tree_map(lambda x: jnp.mean(x, axis=0) / T, elbo_carry['stats']['grad_tau'])
+                    grad_elbo_value = tree_map(lambda x: -jnp.mean(x, axis=0) / T, elbo_carry['stats']['grad_tau'])
                     return elbo_value, grad_elbo_value
                 
             self.get_montecarlo_keys = get_keys
@@ -257,7 +257,7 @@ class SVITrainer:
             init_carry = jax.vmap(self.elbo.init_carry, 
                                   axis_size=batch_size, 
                                   in_axes=(None,))(self.q.get_random_params(jax.random.PRNGKey(0)))
-            timesteps = self.timesteps(seq_length, delta=10)
+            timesteps = self.timesteps(seq_length, delta=2)
 
             def batch_step(carry, x):
 

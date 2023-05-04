@@ -35,6 +35,9 @@ def main(args):
                                         theta_star)
 
 
+    online_str, elbo_mode = str.split(args.elbo_mode, '_', 1)
+
+    online = (online_str == 'online')
     trainer = SVITrainer(p=p, 
                         theta_star=theta_star,
                         q=q, 
@@ -46,8 +49,8 @@ def main(args):
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
                         seq_length=data.shape[1],
-                        elbo_mode=args.elbo_mode,
-                        online=(args.elbo_mode == 'online_elbo_and_grads'))
+                        elbo_mode=elbo_mode,
+                        online=online)
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
@@ -76,7 +79,6 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='johnson_backward__online')
     parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_03__16_14_28')
 
-    parser.add_argument('--elbo_mode', type=str, default='online_elbo_and_grads')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--learning_rate', type=float, default=1e-3)
@@ -99,8 +101,7 @@ if __name__ == '__main__':
     else: 
         args.model_options = ''
 
-    args.model = args.model.split('__')[0]
-
+    args.model, args.elbo_mode = args.model.split('__')
 
     args = misc.get_defaults(args)
     args.transition_matrix_conditionning = 'diagonal'
