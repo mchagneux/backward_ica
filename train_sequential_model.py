@@ -8,7 +8,7 @@ import src.variational as variational
 import src.stats as stats
 from src.training import SVITrainer, define_frozen_tree
 jax.config.update('jax_disable_jit', False)
-jax.config.update('jax_platform_name', 'cpu')
+jax.config.update('jax_platform_name', 'gpu')
 
     
 def main(args):
@@ -38,6 +38,11 @@ def main(args):
     online_str, elbo_mode = str.split(args.elbo_mode, '_', 1)
 
     online = (online_str == 'online')
+    if online: 
+        online_batch_size, elbo_mode = elbo_mode.split('_', 1)
+        online_batch_size = int(online_batch_size)
+    else: 
+        online_batch_size = None
     trainer = SVITrainer(p=p, 
                         theta_star=theta_star,
                         q=q, 
@@ -50,7 +55,8 @@ def main(args):
                         frozen_params=frozen_params,
                         seq_length=data.shape[1],
                         elbo_mode=elbo_mode,
-                        online=online)
+                        online=online,
+                        online_batch_size=online_batch_size)
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
@@ -76,8 +82,8 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='johnson_backward__online')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_03__16_14_28')
+    parser.add_argument('--model', type=str, default='johnson_backward__online_score')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_04__16_49_45')
 
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)

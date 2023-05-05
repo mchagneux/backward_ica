@@ -326,7 +326,7 @@ def update_gradients_reparam(
 
     def _w(unformatted_phi, index, key_t):
         phi = q.format_params(unformatted_phi)
-        s_tm1 = q.get_state(t-1, input_t['ys'], phi)
+        # s_tm1 = q.get_state(t-1, input_t['ys'], phi)
         s_t = q.new_state(y_t, s_tm1, phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         params_q_tm1 = q.filt_params_from_state(s_tm1, phi)
@@ -342,7 +342,7 @@ def update_gradients_reparam(
     def _h(unformatted_phi, key_tm1, key_t):
         
         phi = q.format_params(unformatted_phi)
-        s_tm1 = q.get_state(t-1, input_t['ys'], phi)
+        # s_tm1 = q.get_state(t-1, input_t['ys'], phi)
         s_t = q.new_state(y_t, s_tm1, phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         params_q_tm1 = q.filt_params_from_state(s_tm1, phi)
@@ -410,7 +410,7 @@ def update_gradients_reparam(
 
     return carry_t, 0.0
 
-def init_carry_gradients_F(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
+def init_carry_gradients_score(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
 
     dummy_x = jnp.empty((num_samples, state_dim))
     dummy_H = jnp.empty((num_samples, *out_shape))
@@ -426,7 +426,7 @@ def init_carry_gradients_F(unformatted_params, state_dim, obs_dim, num_samples, 
 
     return carry
 
-def init_gradients_F2(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
+def init_gradients_score2(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
 
     y_0 = input_0['y']
@@ -492,7 +492,7 @@ def update_gradients_F2(
 
     def _log_m(unformatted_phi, x_tm1, x_t):
         phi = q.format_params(unformatted_phi)
-        s_tm1 = q.get_state(t-1, input_t['ys'], phi)
+        # s_tm1 = q.get_state(t-1, input_t['ys'], phi)
         params_q_tm1 = q.filt_params_from_state(s_tm1, phi)
         s_t = q.new_state(y_t, s_tm1, phi)
         params_q_tm1_t = q.backwd_params_from_states((s_tm1,s_t), phi)
@@ -511,7 +511,7 @@ def update_gradients_F2(
 
     def _g_intermediate(unformatted_phi, x_tm1, x_t):
         phi = q.format_params(unformatted_phi)
-        s_tm1 = q.get_state(t-1, input_t['ys'], phi)
+        # s_tm1 = q.get_state(t-1, input_t['ys'], phi)
         s_t = q.new_state(y_t, s_tm1, phi)
         params_q_tm1_t = q.backwd_params_from_states((s_tm1,s_t), phi)
         return q.backwd_kernel.logpdf(x_tm1, x_t, params_q_tm1_t)
@@ -578,7 +578,7 @@ def update_gradients_F2(
 
     return carry_t, 0.0
 
-def init_gradients_F(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
+def init_gradients_score(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samples):
 
 
     y_0 = input_0['y']
@@ -618,7 +618,7 @@ def init_gradients_F(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_samp
 
     return carry, 0.0
 
-def update_gradients_F(
+def update_gradients_score(
         carry_tm1, 
         input_t:HMM, 
         p:HMM, 
@@ -642,7 +642,7 @@ def update_gradients_F(
 
     def _log_q_tm1_t(unformatted_phi, x_tm1, x_t):
         phi = q.format_params(unformatted_phi)
-        s_tm1 = q.get_state(t-1, input_t['ys'], phi)
+        # s_tm1 = q.get_state(t-1, input_t['ys'], phi)
         s_t = q.new_state(y_t, s_tm1, phi)
         params_q_tm1_t = q.backwd_params_from_states((s_tm1,s_t), phi)
         log_q_tm1_t = q.backwd_kernel.logpdf(x_tm1, 
@@ -652,7 +652,7 @@ def update_gradients_F(
 
     def _log_q_t(unformatted_phi, key):
         phi = q.format_params(unformatted_phi)
-        s_tm1 = q.get_state(t-1, input_t['ys'], phi)
+        # s_tm1 = q.get_state(t-1, input_t['ys'], phi)
         s_t = q.new_state(y_t, s_tm1, phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         x_t = q.filt_dist.sample(key, params_q_t)
@@ -724,15 +724,15 @@ OnlineELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(
                                                     exp_and_normalize,
                                                     num_samples)
 
-OnlineELBOAndGrad = lambda p,q, num_samples: OnlineVariationalAdditiveSmoothing(p, 
+OnlineELBOScore = lambda p,q, num_samples: OnlineVariationalAdditiveSmoothing(p, 
                                                                                 q, 
-                                                                                init_carry_gradients_F, 
-                                                                                init_gradients_F,
-                                                                                update_gradients_F,
+                                                                                init_carry_gradients_score, 
+                                                                                init_gradients_score,
+                                                                                update_gradients_score,
                                                                                 online_elbo_functional(p,q),
                                                                                 exp_and_normalize,
                                                                                 num_samples)
-OnlineELBOAndGradAutodiff = lambda p,q, num_samples: OnlineVariationalAdditiveSmoothing(p, 
+OnlineELBOScoreAutodiff = lambda p,q, num_samples: OnlineVariationalAdditiveSmoothing(p, 
                                                                                 q, 
                                                                                 init_carry_gradients_reparam, 
                                                                                 init_gradients_reparam,
@@ -740,11 +740,12 @@ OnlineELBOAndGradAutodiff = lambda p,q, num_samples: OnlineVariationalAdditiveSm
                                                                                 online_elbo_functional(p,q),
                                                                                 exp_and_normalize,
                                                                                 num_samples)
+
 # ThreePaRIS = lambda p,q,functional,num_samples: OnlineVariationalAdditiveSmoothing(
 #                                                         p, 
 #                                                         q, 
-#                                                         init_carry_gradients_F, 
-#                                                         init_gradients_F, 
+#                                                         init_carry_gradients_score, 
+#                                                         init_gradients_score, 
 #                                                         update_gradients_F, 
 #                                                         functional,
 #                                                         exp_and_normalize,
