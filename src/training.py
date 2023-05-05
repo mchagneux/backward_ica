@@ -121,9 +121,12 @@ class SVITrainer:
                         
                         return -elbo, aux
                     self.loss = online_elbo
-                elif self.elbo_mode == 'score':
+                elif 'score' in self.elbo_mode:
+                    if 'paris' in self.elbo_mode: 
+                        self.elbo = OnlineELBOScorePaRIS(self.p, self.q, num_samples)
+                    else: 
+                        self.elbo = OnlineELBOScore(self.p, self.q, num_samples)
 
-                    self.elbo = OnlineELBOScore(self.p, self.q, num_samples)
                     # self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
                     # self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
                     #                                                 self.q.format_params(params))[0]
@@ -163,7 +166,7 @@ class SVITrainer:
 
                 def batch_step(carry, x):
                     def step(params, opt_state, batch, keys):
-                        if self.elbo_mode == 'score':
+                        if 'score' in self.elbo_mode:
                             (neg_elbo_values, grads), aux = vmap(self.loss, in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
                         else:
                             (neg_elbo_values, aux), grads = vmap(value_and_grad(self.loss, 
@@ -204,8 +207,11 @@ class SVITrainer:
                     return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads_batch, aux)
         
         else: 
-            if self.elbo_mode == 'score':
-                self.elbo = OnlineELBOScore(self.p, self.q, num_samples)
+            if 'score' in self.elbo_mode:
+                if 'paris' in self.elbo_mode: 
+                    self.elbo = OnlineELBOScorePaRIS(self.p, self.q, num_samples)
+                else: 
+                    self.elbo = OnlineELBOScore(self.p, self.q, num_samples)
                 def postprocess(elbo_carry, T, unravel):
                     H = elbo_carry['stats']['H']
 

@@ -56,9 +56,7 @@ def main(args):
                         seq_length=data.shape[1],
                         elbo_mode=elbo_mode,
                         online=online,
-                        online_batch_size=online_batch_size,
-                        apply_every=args.apply_every)
-
+                        online_batch_size=online_batch_size)
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
