@@ -66,6 +66,9 @@ class SVITrainer:
         self.frozen_params = frozen_params
 
 
+        if online:
+            learning_rate *= self.online_batch_size / seq_length
+
         self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
         self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
 
@@ -217,8 +220,8 @@ class SVITrainer:
             elif self.elbo_mode == 'autodiff_on_forward':
                 self.elbo = OnlineELBOScoreAutodiff(self.p, self.q, num_samples)
                 def postprocess(elbo_carry, T, *args):
-                    elbo_value = jnp.mean(elbo_carry['stats']['tau'], axis=0) / T
-                    grad_elbo_value = tree_map(lambda x: -jnp.mean(x, axis=0) / T, 
+                    elbo_value = jnp.mean(elbo_carry['stats']['tau'], axis=0) / (T + 1)
+                    grad_elbo_value = tree_map(lambda x: -jnp.mean(x, axis=0) / (T + 1), 
                                                elbo_carry['stats']['grad_tau'])
                     return elbo_value, grad_elbo_value
                 
@@ -234,11 +237,12 @@ class SVITrainer:
                 T = timesteps[-1]
 
                 def _step(carry, x):
-                    key, t = x
+                    key, t, y = x
                     input_t = {'t':t, 
                             'key': key, 
                             'ys':data, 
-                            'y': data[t], 
+                            'T':T,
+                            'y': y, 
                             'phi':params}
                     
                     carry['theta'] = self.formatted_theta_star
@@ -248,7 +252,7 @@ class SVITrainer:
             
                 elbo_carry, aux = jax.lax.scan(_step, 
                                           init=elbo_carry, 
-                                          xs=(keys, timesteps))
+                                          xs=(keys, timesteps, data[timesteps]))
                 
                 elbo, grad = postprocess(elbo_carry, T, unravel)
                 
@@ -299,7 +303,7 @@ class SVITrainer:
 
                     
 
-                return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch[-1], avg_grads_batch[-1], aux)
+                return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads_batch, aux)
             
         self.batch_step = batch_step
 
@@ -366,10 +370,13 @@ class SVITrainer:
             
 
 
-
             # print(jnp.linalg.norm(jax.flatten_util.ravel_pytree(avg_grads)[0]))
-            avg_elbo_epoch = jnp.mean(avg_elbo_batches)
-            avg_grads_epoch = jnp.mean(avg_grads_batches, axis=0)
+            avg_elbo_epoch = jnp.mean(avg_elbo_batches, axis=0)
+            # avg_grads_epoch = jnp.mean(avg_grads_batches, axis=0)
+
+            if self.online: 
+                avg_elbo_epoch = avg_elbo_epoch[-1]
+                avg_elbo_batches = avg_elbo_batches[0]
             # if self.elbo_mode != 'off':
 
             #     avg_monitor_elbo_batches = aux[-2]
@@ -427,12 +434,19 @@ class SVITrainer:
 
                     # tf.summary.histogram('eta_1', avg_eta1_epoch, epoch_nb)
                     # tf.summary.histogram('diag(-eta_2)', -avg_eta2_epoch, epoch_nb)
-
-                    for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
-                        tf.summary.scalar('Minibatch ELBO', 
-                                          avg_elbo_batch, 
-                                          epoch_nb*len(batch_start_indices) + batch_nb)
-                        
+                    if self.batch_size > 1:
+                         for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
+                            tf.summary.scalar('Minibatch ELBO', 
+                                            avg_elbo_batch, 
+                                            epoch_nb*self.batch_size + batch_nb)
+                            
+                    if self.online: 
+                        step_size = len(avg_elbo_batches)*self.online_batch_size
+                        for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
+                            tf.summary.scalar('Temporal step ELBO', 
+                                            avg_elbo_batch, 
+                                            epoch_nb*step_size + batch_nb * self.online_batch_size)
+                            
             # if log_writer_monitor is not None:
             #     with log_writer_monitor.as_default():
             #         tf.summary.scalar('Epoch ELBO', avg_monitor_elbo_epoch, epoch_nb)

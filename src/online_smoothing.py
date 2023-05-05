@@ -84,7 +84,7 @@ class OnlineVariationalAdditiveSmoothing:
         timesteps = jnp.arange(0, T+1) # [0:T]
         def _step(carry, x):
             t, key_t, obs_t = x
-            input_t = {'t':t, 'key':key_t, 'ys':obs_seq, 'y': obs_t, 'phi':phi}            
+            input_t = {'t':t, 'key':key_t, 'T': T, 'ys':obs_seq, 'y': obs_t, 'phi':phi}            
             carry['theta'] = theta
             carry_t, output_t = self.step(carry, input_t)
             return carry_t, output_t
@@ -586,18 +586,20 @@ def init_gradients_score(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_
 
 
 
+    s_0 = q.init_state(y_0, 
+                       q.format_params(unformatted_phi_0))
 
     def _log_q_0(unformatted_phi, key):
         phi = q.format_params(unformatted_phi)
-        s_0 = q.init_state(y_0, phi)
         params_q_t = q.filt_params_from_state(s_0, phi)
         x_t = q.filt_dist.sample(key, params_q_t)
         x_t = jax.lax.stop_gradient(x_t)
-        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, s_0)
+        return q.filt_dist.logpdf(x_t, params_q_t), x_t
 
-    (log_q_0, (x_0, s_0)), grad_log_q_0 = jax.vmap(jax.value_and_grad(_log_q_0, has_aux=True), 
-                                            in_axes=(None,0))(unformatted_phi_0, 
-                                                              jax.random.split(key_0, num_samples))
+
+    log_q_0, x_0 = jax.vmap(_log_q_0, 
+                                    in_axes=(None,0))(unformatted_phi_0, 
+                                                        jax.random.split(key_0, num_samples))
     
     h = partial(h_0, models={'p':p, 'q':q})
 
@@ -611,10 +613,10 @@ def init_gradients_score(carry_m1, input_0, p:HMM, q:BackwardSmoother, h_0, num_
 
     carry = {'stats':{'F':F_0, 
                       'H':H_0},
-            's':tree_get_idx(0, s_0), 
+            's':s_0, 
             'x':x_0,
             'log_q':log_q_0,
-            'grad_log_q':grad_log_q_0}
+            'grad_log_q':tree_map(lambda x: jnp.empty_like(x), carry_m1['grad_log_q'])}
 
     return carry, 0.0
 
@@ -628,7 +630,7 @@ def update_gradients_score(
         normalizer):
 
 
-    t, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['key'], input_t['y'], input_t['phi']
+    t, T, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['T'], input_t['key'], input_t['y'], input_t['phi']
 
 
     x_tm1, s_tm1, stats_tm1, theta = carry_tm1['x'], carry_tm1['s'], carry_tm1['stats'], carry_tm1['theta']
@@ -659,14 +661,24 @@ def update_gradients_score(
         x_t = jax.lax.stop_gradient(x_t)
         return q.filt_dist.logpdf(x_t, params_q_t), (x_t, s_t)
     
+    def _log_q_t_and_dummy_grad(unformatted_phi, key):
+        log_q_t, (x_t, s_t) = _log_q_t(unformatted_phi, key)
+        dummy_grad = tree_map(lambda x: jnp.empty_like(x[0]), carry_tm1['grad_log_q'])
+        return (log_q_t, (x_t, s_t)), dummy_grad
     
+    def _log_q_t_and_grad(unformatted_phi, key):
+        return jax.value_and_grad(_log_q_t, has_aux=True)(
+                                                        unformatted_phi, 
+                                                        key)
 
 
     def update(key_t):
     
-        (log_q_t, (x_t, s_t)), grad_log_q_t = jax.value_and_grad(_log_q_t, has_aux=True)(
-                                                        unformatted_phi_t, 
-                                                        key_t)
+        (log_q_t, (x_t, s_t)), grad_log_q_t = lax.cond(t == T, 
+                                                       _log_q_t_and_grad,
+                                                       _log_q_t_and_dummy_grad, 
+                                                       unformatted_phi_t, 
+                                                       key_t)
     
 
         log_q_tm1_t, grad_log_q_tm1_t = jax.vmap(jax.value_and_grad(_log_q_tm1_t),
