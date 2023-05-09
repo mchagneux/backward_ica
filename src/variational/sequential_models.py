@@ -86,14 +86,14 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
             self._backwd_params_from_state = backwd_params_from_states
 
-            def _log_transition_function(x_0, x_1, params_potential):
+            def _log_fwd_potential(x_0, x_1, params_potential):
                 kernel_params, mu_0, mu_1 = params_potential[0], params_potential[1], params_potential[2]
                 A, b, Q_prec = kernel_params.map.w, kernel_params.map.b, kernel_params.noise.scale.prec
                 temp = x_1 - (A @ x_0 + b)
                 temp_const = mu_1 - (A @ mu_0 + b)
                 return -0.5 * temp.T @ Q_prec @ temp + 0.5*temp_const.T @ Q_prec @ temp_const
 
-            self._log_transition_function = lambda x_0, x_1, params_potential: _log_transition_function(x_0, x_1, params_potential)
+            self._log_fwd_potential = lambda x_0, x_1, params_potential: _log_fwd_potential(x_0, x_1, params_potential)
 
             
             
@@ -130,7 +130,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
                     backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
             
 
-            def _log_transition_function(params, x_0, x_1, aux):
+            def _log_fwd_potential(params, x_0, x_1, aux):
 
                 filt_params_0, filt_params_1 = aux
 
@@ -145,7 +145,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
                 return params.backwd, (filt_params_0, filt_params_1)
             
 
-            self._log_transition_function = lambda x_0, x_1, params: _log_transition_function(params[0], x_0, x_1, params[1])
+            self._log_fwd_potential = lambda x_0, x_1, params: _log_fwd_potential(params[0], x_0, x_1, params[1])
                 
             self._backwd_params_from_state = backwd_params_from_states
 
@@ -166,8 +166,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                                         d=d)))
 
 
-    def log_transition_function(self, x_0, x_1, params_potential):
-        return self._log_transition_function(x_0, x_1, params_potential)
+    def log_fwd_potential(self, x_0, x_1, params_potential):
+        return self._log_fwd_potential(x_0, x_1, params_potential)
             
     def compute_marginals(self, *args):
         return super().compute_marginals(*args)

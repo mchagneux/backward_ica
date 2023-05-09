@@ -66,8 +66,23 @@ class SVITrainer:
         self.frozen_params = frozen_params
 
 
+
+        self.detach_state = 'detach_state' in elbo_mode
+        if self.detach_state: 
+            print('Detaching RNN state for recursive gradients.')
+
+        self.variance_reduction = 'variance_reduction' in elbo_mode
+
+        def update_fn(params, updates):
+            new_params = optax.apply_updates(params, updates)
+            new_params = optax.incremental_update(new_params, params, step_size=0.8)
+            return new_params
+        
+        self.update_fn = update_fn
+
         if online:
             learning_rate *= self.online_batch_size / seq_length
+            self.online_reset = 'reset' in elbo_mode
 
         self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
         self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
@@ -103,7 +118,7 @@ class SVITrainer:
                     return -value, dummy_aux
                 self.loss = closed_form_elbo
             else: 
-                if self.elbo_mode == 'autodiff_on_forward': 
+                if 'autodiff_on_forward' in self.elbo_mode: 
                     self.elbo = OnlineELBO(self.p, self.q, num_samples)
                     # self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
                     # self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
@@ -123,9 +138,9 @@ class SVITrainer:
                     self.loss = online_elbo
                 elif 'score' in self.elbo_mode:
                     if 'paris' in self.elbo_mode: 
-                        self.elbo = OnlineELBOScorePaRIS(self.p, self.q, num_samples)
+                        self.elbo = OnlineELBOScorePaRIS(self.p, self.q, num_samples, detach_state=self.detach_state, variance_reduction=self.variance_reduction)
                     else: 
-                        self.elbo = OnlineELBOScore(self.p, self.q, num_samples)
+                        self.elbo = OnlineELBOScore(self.p, self.q, num_samples, detach_state=self.detach_state, variance_reduction=self.variance_reduction)
 
                     # self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
                     # self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
@@ -142,15 +157,21 @@ class SVITrainer:
 
                         F = vmap_ravel(carry['stats']['F'])
                         grad_log_q = vmap_ravel(carry['grad_log_q'])
-                        moving_average_H = jnp.mean(H, axis=0)
-                        elbo = moving_average_H / (compute_up_to + 1)
+
+
+                        elbo = jnp.mean(H, axis=0)
+                        if self.variance_reduction:
+                            moving_average_H = elbo
+                        else: 
+                            moving_average_H = 0.0
+                        elbo /= (compute_up_to + 1)
+                        
                         grad = unravel(-jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)(H, grad_log_q, F), axis=0) / (compute_up_to + 1))
 
                         return (-elbo, grad), aux
                     self.loss = online_elbo
 
-                elif self.elbo_mode == 'autodiff_on_backward': 
-                    print('Setting up offline elbo.')
+                elif 'autodiff_on_backward' in self.elbo_mode: 
                     self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                     self.get_montecarlo_keys = get_keys
                     def offline_elbo(key, data, compute_up_to, params):
@@ -179,15 +200,15 @@ class SVITrainer:
                         
                         avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                         updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
-                        params = optax.apply_updates(params, updates)
 
+                        params = self.update_fn(params, updates)
 
                         # if self.elbo_mode != 'off':
                         #     monitor_neg_elbo_values, monitor_grads = vmap(value_and_grad(self.monitor_elbo, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
                         #     avg_monitor_elbo_values = jnp.mean(monitor_neg_elbo_values, axis=0)
                         #     avg_monitor_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), monitor_grads)
 
-                        #     similarity_gradients = cosine_similarity(ravel_pytree(avg_monitor_grads)[0], ravel_pytree(avg_grads)[0])
+                        #     similarity_gradients = cosine_similarity(ravel_pywtree(avg_monitor_grads)[0], ravel_pytree(avg_grads)[0])
                         # if self.elbo_mode != 'off':
                         #     aux = [jnp.mean(aux_elem, axis=0) for aux_elem in aux]
 
@@ -209,21 +230,26 @@ class SVITrainer:
         else: 
             if 'score' in self.elbo_mode:
                 if 'paris' in self.elbo_mode: 
-                    self.elbo = OnlineELBOScorePaRIS(self.p, self.q, num_samples)
+                    self.elbo = OnlineELBOScorePaRIS(self.p, self.q, num_samples, self.detach_state, self.variance_reduction)
                 else: 
-                    self.elbo = OnlineELBOScore(self.p, self.q, num_samples)
+                    self.elbo = OnlineELBOScore(self.p, self.q, num_samples, self.detach_state, self.variance_reduction)
                 def postprocess(elbo_carry, T, unravel):
                     H = elbo_carry['stats']['H']
 
                     F = vmap_ravel(elbo_carry['stats']['F'])
                     grad_log_q = vmap_ravel(elbo_carry['grad_log_q'])
-                    moving_average_H = jnp.mean(H, axis=0)
-                    elbo = moving_average_H / (T + 1)
+
+                    elbo = jnp.mean(H, axis=0)
+                    if self.variance_reduction:
+                        moving_average_H = elbo
+                    else: 
+                        moving_average_H = 0.0
+                    elbo /= (T + 1)
                     grad = unravel(-jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)(H, grad_log_q, F), axis=0) / (T + 1))
                     return elbo, grad
                 
 
-            elif self.elbo_mode == 'autodiff_on_forward':
+            elif 'autodiff_on_forward' in self.elbo_mode:
                 self.elbo = OnlineELBOScoreAutodiff(self.p, self.q, num_samples)
                 def postprocess(elbo_carry, T, *args):
                     elbo_value = jnp.mean(elbo_carry['stats']['tau'], axis=0) / (T + 1)
@@ -240,7 +266,12 @@ class SVITrainer:
                 _, unravel = ravel_pytree(params)
                 key, subkey = jax.random.split(key, 2)
                 keys = jax.random.split(subkey, len(timesteps))
-                T = timesteps[-1]
+                
+                if self.online_reset: 
+                    timesteps_offsetted = timesteps - timesteps[0]  
+                else: 
+                    timesteps_offsetted = timesteps 
+                T = timesteps_offsetted[-1]
 
                 def _step(carry, x):
                     key, t, y = x
@@ -258,7 +289,7 @@ class SVITrainer:
             
                 elbo_carry, aux = jax.lax.scan(_step, 
                                           init=elbo_carry, 
-                                          xs=(keys, timesteps, data[timesteps]))
+                                          xs=(keys, timesteps_offsetted, data[timesteps]))
                 
                 elbo, grad = postprocess(elbo_carry, T, unravel)
                 
@@ -293,7 +324,7 @@ class SVITrainer:
                     updates, opt_state = self.optimizer.update(avg_grads, 
                                                                opt_state, 
                                                                params)
-                    params = optax.apply_updates(params, updates)
+                    params = self.update_fn(params, updates)
 
                     carry = keys, params, opt_state, elbo_carry
                     out = -jnp.mean(neg_elbo_values), ravel_pytree(avg_grads)[0], aux

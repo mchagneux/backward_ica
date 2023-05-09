@@ -13,6 +13,8 @@ def value_and_jac(fun, argnums=0, has_aux=False):
     else: 
         return lambda *args: (fun(*args), jax.jacobian(fun, argnums=argnums, has_aux=False)(*args))
 
+
+
 class OnlineVariationalAdditiveSmoothing:
 
     def __init__(self, 
@@ -477,7 +479,9 @@ def update_gradients_score(
         h, 
         num_samples, 
         normalizer,
-        backwd_resampling):
+        backwd_resampling, 
+        detach_state=False,
+        variance_reduction=True):
 
 
     t, T, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['T'], input_t['key'], input_t['y'], input_t['phi']
@@ -493,9 +497,12 @@ def update_gradients_score(
 
     def _log_q_tm1_t(unformatted_phi, x_tm1, x_t):
         phi = q.format_params(unformatted_phi)
-        # s_tm1 = q.get_state(t-1, input_t['ys'], phi)
-        s_t = q.new_state(y_t, s_tm1, phi)
-        params_q_tm1_t = q.backwd_params_from_states((s_tm1,s_t), phi)
+        if not detach_state: 
+            _s_tm1 = q.get_state(t-1, input_t['ys'], phi)
+        else: 
+            _s_tm1 = s_tm1
+        s_t = q.new_state(y_t, _s_tm1, phi)
+        params_q_tm1_t = q.backwd_params_from_states((_s_tm1, s_t), phi)
         log_q_tm1_t = q.backwd_kernel.logpdf(x_tm1, 
                                              x_t, 
                                              params_q_tm1_t)
@@ -504,8 +511,11 @@ def update_gradients_score(
 
     def _log_q_t(unformatted_phi, key):
         phi = q.format_params(unformatted_phi)
-        # s_tm1 = q.get_state(t-1, input_t['ys'], phi)
-        s_t = q.new_state(y_t, s_tm1, phi)
+        if not detach_state: 
+            _s_tm1 = q.get_state(t-1, input_t['ys'], phi)
+        else: 
+            _s_tm1 = s_tm1
+        s_t = q.new_state(y_t, _s_tm1, phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         x_t = q.filt_dist.sample(key, params_q_t)
         x_t = jax.lax.stop_gradient(x_t)
@@ -552,8 +562,10 @@ def update_gradients_score(
             # print(log_q_tm1.shape)
             h_t = _vmaped_h(x_tm1, log_q_tm1_t, log_q_tm1)
 
-            moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
-
+            if variance_reduction: 
+                moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
+            else: 
+                moving_average_H = 0.0
             w_t = normalizer(log_q_tm1_t - log_q_tm1)
             H_t = jax.vmap(lambda w, H, h: w * (H+h))(w_t, H_tm1, h_t)
 
@@ -580,8 +592,10 @@ def update_gradients_score(
                             log_q_tm1_t,
                             log_q_tm1)
 
-            moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
-
+            if variance_reduction: 
+                moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
+            else: 
+                moving_average_H = 0.0
             # log_w_t = jax.vmap(q.log_fwd_potential, 
             #                    in_axes=(0,None,None,None))(x_tm1, 
             #                                                x_t, 
@@ -663,20 +677,26 @@ OnlineELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(
                                                     exp_and_normalize,
                                                     num_samples)
 
-OnlineELBOScore = lambda p,q, num_samples: OnlineVariationalAdditiveSmoothing(p, 
+OnlineELBOScore = lambda p,q, num_samples, detach_state, variance_reduction: OnlineVariationalAdditiveSmoothing(p, 
                                                                             q, 
                                                                             init_carry_gradients_score, 
                                                                             init_gradients_score,
-                                                                            partial(update_gradients_score, backwd_resampling=False),
+                                                                            partial(update_gradients_score, 
+                                                                                    detach_state=detach_state, 
+                                                                                    backwd_resampling=False,
+                                                                                    variance_reduction=variance_reduction),
                                                                             online_elbo_functional(p,q),
                                                                             exp_and_normalize,
                                                                             num_samples)
 
-OnlineELBOScorePaRIS = lambda p,q, num_samples: OnlineVariationalAdditiveSmoothing(p, 
+OnlineELBOScorePaRIS = lambda p,q, num_samples, detach_state, variance_reduction: OnlineVariationalAdditiveSmoothing(p, 
                                                                                 q, 
                                                                                 init_carry_gradients_score, 
                                                                                 init_gradients_score,
-                                                                                partial(update_gradients_score, backwd_resampling=True),
+                                                                                partial(update_gradients_score, 
+                                                                                    detach_state=detach_state, 
+                                                                                    backwd_resampling=False,
+                                                                                    variance_reduction=variance_reduction),
                                                                                 online_elbo_functional(p,q),
                                                                                 exp_and_normalize,
                                                                                 num_samples)
