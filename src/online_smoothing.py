@@ -5,9 +5,8 @@ from .stats.hmm import *
 from .utils.misc import *
 from src.stats import BackwardSmoother
 from src.variational import NeuralBackwardSmoother
-
 vmap_ravel = jax.vmap(lambda x: ravel_pytree(x)[0])
-
+import blackjax
 def value_and_jac(fun, argnums=0, has_aux=False):
     if has_aux:
         return lambda *args: (fun(*args), jax.jacobian(fun, argnums=argnums, has_aux=True)(*args)[0])
@@ -501,6 +500,7 @@ def update_gradients_score(
                                              x_t, 
                                              params_q_tm1_t)
         return log_q_tm1_t
+    
 
     def _log_q_t(unformatted_phi, key):
         phi = q.format_params(unformatted_phi)
@@ -533,12 +533,12 @@ def update_gradients_score(
                                                     _log_q_t_and_dummy_grad, 
                                                     unformatted_phi_t, 
                                                     key_new_sample)
-        def _h(x_tm1, log_w_t):
-            log_m_t = log_w_t + log_q_t
+        def _h(x_tm1, log_q_tm1_t, log_q_tm1):
+            log_m_t = log_q_tm1_t - log_q_tm1 + log_q_t
             return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
                 + p.emission_kernel.logpdf(y_t, x_t, theta.emission) - log_m_t
             
-        _vmaped_h = jax.vmap(_h, in_axes=(0,0))
+        _vmaped_h = jax.vmap(_h, in_axes=(0,0,0))
         
 
         if not backwd_resampling: 
@@ -547,16 +547,14 @@ def update_gradients_score(
                                                     in_axes=(None,0,None))(unformatted_phi_t, 
                                                                         x_tm1, 
                                                                         x_t)
-            log_w_t = log_q_tm1_t - log_q_tm1
-
             # print(x_tm1.shape)
             # print(log_w_t.shape)
             # print(log_q_tm1.shape)
-            h_t = _vmaped_h(x_tm1, log_w_t)
+            h_t = _vmaped_h(x_tm1, log_q_tm1_t, log_q_tm1)
 
             moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
 
-            w_t = normalizer(log_w_t)
+            w_t = normalizer(log_q_tm1_t - log_q_tm1)
             H_t = jax.vmap(lambda w, H, h: w * (H+h))(w_t, H_tm1, h_t)
 
             F_t = tree_map(lambda F, grad_log_backwd: jax.vmap(lambda w, F, H, h, grad_log_backwd: w*(F + grad_log_backwd*(H+h-moving_average_H)))(
@@ -576,16 +574,51 @@ def update_gradients_score(
                                 in_axes=(None,0,None))(unformatted_phi_t, 
                                                     x_tm1, 
                                                     x_t)
-            log_w_t = log_q_tm1_t - log_q_tm1
+            
 
-
-            h_t = _vmaped_h(x_tm1, log_w_t)
+            h_t = _vmaped_h(x_tm1, 
+                            log_q_tm1_t,
+                            log_q_tm1)
 
             moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
 
+            # log_w_t = jax.vmap(q.log_fwd_potential, 
+            #                    in_axes=(0,None,None,None))(x_tm1, 
+            #                                                x_t, 
+            #                                                (s_tm1, s_t), 
+            #                                                q.format_params(unformatted_phi_t))
+
+            log_w_t = log_q_tm1_t - log_q_tm1
+
+            # backwd_sampler = blackjax.irmh(logprob_fn=lambda i: log_w_t[i], 
+            #                                proposal_distribution=lambda key: jax.random.choice(key, a=num_samples))
+
+
+            # def _backwd_sample_step(state, x):
+            #     step_nb, key = x
+
+            #     def _init(state, key):
+            #         return backwd_sampler.init(jax.random.choice(key, a=num_samples))
+            #     def _step(state, key):
+            #         return backwd_sampler.step(key, state)[0]
+                
+            #     new_state = jax.lax.cond(step_nb > 0, _step, _init, state, key)
+            #     return new_state, new_state.position
+                
+            # backwd_indices = jax.lax.scan(_backwd_sample_step, 
+            #                               init=backwd_sampler.init(0), 
+            #                               xs=(jnp.arange(2), 
+            #                                   jax.random.split(key_backwd_resampling, 2)))[1]
+            
+
+
             w_t = normalizer(log_w_t)
 
-            backwd_indices = jax.random.choice(key_backwd_resampling, a=num_samples, p=w_t, shape=(2,))
+            backwd_indices = jax.random.choice(key_backwd_resampling, 
+                                               a=num_samples, 
+                                               p=w_t, 
+                                               shape=(2,))
+            
             sub_x_tm1 = x_tm1[backwd_indices]
             sub_H_tm1 = H_tm1[backwd_indices]
             h_t = h_t[backwd_indices]

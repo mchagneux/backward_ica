@@ -342,8 +342,6 @@ class JohnsonSmoother:
         params = self.get_random_params(random.PRNGKey(0))
         print('Num params:', len(ravel_pytree(params)[0]))
     
-    def log_transition_function(self, x_0, x_1, params):
-        return self.transition_kernel.logpdf(x_1, x_0, params.transition)
 
 class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
 
@@ -412,7 +410,6 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
         eta1 = jnp.empty((self.state_dim,))
         eta2 = jnp.empty((self.state_dim, self.state_dim))
         return Gaussian.Params(eta1=eta1, eta2=eta2)
-        TwoFilterSmoother
 
 
 

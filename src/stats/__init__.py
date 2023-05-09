@@ -55,7 +55,7 @@ class BackwardSmoother(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def log_transition_function(self, x_0, x_1, params):
+    def log_fwd_potential(self, x_0, x_1, states, params):
         raise NotImplementedError
     
     def compute_state_seq(self, obs_seq, compute_up_to, formatted_params):
@@ -120,7 +120,7 @@ class BackwardSmoother(metaclass=ABCMeta):
     def new_proposal_params(self, transition_params, filt_params):
         raise NotImplementedError
 
-        
+    
 
 class TwoFilterSmoother(metaclass=ABCMeta):
         
@@ -312,3 +312,7 @@ class LinearBackwardSmoother(BackwardSmoother):
             covs.append(cov)
             
         return means, covs  
+
+    def log_fwd_potential(self, x_0, x_1, states, params):
+        return self.transition_kernel.logpdf(x_1, x_0, params.transition)
+    

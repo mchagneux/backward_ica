@@ -184,8 +184,6 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         LinearBackwardSmoother.__init__(self, state_dim)
 
-    def log_transition_function(self, x_0, x_1, params):
-        return self.transition_kernel.logpdf(x_1, x_0, params.transition)
     
     def empty_state(self):
         return State(out=(jnp.empty((self.state_dim,)), 
