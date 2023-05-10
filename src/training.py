@@ -65,13 +65,17 @@ class SVITrainer:
         self.formatted_theta_star = self.p.format_params(theta_star)
         self.frozen_params = frozen_params
 
+        self.elbo_mode = elbo_mode
+        self.online = online
 
+        if online:
+            learning_rate *= self.online_batch_size / seq_length
+            self.online_reset = 'reset' in elbo_mode
 
-        self.detach_state = 'detach_state' in elbo_mode
-        if self.detach_state: 
-            print('Detaching RNN state for recursive gradients.')
-
-        self.variance_reduction = 'variance_reduction' in elbo_mode
+        self.elbo_options = {}
+        if 'score' in elbo_mode: 
+            for option in ['detach_state', 'paris', 'variance_reduction']:
+                self.elbo_options[option] = True if option in elbo_mode else False
 
         def update_fn(params, updates):
             new_params = optax.apply_updates(params, updates)
@@ -80,9 +84,6 @@ class SVITrainer:
         
         self.update_fn = update_fn
 
-        if online:
-            learning_rate *= self.online_batch_size / seq_length
-            self.online_reset = 'reset' in elbo_mode
 
         self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
         self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
@@ -101,8 +102,7 @@ class SVITrainer:
         self.optimizer = optax.chain(
                                 # optax.clip(1.0),
                                 base_optimizer)
-        self.elbo_mode = elbo_mode
-        self.online = online
+
 
         if not self.online: 
 
@@ -137,37 +137,23 @@ class SVITrainer:
                         return -elbo, aux
                     self.loss = online_elbo
                 elif 'score' in self.elbo_mode:
-                    if 'paris' in self.elbo_mode: 
-                        self.elbo = OnlineELBOScorePaRIS(self.p, self.q, num_samples, detach_state=self.detach_state, variance_reduction=self.variance_reduction)
-                    else: 
-                        self.elbo = OnlineELBOScore(self.p, self.q, num_samples, detach_state=self.detach_state, variance_reduction=self.variance_reduction)
-
+                    self.elbo = OnlineELBOScoreGradients(
+                                                        self.p, 
+                                                        self.q, 
+                                                        num_samples=num_samples, 
+                                                        **self.elbo_options)
+                    
                     # self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
                     # self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
                     #                                                 self.q.format_params(params))[0]
                     self.get_montecarlo_keys = get_keys
                     def online_elbo(key, data, compute_up_to, params):
-
-                        _, unravel = ravel_pytree(params)
                         carry, aux = self.elbo.batch_compute(key, 
                                                     data, 
                                                     self.formatted_theta_star, 
                                                     params)
-                        H = carry['stats']['H']
-
-                        F = vmap_ravel(carry['stats']['F'])
-                        grad_log_q = vmap_ravel(carry['grad_log_q'])
-
-
-                        elbo = jnp.mean(H, axis=0)
-                        if self.variance_reduction:
-                            moving_average_H = elbo
-                        else: 
-                            moving_average_H = 0.0
-                        elbo /= (compute_up_to + 1)
-                        
-                        grad = unravel(-jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)(H, grad_log_q, F), axis=0) / (compute_up_to + 1))
-
+                        elbo, grad = self.elbo.postprocess(carry, 
+                                                           T=compute_up_to)
                         return (-elbo, grad), aux
                     self.loss = online_elbo
 
@@ -229,25 +215,12 @@ class SVITrainer:
         
         else: 
             if 'score' in self.elbo_mode:
-                if 'paris' in self.elbo_mode: 
-                    self.elbo = OnlineELBOScorePaRIS(self.p, self.q, num_samples, self.detach_state, self.variance_reduction)
-                else: 
-                    self.elbo = OnlineELBOScore(self.p, self.q, num_samples, self.detach_state, self.variance_reduction)
-                def postprocess(elbo_carry, T, unravel):
-                    H = elbo_carry['stats']['H']
+                    self.elbo = OnlineELBOScoreGradients(
+                                                        self.p, 
+                                                        self.q, 
+                                                        num_samples=num_samples, 
+                                                        **self.elbo_options)
 
-                    F = vmap_ravel(elbo_carry['stats']['F'])
-                    grad_log_q = vmap_ravel(elbo_carry['grad_log_q'])
-
-                    elbo = jnp.mean(H, axis=0)
-                    if self.variance_reduction:
-                        moving_average_H = elbo
-                    else: 
-                        moving_average_H = 0.0
-                    elbo /= (T + 1)
-                    grad = unravel(-jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)(H, grad_log_q, F), axis=0) / (T + 1))
-                    return elbo, grad
-                
 
             elif 'autodiff_on_forward' in self.elbo_mode:
                 self.elbo = OnlineELBOScoreAutodiff(self.p, self.q, num_samples)
@@ -263,7 +236,6 @@ class SVITrainer:
                             data, 
                             timesteps, 
                             params):
-                _, unravel = ravel_pytree(params)
                 key, subkey = jax.random.split(key, 2)
                 keys = jax.random.split(subkey, len(timesteps))
                 
@@ -291,7 +263,8 @@ class SVITrainer:
                                           init=elbo_carry, 
                                           xs=(keys, timesteps_offsetted, data[timesteps]))
                 
-                elbo, grad = postprocess(elbo_carry, T, unravel)
+                elbo, grad = self.elbo.postprocess(elbo_carry, 
+                                                   T=T)
                 
                 return -elbo, grad, key, elbo_carry, aux
             
