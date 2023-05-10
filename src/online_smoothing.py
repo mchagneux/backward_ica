@@ -34,6 +34,12 @@ class OnlineVariationalAdditiveSmoothing:
 
         self.options = options
         self.options['normalizer'] = exp_and_normalize
+        if 'variance_reduction' in self.options:
+            print('Baseline variance reduction with running average of stats.')
+        if 'detach_state' in self.options: 
+            print('Gradients w.r.t RNN state discarded.')
+        if 'paris' in self.options:
+            print('Backward resampling.')
 
         self._init_carry_fn = init_carry_fn
         self._init_fn = init_fn
