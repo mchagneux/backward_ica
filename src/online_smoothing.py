@@ -40,15 +40,6 @@ class OnlineVariationalAdditiveSmoothing:
         self._update_fn = update_fn
         self._postprocess_fn = postprocess_fn
 
-
-    def init_carry(self, params):
-
-        return self._init_carry_fn(params, 
-                                   p=self.p,
-                                   q=self.q,
-                                   h=self.additive_functional, 
-                                   **self.options)
-
     def _init(self, carry, input):
         return self._init_fn(carry, input, 
                              p=self.p, 
@@ -62,6 +53,14 @@ class OnlineVariationalAdditiveSmoothing:
                                q=self.q, 
                                h=self.additive_functional.update, 
                                **self.options)
+    
+    def init_carry(self, params):
+
+        return self._init_carry_fn(params, 
+                                   p=self.p,
+                                   q=self.q,
+                                   h=self.additive_functional, 
+                                   **self.options)
     
     def step(self, carry, input):
 
@@ -112,8 +111,13 @@ class OnlineVariationalAdditiveSmoothing:
         return self._postprocess_fn(carry, **kwargs, **self.options)
 
 
-def init_carry(unformatted_params, state_dim, obs_dim, num_samples, out_shape, dummy_state):
+def init_carry(unformatted_params, **kwargs):
 
+
+    num_samples = kwargs['num_samples']
+    out_shape = kwargs['h'].out_shape
+    state_dim = kwargs['p'].state_dim
+    dummy_state = kwargs['q'].empty_state()
 
     dummy_tau = jnp.empty((num_samples, *out_shape))
     dummy_x = jnp.empty((num_samples, state_dim)) 
@@ -128,14 +132,16 @@ def init_carry(unformatted_params, state_dim, obs_dim, num_samples, out_shape, d
 def init_PaRIS(
         carry_m1, 
         input_0, 
-        p:HMM, 
-        q:BackwardSmoother, 
-        h_0, 
-        num_samples):
+        **kwargs):
 
 
     y_0 = input_0['y']
     key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
+
+    p = kwargs['p']
+    q = kwargs['q']
+    num_samples = kwargs['num_samples']
+    h_0 = kwargs['h']
 
     phi_0 = q.format_params(unformatted_phi_0)
 
@@ -169,12 +175,13 @@ def init_PaRIS(
 def update_PaRIS(
         carry_tm1, 
         input_t:HMM, 
-        p:HMM, 
-        q:NeuralBackwardSmoother, 
-        h, 
-        num_samples, 
-        normalizer):
+        **kwargs):
 
+    p:HMM = kwargs['p']
+    q:BackwardSmoother = kwargs['q']
+    num_samples = kwargs['num_samples']
+    normalizer = kwargs['normalizer']
+    h = kwargs['h']
 
     state_tm1 = carry_tm1['state']
 
@@ -240,6 +247,11 @@ def update_PaRIS(
             'log_q_x':log_q_t_x_t}
     
     return carry_t, (ess_t, normalizing_const, filt_params_t.eta1, jnp.diagonal(filt_params_t.eta2), log_weights)
+
+def postprocess_PaRIS(carry, **kwargs):
+    T = kwargs['T']
+    return jnp.mean(carry['stats']['tau'], axis=0) / (T + 1)
+
 
 
 def init_carry_gradients_reparam(
@@ -411,6 +423,7 @@ def update_gradients_reparam(
     return carry_t, 0.0
 
 
+
 def init_carry_score_gradients(unformatted_params, **kwargs):
 
     num_samples = kwargs['num_samples']
@@ -477,10 +490,7 @@ def init_score_gradients(carry_m1, input_0, **kwargs):
 
     return carry, 0.0
 
-def update_score_gradients(
-        carry_tm1, 
-        input_t:HMM, 
-        **kwargs):
+def update_score_gradients(carry_tm1, input_t, **kwargs):
 
 
     p:HMM = kwargs['p']
@@ -691,17 +701,18 @@ def postprocess_score_gradients(carry, **kwargs):
         return elbo_T, grad_T
 
 
-OnlineELBO = lambda p, q, num_samples: OnlineVariationalAdditiveSmoothing(          
+OnlineELBO = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoothing(          
                                                     p, 
                                                     q,
+                                                    online_elbo_functional,
                                                     init_carry,
                                                     init_PaRIS,
                                                     update_PaRIS,
-                                                    online_elbo_functional(p,q),
-                                                    exp_and_normalize,
-                                                    num_samples)
+                                                    postprocess_PaRIS,
+                                                    num_samples=num_samples,
+                                                    **options)
 
-OnlineELBOScoreGradients = lambda p,q, num_samples, **options: OnlineVariationalAdditiveSmoothing(
+OnlineELBOScoreGradients = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoothing(
                                                                 p, 
                                                                 q, 
                                                                 online_elbo_functional,

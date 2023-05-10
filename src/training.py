@@ -13,7 +13,7 @@ import optax
 def winsorize_grads():
     def init_fn(_): 
         return ()
-    def update_fn(updates, state, params=None):
+    def optimizer_update_fn(updates, state, params=None):
         flattened_updates = jnp.concatenate([arr.flatten() for arr in tree_flatten(updates)[0]])
         high_value = jnp.sort(jnp.abs(flattened_updates))[int(0.90*flattened_updates.shape[0])]
         return tree_map(lambda x: jnp.clip(x, -high_value, high_value), updates), ()
@@ -77,12 +77,12 @@ class SVITrainer:
             for option in ['detach_state', 'paris', 'variance_reduction']:
                 self.elbo_options[option] = True if option in elbo_mode else False
 
-        def update_fn(params, updates):
+        def optimizer_update_fn(params, updates):
             new_params = optax.apply_updates(params, updates)
             new_params = optax.incremental_update(new_params, params, step_size=0.8)
             return new_params
         
-        self.update_fn = update_fn
+        self.optimizer_update_fn = optimizer_update_fn
 
 
         self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
@@ -119,7 +119,7 @@ class SVITrainer:
                 self.loss = closed_form_elbo
             else: 
                 if 'autodiff_on_forward' in self.elbo_mode: 
-                    self.elbo = OnlineELBO(self.p, self.q, num_samples)
+                    self.elbo = OnlineELBO(self.p, self.q, num_samples, **self.elbo_options)
                     # self.offline_elbo_for_check = GeneralBackwardELBO(self.p, self.q, num_samples)
                     # self.monitor_elbo = lambda key, data, compute_up_to, params: self.offline_elbo_for_check(key, data, compute_up_to, self.formatted_theta_star, 
                     #                                                 self.q.format_params(params))[0]
@@ -131,8 +131,7 @@ class SVITrainer:
                                                     self.formatted_theta_star, 
                                                     params)
                         
-                        tau = carry['stats']['tau']
-                        elbo = jnp.mean(tau, axis=0) / (compute_up_to + 1)
+                        elbo = self.elbo.postprocess(carry, T=compute_up_to)
                         
                         return -elbo, aux
                     self.loss = online_elbo
@@ -187,7 +186,7 @@ class SVITrainer:
                         avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
                         updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
 
-                        params = self.update_fn(params, updates)
+                        params = self.optimizer_update_fn(params, updates)
 
                         # if self.elbo_mode != 'off':
                         #     monitor_neg_elbo_values, monitor_grads = vmap(value_and_grad(self.monitor_elbo, argnums=3), in_axes=(0, 0, None, None))(keys, batch, batch.shape[1]-1, params)
@@ -297,7 +296,7 @@ class SVITrainer:
                     updates, opt_state = self.optimizer.update(avg_grads, 
                                                                opt_state, 
                                                                params)
-                    params = self.update_fn(params, updates)
+                    params = self.optimizer_update_fn(params, updates)
 
                     carry = keys, params, opt_state, elbo_carry
                     out = -jnp.mean(neg_elbo_values), ravel_pytree(avg_grads)[0], aux
