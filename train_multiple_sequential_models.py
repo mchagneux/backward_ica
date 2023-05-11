@@ -4,12 +4,10 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['linear__offline_autodiff_on_backward',
-            'johnson_backward__offline_autodiff_on_backward', 
-            'neural_backward__offline_autodiff_on_backward']
+q_models = ['johnson_backward__offline_score_variance_reduction_detach_state']
 
-num_samples_list = [10, 10, 10]
-learning_rates = [1e-2, 1e-2, 1e-2]
+num_samples_list = [10]
+learning_rates = [1e-2]
 
 num_epochs = 5000
 dims = '5 5'
