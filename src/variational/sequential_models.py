@@ -172,8 +172,41 @@ class NeuralBackwardSmoother(BackwardSmoother):
     def compute_marginals(self, *args):
         return super().compute_marginals(*args)
     
-    def smooth_seq(self, *args):
-        return super().smooth_seq(*args)
+    def smooth_seq(self, key, obs_seq, params, num_samples):
+        params = self.format_params(params)
+        T = len(obs_seq) - 1 
+        state_seq = self.compute_state_seq(obs_seq, 
+                                        compute_up_to=T , 
+                                        formatted_params=params)
+        
+        timesteps = jnp.arange(T+1)
+
+        def _step(carry, x):
+            t, state_0, key = x 
+            sample, state_1 = carry
+            def _last_step(state_0, sample):
+                filt_params = self.filt_params_from_state(state_0, params)
+                return self.filt_dist.sample(key, filt_params) 
+            def _backwd_step(state_0, sample):
+                backwd_params = self.backwd_params_from_states((state_0, state_1), params)
+                return self.backwd_kernel.sample(key, sample, backwd_params)
+            
+            new_sample = lax.cond(t<T,
+                                  _backwd_step,
+                                  _last_step,
+                                  state_0, sample)
+            return (new_sample, state_0), new_sample
+
+
+        sampler = lambda key: jax.lax.scan(_step, 
+                               init=(jnp.empty((self.state_dim,)), tree_get_idx(-1, state_seq)),
+                               xs=(timesteps, state_seq, jax.random.split(key, T+1)))[1]
+        
+        samples = jax.vmap(sampler)(jax.random.split(key, num_samples))
+
+        return jnp.mean(samples, axis=0), jnp.var(samples, axis=0)
+    
+        
     
     def get_random_params(self, key, params_to_set=None):
 
@@ -238,6 +271,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                 params.state, 
                                 formatted_transition, 
                                 params.filt)
+        
 
     def init_state(self, obs, params):
         out, init_state = self._state_net.apply(params.state, obs, params.prior)
