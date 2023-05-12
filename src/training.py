@@ -72,7 +72,7 @@ class SVITrainer:
         else: 
             self.polyak_averaging = False
         if online:
-            # learning_rate *= self.online_batch_size / seq_length
+            learning_rate *= self.online_batch_size / seq_length
             self.online_reset = 'reset' in elbo_mode
         
         self.monitor = False
