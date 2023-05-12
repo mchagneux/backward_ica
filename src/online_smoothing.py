@@ -36,7 +36,7 @@ class OnlineVariationalAdditiveSmoothing:
         self.options['normalizer'] = exp_and_normalize
         if self.options['variance_reduction']:
             print('Baseline variance reduction with running average of stats.')
-        if self.options['detach_state']: 
+        if not self.options['bptt_depth']: 
             print('Gradients w.r.t RNN state discarded.')
         if self.options['paris']:
             print('Backward resampling.')
@@ -441,7 +441,7 @@ def init_carry_score_gradients(unformatted_params, **kwargs):
     dummy_H = jnp.empty((num_samples, *out_shape))
     dummy_F = jax.jacrev(lambda phi:dummy_H)(unformatted_params)
 
-    carry = {'s': dummy_state, 
+    carry = {'base_s': dummy_state, 
             'x':dummy_x, 
             'log_q':jnp.empty((num_samples,)),
             'stats':{'H':dummy_H, 
@@ -489,7 +489,7 @@ def init_score_gradients(carry_m1, input_0, **kwargs):
 
     carry = {'stats':{'F':F_0, 
                       'H':H_0},
-            's':s_0, 
+            'base_s':s_0, 
             'x':x_0,
             'log_q':log_q_0,
             'grad_log_q':tree_map(lambda x: jnp.empty_like(x), carry_m1['grad_log_q'])}
@@ -502,33 +502,37 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
     p:HMM = kwargs['p']
     q:BackwardSmoother = kwargs['q']
     num_samples = kwargs['num_samples']
-    detach_state, paris = kwargs['detach_state'], kwargs['paris']
+    paris = kwargs['paris']
+    bptt_depth = kwargs['bptt_depth']
     normalizer, variance_reduction = kwargs['normalizer'], kwargs['variance_reduction']
 
     t, t_true, T, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['t_true'], input_t['T'], input_t['key'], input_t['y'], input_t['phi']
 
-    x_tm1, s_tm1, stats_tm1, theta = carry_tm1['x'], carry_tm1['s'], carry_tm1['stats'], carry_tm1['theta']
-
-    def get_states(phi):
-        _s_tm1 = q.get_state(t-1, 
-                            t_true-1, 
-                            s_tm1,
-                            input_t['ys'], 
-                            phi, 
-                            detach_state)
-        
-        s_t = q.new_state(y_t, _s_tm1, phi)
-        return _s_tm1, s_t
-
+    x_tm1, base_s_tm1, stats_tm1, theta = carry_tm1['x'], carry_tm1['base_s'], carry_tm1['stats'], carry_tm1['theta']
     log_q_tm1 = carry_tm1['log_q']
     H_tm1 = stats_tm1['H'] 
     F_tm1 = stats_tm1['F']
 
+    
 
+
+    def get_states(phi):
+        if not bptt_depth:
+            s_t = q.new_state(y_t, base_s_tm1, phi)
+            return s_t, (base_s_tm1, s_t)
+        base_s_t, _s_tm1 = q.get_state(t-1, 
+                                    t_true-1, 
+                                    base_s_tm1,
+                                    input_t['ys'], 
+                                    phi, 
+                                    bptt_depth)
+        s_t = q.new_state(y_t, _s_tm1, phi)
+        return base_s_t, (_s_tm1, s_t)
+    
 
     def _log_q_tm1_t(unformatted_phi, x_tm1, x_t):
         phi = q.format_params(unformatted_phi)
-        states = get_states(phi)
+        _ , states = get_states(phi)
         params_q_tm1_t = q.backwd_params_from_states(states, phi)
         log_q_tm1_t = q.backwd_kernel.logpdf(x_tm1, 
                                              x_t, 
@@ -537,16 +541,17 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
     
     def _log_q_t(unformatted_phi, key):
         phi = q.format_params(unformatted_phi)
-        _ , s_t = get_states(phi)
+        base_s_t, (_, s_t) = get_states(phi)
+        
         params_q_t = q.filt_params_from_state(s_t, phi)
         x_t = q.filt_dist.sample(key, params_q_t)
         x_t = jax.lax.stop_gradient(x_t)
-        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, s_t)
+        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, base_s_t)
     
     def _log_q_t_and_dummy_grad(unformatted_phi, key):
-        log_q_t, (x_t, s_t) = _log_q_t(unformatted_phi, key)
+        log_q_t, (x_t, base_s_t) = _log_q_t(unformatted_phi, key)
         dummy_grad = tree_map(lambda x: jnp.empty_like(x[0]), carry_tm1['grad_log_q'])
-        return (log_q_t, (x_t, s_t)), dummy_grad
+        return (log_q_t, (x_t, base_s_t)), dummy_grad
     
     def _log_q_t_and_grad(unformatted_phi, key):
         return jax.value_and_grad(_log_q_t, has_aux=True)(
@@ -560,7 +565,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
         else: 
             key_new_sample = key_t
 
-        (log_q_t, (x_t, s_t)), grad_log_q_t = lax.cond(t == T, 
+        (log_q_t, (x_t, base_s_t)), grad_log_q_t = lax.cond(t == T, 
                                                     _log_q_t_and_grad,
                                                     _log_q_t_and_dummy_grad, 
                                                     unformatted_phi_t, 
@@ -621,7 +626,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
             # log_w_t = jax.vmap(q.log_fwd_potential, 
             #                    in_axes=(0,None,None,None))(x_tm1, 
             #                                                x_t, 
-            #                                                (s_tm1, s_t), 
+            #                                                (base_s_tm1, base_s_t), 
             #                                                q.format_params(unformatted_phi_t))
 
             log_w_t = log_q_tm1_t - log_q_tm1
@@ -675,12 +680,12 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                                                                     grad_log_q_tm1_t)
             F_t = tree_map(lambda x: jnp.mean(x, axis=0), F_t)
 
-        return F_t, H_t, x_t, s_t, log_q_t, grad_log_q_t
+        return F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t
 
-    F_t, H_t, x_t, s_t, log_q_t, grad_log_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
+    F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
 
     carry_t = {'stats':{'F':F_t, 'H':H_t},
-            's':tree_get_idx(0,s_t), 
+            'base_s':tree_get_idx(0,base_s_t), 
             'x':x_t,
             'log_q':log_q_t,
             'grad_log_q':grad_log_q_t}

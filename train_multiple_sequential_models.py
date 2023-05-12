@@ -4,7 +4,7 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['johnson_backward__offline_score_variance_reduction_detach_state']
+q_models = ['johnson_backward__offline_score_variance_reduction_bptt_depth_2']
 
 num_samples_list = [10]
 learning_rates = [1e-3]

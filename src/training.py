@@ -79,8 +79,11 @@ class SVITrainer:
 
         self.elbo_options = {}
         if 'score' in elbo_mode: 
-            for option in ['detach_state', 'paris', 'variance_reduction']:
+            for option in ['paris', 'variance_reduction']:
                 self.elbo_options[option] = True if option in elbo_mode else False
+
+            if 'bptt_depth' in elbo_mode: 
+                self.elbo_options['bptt_depth'] = int(elbo_mode.split('bptt_depth')[1].split('_')[1])
 
         def optimizer_update_fn(params, updates):
             new_params = optax.apply_updates(params, updates)

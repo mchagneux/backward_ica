@@ -80,35 +80,49 @@ class BackwardSmoother(metaclass=ABCMeta):
 
         return tree_prepend(init_state, state_seq)
 
-    def get_state(self, t, t_true, base_state, obs_seq, formatted_params, detach_state):
+    def get_state(self, 
+                  t, 
+                  t_true, 
+                  base_state, 
+                  obs_seq, 
+                  formatted_params, 
+                  bptt_depth):
         
-        # bptt_truncation = 0
+        # bptt_depth_truncation = 0
         # t_stop_grad = t - bptt_truncation
-        if detach_state:
-            return base_state
-        
-        timesteps = jnp.arange(0, len(obs_seq))
-        masks = timesteps <= t_true
 
-        def false_fun(t, obs, prev_state, params):
+        
+        padded_ys = jnp.concatenate([jnp.empty((bptt_depth, obs_seq.shape[1])), 
+                                   obs_seq])
+        
+        ys_bptt = jax.lax.dynamic_slice_in_dim(padded_ys, t_true+1, bptt_depth)
+
+        timesteps = jnp.arange(0, bptt_depth)
+
+        masks_compute = timesteps > bptt_depth - t_true
+        masks_init = timesteps == bptt_depth - t
+
+        def false_fun(mask_init, obs, prev_state, params):
             return prev_state
 
-        def true_fun(t, obs, prev_state, params):
+        def true_fun(mask_init, obs, prev_state, params):
 
-            def init(obs, prev_state, params):
+            def init(prev_state, params):
                 return self.init_state(obs, params)
             
-            def update(obs, prev_state, params):
+            def update(prev_state, params):
                 return self.new_state(obs, prev_state, params)
 
-            return lax.cond(t > 0, update, init, obs, prev_state, params)
+            return lax.cond(mask_init, init, update, prev_state, params)
 
         @jit
         def _step(carry, x):
             prev_state, params = carry
-            t, obs, mask = x
-            state = lax.cond(mask, true_fun, false_fun, 
-                            t, obs, prev_state, params)
+            mask_compute, mask_init, obs = x
+            state = lax.cond(mask_compute, 
+                            true_fun, 
+                            false_fun, 
+                            mask_init, obs, prev_state, params)
             
             # state = lax.cond(t > t_stop_grad, 
             #                  lambda x:x,
@@ -117,9 +131,11 @@ class BackwardSmoother(metaclass=ABCMeta):
             
             return (state, params), state
 
-        state_seq = lax.scan(_step, init=(self.empty_state(), formatted_params), xs=(timesteps, obs_seq, masks))[1]
+        state_seq = lax.scan(_step, init=(base_state, 
+                                          formatted_params), 
+                                          xs=(masks_compute, masks_init, ys_bptt))[1]
 
-        return tree_get_idx(t, state_seq)
+        return tree_get_idx(0, state_seq), tree_get_idx(-1, state_seq)
 
     def compute_filt_params_seq(self, state_seq, formatted_params):
         return vmap(self.filt_params_from_state, in_axes=(0,None))(state_seq, formatted_params)
