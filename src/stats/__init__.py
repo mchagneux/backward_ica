@@ -80,10 +80,15 @@ class BackwardSmoother(metaclass=ABCMeta):
 
         return tree_prepend(init_state, state_seq)
 
-    def get_state(self, t, obs_seq, formatted_params):
-
+    def get_state(self, t, t_true, base_state, obs_seq, formatted_params, detach_state):
+        
+        # bptt_truncation = 0
+        # t_stop_grad = t - bptt_truncation
+        if detach_state:
+            return base_state
+        
         timesteps = jnp.arange(0, len(obs_seq))
-        masks = timesteps <= t
+        masks = timesteps <= t_true
 
         def false_fun(t, obs, prev_state, params):
             return prev_state
@@ -104,6 +109,12 @@ class BackwardSmoother(metaclass=ABCMeta):
             t, obs, mask = x
             state = lax.cond(mask, true_fun, false_fun, 
                             t, obs, prev_state, params)
+            
+            # state = lax.cond(t > t_stop_grad, 
+            #                  lambda x:x,
+            #                  jax.lax.stop_gradient,
+            #                  state)
+            
             return (state, params), state
 
         state_seq = lax.scan(_step, init=(self.empty_state(), formatted_params), xs=(timesteps, obs_seq, masks))[1]

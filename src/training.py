@@ -255,14 +255,15 @@ class SVITrainer:
                 T = timesteps_offsetted[-1]
 
                 def _step(carry, x):
-                    key, t, y = x
+                    key, t, t_true, y = x
                     input_t = {'t':t, 
-                            'key': key, 
-                            'ys':data, 
-                            'T':T,
-                            'y': y, 
-                            'phi':params}
-                    
+                               't_true':t_true,
+                                'key': key, 
+                                'ys':data, 
+                                'T':T,
+                                'y': y, 
+                                'phi':params}
+                        
                     carry['theta'] = self.formatted_theta_star
                     carry, aux = self.elbo.step(carry, input_t)
                     if self.monitor:
@@ -278,7 +279,7 @@ class SVITrainer:
             
                 elbo_carry, (aux, offline_elbo) = jax.lax.scan(_step, 
                                           init=elbo_carry, 
-                                          xs=(keys, timesteps_offsetted, data[timesteps]))
+                                          xs=(keys, timesteps_offsetted, timesteps, data[timesteps]))
                 
                 elbo, grad = self.elbo.postprocess(elbo_carry, 
                                                    T=T)

@@ -85,7 +85,7 @@ class OnlineVariationalAdditiveSmoothing:
         timesteps = jnp.arange(0, T+1) # [0:T]
         def _step(carry, x):
             t, key_t, obs_t = x
-            input_t = {'t':t, 'key':key_t, 'T': T, 'ys':obs_seq, 'y': obs_t, 'phi':phi}            
+            input_t = {'t':t, 'key':key_t, 't_true':t, 'T': T, 'ys':obs_seq, 'y': obs_t, 'phi':phi}            
             carry['theta'] = theta
             carry_t, output_t = self.step(carry, input_t)
             return carry_t, output_t
@@ -502,29 +502,34 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
     p:HMM = kwargs['p']
     q:BackwardSmoother = kwargs['q']
     num_samples = kwargs['num_samples']
+    detach_state, paris = kwargs['detach_state'], kwargs['paris']
+    normalizer, variance_reduction = kwargs['normalizer'], kwargs['variance_reduction']
 
-    t, T, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['T'], input_t['key'], input_t['y'], input_t['phi']
-
+    t, t_true, T, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['t_true'], input_t['T'], input_t['key'], input_t['y'], input_t['phi']
 
     x_tm1, s_tm1, stats_tm1, theta = carry_tm1['x'], carry_tm1['s'], carry_tm1['stats'], carry_tm1['theta']
 
+    def get_states(phi):
+        _s_tm1 = q.get_state(t-1, 
+                            t_true-1, 
+                            s_tm1,
+                            input_t['ys'], 
+                            phi, 
+                            detach_state)
+        
+        s_t = q.new_state(y_t, _s_tm1, phi)
+        return _s_tm1, s_t
 
     log_q_tm1 = carry_tm1['log_q']
     H_tm1 = stats_tm1['H'] 
     F_tm1 = stats_tm1['F']
 
 
-    detach_state, paris = kwargs['detach_state'], kwargs['paris']
-    normalizer, variance_reduction = kwargs['normalizer'], kwargs['variance_reduction']
 
     def _log_q_tm1_t(unformatted_phi, x_tm1, x_t):
         phi = q.format_params(unformatted_phi)
-        if not detach_state: 
-            _s_tm1 = q.get_state(t-1, input_t['ys'], phi)
-        else: 
-            _s_tm1 = s_tm1
-        s_t = q.new_state(y_t, _s_tm1, phi)
-        params_q_tm1_t = q.backwd_params_from_states((_s_tm1, s_t), phi)
+        states = get_states(phi)
+        params_q_tm1_t = q.backwd_params_from_states(states, phi)
         log_q_tm1_t = q.backwd_kernel.logpdf(x_tm1, 
                                              x_t, 
                                              params_q_tm1_t)
@@ -532,11 +537,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
     
     def _log_q_t(unformatted_phi, key):
         phi = q.format_params(unformatted_phi)
-        if not detach_state: 
-            _s_tm1 = q.get_state(t-1, input_t['ys'], phi)
-        else: 
-            _s_tm1 = s_tm1
-        s_t = q.new_state(y_t, _s_tm1, phi)
+        _ , s_t = get_states(phi)
         params_q_t = q.filt_params_from_state(s_t, phi)
         x_t = q.filt_dist.sample(key, params_q_t)
         x_t = jax.lax.stop_gradient(x_t)
