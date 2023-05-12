@@ -36,7 +36,7 @@ class OnlineVariationalAdditiveSmoothing:
         self.options['normalizer'] = exp_and_normalize
         if self.options['variance_reduction']:
             print('Baseline variance reduction with running average of stats.')
-        if not self.options['bptt_depth']: 
+        if self.options['bptt_depth'] == 1: 
             print('Gradients w.r.t RNN state discarded.')
         if self.options['paris']:
             print('Backward resampling.')
@@ -80,12 +80,18 @@ class OnlineVariationalAdditiveSmoothing:
     def batch_compute(self, key, obs_seq, theta, phi):
 
 
+        bptt_depth = self.options['bptt_depth']
         T = len(obs_seq) - 1 # T + 1 observations
         keys = jax.random.split(key, T+1) # T+1 keys 
         timesteps = jnp.arange(0, T+1) # [0:T]
+
+        padded_ys = jnp.concatenate([jnp.empty((self.options['bptt_depth']-1, 
+                                        self.p.obs_dim)), obs_seq])
+        strided_ys = tree_get_strides(bptt_depth, padded_ys)
+            
         def _step(carry, x):
-            t, key_t, obs_t = x
-            input_t = {'t':t, 'key':key_t, 't_true':t, 'T': T, 'ys':obs_seq, 'y': obs_t, 'phi':phi}            
+            t, key_t, strided_ys = x
+            input_t = {'t':t, 't_true':t, 'key':key_t, 'T': T, 'ys_bptt':strided_ys, 'phi':phi}            
             carry['theta'] = theta
             carry_t, output_t = self.step(carry, input_t)
             return carry_t, output_t
@@ -107,7 +113,7 @@ class OnlineVariationalAdditiveSmoothing:
     
         return lax.scan(_step, 
                         init=carry_m1,
-                        xs=(timesteps, keys, obs_seq))
+                        xs=(timesteps, keys, strided_ys))
 
         # return tree_map(lambda x: mean_on_choices(x, choices) / (T + 1), stats), outputs
         # weights = self.normalizer(carry['log_q_x'] - carry['log_nu_x'])
@@ -454,7 +460,7 @@ def init_carry_score_gradients(unformatted_params, **kwargs):
 def init_score_gradients(carry_m1, input_0, **kwargs):
 
 
-    y_0 = input_0['y']
+    y_0 = input_0['ys_bptt'][-1]
     key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
 
     p:HMM = kwargs['p']
@@ -506,7 +512,9 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
     bptt_depth = kwargs['bptt_depth']
     normalizer, variance_reduction = kwargs['normalizer'], kwargs['variance_reduction']
 
-    t, t_true, T, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['t_true'], input_t['T'], input_t['key'], input_t['y'], input_t['phi']
+    t, t_true, T, key_t, unformatted_phi_t = input_t['t'], input_t['t_true'], input_t['T'], input_t['key'], input_t['phi']
+    ys_for_bptt = input_t['ys_bptt']
+    y_t = ys_for_bptt[-1]
 
     x_tm1, base_s_tm1, stats_tm1, theta = carry_tm1['x'], carry_tm1['base_s'], carry_tm1['stats'], carry_tm1['theta']
     log_q_tm1 = carry_tm1['log_q']
@@ -517,19 +525,16 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
 
     def get_states(phi):
-        if not bptt_depth:
+        if bptt_depth == 1:
             s_t = q.new_state(y_t, base_s_tm1, phi)
             return s_t, (base_s_tm1, s_t)
-        base_s_t, _s_tm1 = q.get_state(t-1, 
-                                    t_true-1, 
-                                    base_s_tm1,
-                                    input_t['ys'], 
-                                    phi, 
-                                    bptt_depth)
-        s_t = q.new_state(y_t, _s_tm1, phi)
-        return base_s_t, (_s_tm1, s_t)
+        
+        return q.get_states(t, 
+                            t_true, 
+                            base_s_tm1,
+                            ys_for_bptt, 
+                            phi)
     
-
     def _log_q_tm1_t(unformatted_phi, x_tm1, x_t):
         phi = q.format_params(unformatted_phi)
         _ , states = get_states(phi)

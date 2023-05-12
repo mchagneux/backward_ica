@@ -7,7 +7,7 @@ import src.stats.hmm as hmm
 import src.variational as variational
 import src.stats as stats
 from src.training import SVITrainer, define_frozen_tree
-jax.config.update('jax_disable_jit', False)
+jax.config.update('jax_disable_jit', True)
 jax.config.update('jax_platform_name', 'cpu')
 
     
@@ -82,13 +82,13 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='johnson_backward__offline_score_variance_reduction_bptt_depth_10')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_12__10_42_03')
+    parser.add_argument('--model', type=str, default='johnson_backward__offline_score_variance_reduction_bptt_depth_3')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_12__15_24_12')
 
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--learning_rate', type=float, default=1e-3)
-    parser.add_argument('--num_epochs', type=int, default=200)
+    parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--num_samples', type=int, default=20)
     parser.add_argument('--optimizer', type=str, default='adam')
     parser.add_argument('--store_every', type=int, default=0)

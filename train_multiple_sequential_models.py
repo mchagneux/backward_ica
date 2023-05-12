@@ -4,10 +4,13 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['johnson_backward__offline_score_variance_reduction_bptt_depth_2']
+q_models = ['johnson_backward__offline_autodiff_on_backward',
+            'johnson_backward__offline_score_variance_reduction_bptt_depth_1',
+            'johnson_backward__offline_score_variance_reduction_bptt_depth_3',
+            'johnson_backward__offline_score_variance_reduction_bptt_depth_5']
 
-num_samples_list = [10]
-learning_rates = [1e-3]
+num_samples_list = [10, 10, 10, 10]
+learning_rates = [1e-3, 1e-3, 1e-3, 1e-3]
 
 num_epochs = 500
 dims = '5 5'
@@ -15,7 +18,7 @@ load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
 batch_size = 1
 num_seqs = 1
-seq_length = 2000
+seq_length = 10
 store_every = 0
 
 

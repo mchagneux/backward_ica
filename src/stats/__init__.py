@@ -80,27 +80,22 @@ class BackwardSmoother(metaclass=ABCMeta):
 
         return tree_prepend(init_state, state_seq)
 
-    def get_state(self, 
+    def get_states(self, 
                   t, 
                   t_true, 
                   base_state, 
-                  obs_seq, 
-                  formatted_params, 
-                  bptt_depth):
+                  ys_for_bptt, 
+                  formatted_params):
         
         # bptt_depth_truncation = 0
         # t_stop_grad = t - bptt_truncation
 
-        
-        padded_ys = jnp.concatenate([jnp.empty((bptt_depth, obs_seq.shape[1])), 
-                                   obs_seq])
-        
-        ys_bptt = jax.lax.dynamic_slice_in_dim(padded_ys, t_true+1, bptt_depth)
+        bptt_depth = len(ys_for_bptt)
 
-        timesteps = jnp.arange(0, bptt_depth)
+        timesteps = jnp.arange(0, bptt_depth) - bptt_depth + 1 
 
-        masks_compute = timesteps > bptt_depth - t_true
-        masks_init = timesteps == bptt_depth - t
+        masks_compute = (timesteps + t_true >= 0)
+        masks_init = (timesteps + t == 0)
 
         def false_fun(mask_init, obs, prev_state, params):
             return prev_state
@@ -124,18 +119,13 @@ class BackwardSmoother(metaclass=ABCMeta):
                             false_fun, 
                             mask_init, obs, prev_state, params)
             
-            # state = lax.cond(t > t_stop_grad, 
-            #                  lambda x:x,
-            #                  jax.lax.stop_gradient,
-            #                  state)
-            
             return (state, params), state
 
         state_seq = lax.scan(_step, init=(base_state, 
                                           formatted_params), 
-                                          xs=(masks_compute, masks_init, ys_bptt))[1]
+                                          xs=(masks_compute, masks_init, ys_for_bptt))[1]
 
-        return tree_get_idx(0, state_seq), tree_get_idx(-1, state_seq)
+        return tree_get_idx(0, state_seq), (tree_get_idx(-2, state_seq), tree_get_idx(-1, state_seq))
 
     def compute_filt_params_seq(self, state_seq, formatted_params):
         return vmap(self.filt_params_from_state, in_axes=(0,None))(state_seq, formatted_params)
