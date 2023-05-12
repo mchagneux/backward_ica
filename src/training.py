@@ -251,6 +251,12 @@ class SVITrainer:
                 key, subkey = jax.random.split(key, 2)
                 keys = jax.random.split(subkey, len(timesteps))
                 
+
+                padded_data = jnp.concatenate([jnp.empty((self.elbo_options['bptt_depth']-1, 
+                                                        self.p.obs_dim)), data])
+                strided_data = tree_get_strides(self.elbo_options['bptt_depth'], padded_data)
+
+                
                 if self.online_reset: 
                     timesteps_offsetted = timesteps - timesteps[0]  
                 else: 
@@ -258,15 +264,14 @@ class SVITrainer:
                 T = timesteps_offsetted[-1]
 
                 def _step(carry, x):
-                    key, t, t_true, y = x
+                    key, t, t_true, ys_bptt = x
                     input_t = {'t':t, 
-                               't_true':t_true,
-                                'key': key, 
-                                'ys':data, 
-                                'T':T,
-                                'y': y, 
-                                'phi':params}
-                        
+                            't_true':t_true,
+                            'key': key, 
+                            'ys_bptt':ys_bptt, 
+                            'T':T,
+                            'phi':params}
+                    
                     carry['theta'] = self.formatted_theta_star
                     carry, aux = self.elbo.step(carry, input_t)
                     if self.monitor:
@@ -278,11 +283,14 @@ class SVITrainer:
                     else: 
                         offline_elbo = jnp.zeros_like(timesteps_offsetted)
                     return carry, (aux, offline_elbo)
+                
 
-            
                 elbo_carry, (aux, offline_elbo) = jax.lax.scan(_step, 
                                           init=elbo_carry, 
-                                          xs=(keys, timesteps_offsetted, timesteps, data[timesteps]))
+                                          xs=(keys, 
+                                              timesteps_offsetted, 
+                                              timesteps, 
+                                              strided_data[timesteps]))
                 
                 elbo, grad = self.elbo.postprocess(elbo_carry, 
                                                    T=T)
@@ -298,7 +306,6 @@ class SVITrainer:
                                        delta=self.online_batch_size)
 
             def batch_step(carry, x):
-
                 data, params, opt_state, subkeys_epoch = carry
                 batch_start = x
                 data = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
@@ -542,7 +549,7 @@ class SVITrainer:
                 all_params.append({epoch_nb:params[epoch_nb] for epoch_nb in selected_epochs})
 
             else: 
-                all_params.append(params[best_epoch])
+                all_params.append(params[-1])
             all_avg_elbos.append(avg_elbos)
 
 
