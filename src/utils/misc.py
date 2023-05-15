@@ -314,7 +314,7 @@ def get_defaults(args):
         args.anisotropic = 'anisotropic' in args.model
 
     if 'neural_backward' in args.model:
-        if not 'explicit_transition' in args.model:
+        if not 'explicit_transition' in args.model_optiomodens:
             args.backwd_layers = (16,)
         else: 
             args.backwd_layers = 0

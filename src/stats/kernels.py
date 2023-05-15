@@ -3,6 +3,8 @@ import haiku as hk
 from jax import nn 
 from src.utils.misc import _conditionnings
 from collections import namedtuple
+import blackjax 
+
 
 class Maps:
 
@@ -218,5 +220,28 @@ class Kernel:
                         self._format_map_params(params.map), 
                         self.noise_dist.format_noise_params(params.noise))
 
+class NonParametricKernel:
+    Params = namedtuple('NonParametricKernelParams', ['prior', 'potential'])
+    def __init__(self, prior_dist, potential_fn):
+        self.prior_dist:Gaussian = prior_dist 
+        self.potential_init, self.potential_apply = hk.without_apply_rng(hk.transform(potential_fn))
+        def _unnorm_logpdf(x, state, params:NonParametricKernel.Params):
+            return self.prior_dist.logpdf(x, params.prior) + self.potential_apply(params.potential, state, x)
+        
+        self._unnorm_logpdf = _unnorm_logpdf 
 
+    def sample(self, state, params):
+        raise NotImplementedError
+    
+    def logpdf(self, x, state, params, samples):
+        pass 
+
+    def pdf(self, x, state, params, samples):
+        pass
+
+    def get_random_params(self, key):
+        return self.potential_init(key)
+
+    def format_params(self, params):
+        return params 
 

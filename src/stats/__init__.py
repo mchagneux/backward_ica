@@ -330,6 +330,6 @@ class LinearBackwardSmoother(BackwardSmoother):
             
         return means, covs  
 
-    def log_fwd_potential(self, x_0, x_1, states, params):
+    def log_fwd_potential(self, x_0, x_1, params):
         return self.transition_kernel.logpdf(x_1, x_0, params.transition)
     

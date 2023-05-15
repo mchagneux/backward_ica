@@ -58,7 +58,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
             obs_dim, 
             transition_kernel:Kernel=None,
             backwd_layers=(8,8),
-            update_layers=(8,8)):
+            update_layers=(8,8),
+            conjugate=False):
         
 
         self.state_dim = state_dim
@@ -67,6 +68,9 @@ class NeuralBackwardSmoother(BackwardSmoother):
         self.update_layers = update_layers
         self.backwd_layers = backwd_layers
         d = self.state_dim
+        
+
+
 
         if self.transition_kernel is not None: 
 
@@ -83,28 +87,21 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
                 return LinearBackwardSmoother.linear_gaussian_backwd_params_from_transition_and_filt(mean_filt_0, 
                                                                                                      cov_filt_0, 
-                                                                                                     params.backwd), \
-                    params.backwd
+                                                                                                     params.backwd)
                                                                         
 
 
-            def _log_fwd_potential(x_0, x_1, backwd_params):
-
-                kernel_params = backwd_params[1]
-                A, b, Q_prec = kernel_params.map.w, kernel_params.map.b, kernel_params.noise.scale.prec
-                temp = x_1 - (A @ x_0 + b)
-                return -0.5 * temp.T @ Q_prec @ temp
+            def _log_fwd_potential(x_0, x_1, params):
+                return self.transition_kernel.logpdf(x_1, x_0, params.transition)
             
 
-        else: 
+        elif conjugate: 
             
             def _backwd_map(aux, x_1, state_dim):
+                filt_params_0 = aux[0]
                 eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
-                mu_0 = aux[0].mean
-                mu_1 = aux[1].mean
-                eta1_potential, eta2_potential = inference_nets.backwd_net(aux[0].vec, x_1-mu_1, backwd_layers, state_dim)
-                # eta1_backwd, eta2_backwd = eta1_potential + eta1_filt, eta2_potential + eta2_filt
-                eta1_backwd, eta2_backwd = eta1_filt + eta1_potential - 2 * eta2_potential.T @ mu_0, eta2_filt + eta2_potential 
+                eta1_potential, eta2_potential = inference_nets.backwd_net(filt_params_0.vec, x_1, backwd_layers, state_dim)
+                eta1_backwd, eta2_backwd = eta1_filt + eta1_potential, eta2_filt + eta2_potential 
                 out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
                 return (out_params.mean, out_params.scale), (eta1_potential, eta2_potential)
                             
@@ -124,18 +121,14 @@ class NeuralBackwardSmoother(BackwardSmoother):
             def _log_fwd_potential(x_0, x_1, backwd_params):
 
                 params, aux = backwd_params
-                filt_params_0, filt_params_1 = aux
 
-                mu_0 = filt_params_0.mean
-
-                eta1, eta2 = self.backwd_kernel.nonlinear_map_apply(params, aux, x_1)[1]
-
+                _ , (eta1, eta2) = self.backwd_kernel.nonlinear_map_apply(params, aux, x_1)
                 
-                return (x_0 - mu_0).T @ eta2 @ (x_0 - mu_0) + eta1.T @ (x_0 - mu_0)#, eta1, eta2
+                return x_0.T @ eta2 @ x_0 + eta1.T @ x_0
             
             def backwd_params_from_filt_params(filt_params_0, filt_params_1, params):
                 return params.backwd, (filt_params_0, filt_params_1)
-            
+                        
 
 
         super().__init__(
@@ -145,7 +138,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
         self._log_fwd_potential =  _log_fwd_potential
             
         self._backwd_params_from_filt_params = backwd_params_from_filt_params
-
             
         self._state_net = hk.without_apply_rng(hk.transform(
                                                 partial(inference_nets.deep_gru, 
@@ -277,7 +269,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
     def backwd_params_from_states(self, states, params):
         filt_params_0 = self.filt_params_from_state(states[0], params)
         filt_params_1 = self.filt_params_from_state(states[1], params)
-        return self._backwd_params_from_state(filt_params_0, filt_params_1, params)
+        return self._backwd_params_from_filt_params(filt_params_0, filt_params_1, params)
 
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))
