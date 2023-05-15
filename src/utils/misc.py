@@ -276,10 +276,10 @@ def get_defaults(args):
     args.float64 = True
 
     args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior
-    args.default_prior_base_scale = math.sqrt(1e-2) # default value for the diagonal components of the covariance matrix of the prior
-    args.default_transition_base_scale = math.sqrt(1e-1) # default value for the diagonal components of the covariance matrix of the transition kernel
+    args.default_prior_base_scale = math.sqrt(0.1) # default value for the diagonal components of the covariance matrix of the prior
+    args.default_transition_base_scale = math.sqrt(0.1) # default value for the diagonal components of the covariance matrix of the transition kernel
     args.default_transition_bias = 0.0
-    args.default_emission_base_scale = math.sqrt(1e-1)
+    args.default_emission_base_scale = math.sqrt(0.1)
 
 
     if args.model == 'linear' and (not hasattr(args, 'emission_bias')):
@@ -314,7 +314,7 @@ def get_defaults(args):
         args.anisotropic = 'anisotropic' in args.model
 
     if 'neural_backward' in args.model:
-        if not 'explicit_transition' in args.model_options:
+        if not 'explicit_transition' in args.model:
             args.backwd_layers = (16,)
         else: 
             args.backwd_layers = 0

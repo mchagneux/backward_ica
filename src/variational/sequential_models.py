@@ -72,32 +72,29 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
             print('Setting up potentials from linear Gaussian kernel.')
             backwd_kernel_def = {'map_type':'linear',
-                                'map_info' : {'conditionning': None, 
+                            'map_info' : {'conditionning': None, 
                                         'bias': True,
                                         'range_params':(0,1)}}
             
             
-            def backwd_params_from_states(filt_params_0, filt_params_1, params):
-                mean_filt_1 = filt_params_1.mean
+            def backwd_params_from_filt_params(filt_params_0, filt_params_1, params):
                 mean_filt_0, cov_filt_0 = filt_params_0.mean, filt_params_0.scale.cov
                 
 
-                return LinearBackwardSmoother.linear_gaussian_backwd_params_from_transition_and_filt(mean_filt_0, cov_filt_0, params.backwd), (params.backwd, mean_filt_0, mean_filt_1)
+                return LinearBackwardSmoother.linear_gaussian_backwd_params_from_transition_and_filt(mean_filt_0, 
+                                                                                                     cov_filt_0, 
+                                                                                                     params.backwd), \
+                    params.backwd
+                                                                        
 
-            self._backwd_params_from_state = backwd_params_from_states
 
-            def _log_fwd_potential(x_0, x_1, params_potential):
-                kernel_params, mu_0, mu_1 = params_potential[0], params_potential[1], params_potential[2]
+            def _log_fwd_potential(x_0, x_1, backwd_params):
+
+                kernel_params = backwd_params[1]
                 A, b, Q_prec = kernel_params.map.w, kernel_params.map.b, kernel_params.noise.scale.prec
                 temp = x_1 - (A @ x_0 + b)
-                temp_const = mu_1 - (A @ mu_0 + b)
-                return -0.5 * temp.T @ Q_prec @ temp + 0.5*temp_const.T @ Q_prec @ temp_const
-
-            self._log_fwd_potential = lambda x_0, x_1, params_potential: _log_fwd_potential(x_0, x_1, params_potential)
-
+                return -0.5 * temp.T @ Q_prec @ temp
             
-            
-
 
         else: 
             
@@ -124,14 +121,9 @@ class NeuralBackwardSmoother(BackwardSmoother):
                             'map': _backwd_map}
             
 
+            def _log_fwd_potential(x_0, x_1, backwd_params):
 
-            super().__init__(
-                    filt_dist=Gaussian,
-                    backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
-            
-
-            def _log_fwd_potential(params, x_0, x_1, aux):
-
+                params, aux = backwd_params
                 filt_params_0, filt_params_1 = aux
 
                 mu_0 = filt_params_0.mean
@@ -141,22 +133,20 @@ class NeuralBackwardSmoother(BackwardSmoother):
                 
                 return (x_0 - mu_0).T @ eta2 @ (x_0 - mu_0) + eta1.T @ (x_0 - mu_0)#, eta1, eta2
             
-            def backwd_params_from_states(filt_params_0, filt_params_1, params):
+            def backwd_params_from_filt_params(filt_params_0, filt_params_1, params):
                 return params.backwd, (filt_params_0, filt_params_1)
             
 
-            self._log_fwd_potential = lambda x_0, x_1, params: _log_fwd_potential(params[0], x_0, x_1, params[1])
-                
-            self._backwd_params_from_state = backwd_params_from_states
+
+        super().__init__(
+                filt_dist=Gaussian,
+                backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
+            
+        self._log_fwd_potential =  _log_fwd_potential
+            
+        self._backwd_params_from_filt_params = backwd_params_from_filt_params
 
             
-
-
-
-        
-
-
-        
         self._state_net = hk.without_apply_rng(hk.transform(
                                                 partial(inference_nets.deep_gru, 
                                                         layers=self.update_layers)))
@@ -166,8 +156,8 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                                         d=d)))
 
 
-    def log_fwd_potential(self, x_0, x_1, params_potential):
-        return self._log_fwd_potential(x_0, x_1, params_potential)
+    def log_fwd_potential(self, x_0, x_1, backwd_params):
+        return self._log_fwd_potential(x_0, x_1, backwd_params)
             
     def compute_marginals(self, *args):
         return super().compute_marginals(*args)
@@ -207,7 +197,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
         return jnp.mean(samples, axis=0), jnp.var(samples, axis=0)
     
         
-    
     def get_random_params(self, key, params_to_set=None):
 
         key_prior, key_state, key_filt, key_backwd = random.split(key, 4)

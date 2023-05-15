@@ -82,8 +82,8 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='johnson_backward__offline_score_variance_reduction_bptt_depth_3')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_12__15_24_12')
+    parser.add_argument('--model', type=str, default='neural_backward_explicit_transition__offline_autodiff_on_backward')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_15__11_16_09')
 
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
@@ -101,17 +101,12 @@ if __name__ == '__main__':
     args.frozen_params  = args.model.split('freeze__')[1:] # list of parameter groups which are not learnt
     args.save_dir = os.path.join(args.exp_dir, args.model)
     os.makedirs(args.save_dir, exist_ok=True)
-
-    if len(args.model.split('__')) > 1:
-        args.model_options = args.model.split('__')[1]
-    else: 
-        args.model_options = ''
-
+    
     args.model, args.elbo_mode = args.model.split('__')
 
     args = misc.get_defaults(args)
     args.transition_matrix_conditionning = 'diagonal'
-    args.range_transition_map_params = [-1,1]
+    args.range_transition_map_params = [0.9,1]
     args.transition_bias = False
         
     misc.save_args(args, 'args', args.save_dir)

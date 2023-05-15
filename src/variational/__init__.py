@@ -13,7 +13,7 @@ def get_variational_model(args, p=None, key_for_random_params=None):
                 emission_bias=args.emission_bias)
 
     elif 'neural_backward' in args.model:
-        if 'explicit_transition' in args.model_options:
+        if 'explicit_transition' in args.model:
               q = NeuralBackwardSmoother.with_linear_gaussian_transition_kernel(args)
         else:
               

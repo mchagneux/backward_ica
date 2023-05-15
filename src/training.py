@@ -106,10 +106,11 @@ class SVITrainer:
         #                                                     self.trainable_params), 
         #                                     max_consecutive_errors=10)
         
-        # zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
+        zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
 
         self.optimizer = optax.chain(
                                 # optax.clip(1.0),
+                                # zero_grads_optimizer, 
                                 base_optimizer)
 
 
