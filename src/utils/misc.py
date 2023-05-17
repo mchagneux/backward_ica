@@ -299,6 +299,10 @@ def get_defaults(args):
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
         args.transition_bias = False 
         args.emission_bias = False
+    else: 
+        args.transition_matrix_conditionning = 'diagonal'
+        args.range_transition_map_params = [0.9,1]
+        args.transition_bias = False
 
     if 'nonlinear_emission' in args.model:
         args.emission_map_layers = (8,)
@@ -314,8 +318,8 @@ def get_defaults(args):
         args.anisotropic = 'anisotropic' in args.model
 
     if 'neural_backward' in args.model:
-        if not 'explicit_transition' in args.model_optiomodens:
-            args.backwd_layers = (16,)
+        if not 'explicit_transition' in args.model:
+            args.backwd_layers = (8,)
         else: 
             args.backwd_layers = 0
 

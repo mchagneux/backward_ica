@@ -203,18 +203,14 @@ class SVITrainer:
                 self.monitor_elbo = GeneralBackwardELBO(p, q, num_samples)
 
             if 'score' in self.elbo_mode:
-
-                
+                print('USING SCORE ELBO.')
                 self.elbo = OnlineELBOScoreGradients(
                                                 self.p, 
                                                 self.q, 
                                                 num_samples=num_samples, 
                                                 **self.elbo_options)
                 
-                init_carry = jax.vmap(self.elbo.init_carry, 
-                    axis_size=batch_size, 
-                    in_axes=(None,))(self.q.get_random_params(jax.random.PRNGKey(0)))   
-                
+                        
                 def elbo_and_grads_batch(key, ys, params):
                     carry, aux = self.elbo.batch_compute(
                                                 key, 
@@ -226,11 +222,29 @@ class SVITrainer:
                     return (neg_elbo, neg_grad), aux       
                      
                 self.elbo_step = self.elbo.step
-                    
-            elif 'autodiff_on_backward' and 'reset' in self.elbo_mode:
-                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-                init_carry = jnp.empty((self.batch_size,1))
+
+            elif 'autodiff_on_forward' in self.elbo_mode and self.online_reset:
+                print('USING AUTODIFF ON FORWARD ELBO.')
+
+                self.elbo = OnlineELBO(p, q, num_samples, **self.elbo_options)
                 
+                def elbo_and_grads_batch(key, ys, params):
+                    def f(params):
+                        carry, aux = self.elbo.batch_compute(
+                                            key, 
+                                            ys, 
+                                            self.formatted_theta_star, 
+                                            params)
+                        neg_elbo = self.elbo.postprocess(carry, T=len(ys)-1)
+                        return neg_elbo, aux
+                    (neg_elbo, aux), neg_grad = jax.value_and_grad(f, has_aux=True)(params)
+                    return (neg_elbo, neg_grad), aux
+                
+                    
+            elif 'autodiff_on_backward' in self.elbo_mode and self.online_reset:
+                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+                print('USING AUTODIFF ON BACKWARD ELBO.')
+
                 def elbo_and_grads_batch(key, ys, params):
                     def f(params):
                         elbo, aux = self.elbo(key, 
@@ -244,9 +258,17 @@ class SVITrainer:
 
             else: 
                 print('ELBO mode not suitable for online learning.')
+
             self.elbo_batch = elbo_and_grads_batch
             self.get_montecarlo_keys = get_keys
 
+            if not 'reset' in self.elbo_mode: 
+                init_carry = jax.vmap(self.elbo.init_carry, 
+                                        axis_size=batch_size, 
+                                        in_axes=(None,))(self.q.get_random_params(jax.random.PRNGKey(0)))   
+
+            else: 
+                init_carry = jnp.empty((self.batch_size,1))
 
             def online_step(key, 
                             elbo_carry, 
@@ -288,17 +310,9 @@ class SVITrainer:
                     neg_elbo, neg_grad = self.elbo.postprocess(elbo_carry, 
                                                     T=timesteps[-1])
                 
-                if self.monitor:
-                    offline_elbo = self.monitor_elbo(
-                                        subkey, 
-                                        data, 
-                                        len(data)-1,
-                                        self.formatted_theta_star, 
-                                        q.format_params(params))[0] / len(data)
-                else: 
-                    offline_elbo = jnp.zeros_like(timesteps)
+           
                     
-                return neg_elbo, neg_grad, key, elbo_carry, (aux, offline_elbo)
+                return neg_elbo, neg_grad, key, elbo_carry, aux
             
             self.loss = online_step
             
@@ -321,6 +335,8 @@ class SVITrainer:
                                                                                                 timesteps, 
                                                                                                 params)
 
+
+
                     avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), 
                                                        grads)
                     
@@ -340,7 +356,15 @@ class SVITrainer:
                                                                                             opt_state, 
                                                                                             init_carry),
                                                                                         xs=timesteps)
-
+                # if self.monitor: 
+                #     offline_elbo = jnp.mean(jax.vmap(self.monitor_elbo)(
+                #                         key, 
+                #                         data, 
+                #                         len(data)-1,
+                #                         self.formatted_theta_star, 
+                #                         q.format_params(params), axis=0)[0] / len(data)
+                # else: 
+                #     offline_elbo = jnp.zeros_like(timesteps)
 
                 return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads_batch, tree_map(partial(jnp.mean, axis=0), aux))
         self.batch_step = batch_step

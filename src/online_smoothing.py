@@ -21,11 +21,11 @@ class OnlineVariationalAdditiveSmoothing:
                 p:HMM, 
                 q:BackwardSmoother, 
                 additive_functional, 
-                preprocess_fn,
                 init_carry_fn,
                 init_fn, 
                 update_fn, 
-                postprocess_fn=lambda x, **kwargs:x, 
+                preprocess_fn,
+                postprocess_fn,
                 **options):
 
         self.p = p
@@ -74,8 +74,8 @@ class OnlineVariationalAdditiveSmoothing:
         
         return carry, output
     
-    def preprocess(self, obs_seq):
-        return self._preprocess_fn(obs_seq, **self.options)
+    def preprocess(self, obs_seq, **kwargs):
+        return self._preprocess_fn(obs_seq, **kwargs, **self.options)
 
     def batch_compute(self, key, obs_seq, theta, phi):
 
@@ -100,17 +100,6 @@ class OnlineVariationalAdditiveSmoothing:
 
         carry_m1 = self.init_carry(phi)
 
-        # obs_seq_with_dummy_obs = tree_append(obs_seq, obs_seq[-1])
-        # obs_seq_strides = tree_get_strides(2, obs_seq)
-
-        # choices = carry['choices']
-
-        # def mean_on_choices(array, choices):
-        #     zeros_array = jnp.zeros_like(array)
-        #     return jnp.sum(jnp.where(choices, array, zeros_array), axis=0) / choices.sum()
-
-        # return tree_map(lambda x:  jnp.mean(jnp.exp(carry['log_K']) * x, axis=0) / (T+1), stats)['tau'], outputs
-        
     
         strided_ys = self.preprocess(obs_seq)
 
@@ -118,9 +107,6 @@ class OnlineVariationalAdditiveSmoothing:
                         init=carry_m1,
                         xs=(timesteps, keys, strided_ys))
 
-        # return tree_map(lambda x: mean_on_choices(x, choices) / (T + 1), stats), outputs
-        # weights = self.normalizer(carry['log_q_x'] - carry['log_nu_x'])
-        # return tree_map(lambda x: (weights.reshape(-1,1).T @ x).squeeze() / (T + 1), stats), outputs
 
     def postprocess(self, carry, **kwargs):
         return self._postprocess_fn(carry, **kwargs, **self.options)
@@ -150,11 +136,11 @@ def init_PaRIS(
         **kwargs):
 
 
-    y_0 = input_0['y']
+    y_0 = input_0['ys_bptt']
     key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
 
-    p = kwargs['p']
-    q = kwargs['q']
+    p:HMM = kwargs['p']
+    q:BackwardSmoother = kwargs['q']
     num_samples = kwargs['num_samples']
     h_0 = kwargs['h']
 
@@ -185,7 +171,7 @@ def init_PaRIS(
             'stats':{'tau': tau_0}}
 
     
-    return carry, (log_q_x_0, log_q_x_0, filt_params.eta1, jnp.diagonal(filt_params.eta2), jnp.empty((num_samples,num_samples)))
+    return carry, 0.0
 
 def update_PaRIS(
         carry_tm1, 
@@ -201,7 +187,7 @@ def update_PaRIS(
     state_tm1 = carry_tm1['state']
 
 
-    t, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['key'], input_t['y'], input_t['phi']
+    t, key_t, y_t, unformatted_phi_t = input_t['t'], input_t['key'], input_t['ys_bptt'], input_t['phi']
 
     phi_t = q.format_params(unformatted_phi_t)
     state_t = q.new_state(y_t, state_tm1, phi_t)
@@ -250,22 +236,24 @@ def update_PaRIS(
 
         h_tm1_t = jax.vmap(_h)(x_tm1, log_q_tm1_x_tm1)
 
-        return w_tm1_t @ (tau_tm1 + h_tm1_t), 1 / (w_tm1_t**2).sum(), jnp.exp(w_tm1_t).sum(), log_w_tm1_t
+        return w_tm1_t @ (tau_tm1 + h_tm1_t)
     
 
 
-    tau_t, ess_t, normalizing_const, log_weights = jax.vmap(update)(x_t, log_q_t_x_t)
+    tau_t = jax.vmap(update)(x_t, log_q_t_x_t)
 
     carry_t = {'state':state_t, 
             'x':x_t, 
             'stats': {'tau':tau_t},
             'log_q_x':log_q_t_x_t}
     
-    return carry_t, (ess_t, normalizing_const, filt_params_t.eta1, jnp.diagonal(filt_params_t.eta2), log_weights)
+    return carry_t, 0.0
 
 def postprocess_PaRIS(carry, **kwargs):
     T = kwargs['T']
-    return jnp.mean(carry['stats']['tau'], axis=0) / (T + 1)
+    return -jnp.mean(carry['stats']['tau'], axis=0) / (T + 1)
+
+
 
 def init_carry_gradients_reparam(
             unformatted_params, 
@@ -434,9 +422,6 @@ def update_gradients_reparam(
                 's':tree_get_idx(0, s_t)}
 
     return carry_t, 0.0
-
-
-
 
 
 
@@ -734,10 +719,11 @@ OnlineELBO = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoot
                                                     p, 
                                                     q,
                                                     online_elbo_functional,
-                                                    init_carry,
-                                                    init_PaRIS,
-                                                    update_PaRIS,
-                                                    postprocess_PaRIS,
+                                                    init_carry_fn=init_carry,
+                                                    init_fn=init_PaRIS,
+                                                    update_fn=update_PaRIS,
+                                                    preprocess_fn=lambda x, **kwargs:x,
+                                                    postprocess_fn=postprocess_PaRIS,
                                                     num_samples=num_samples,
                                                     **options)
 
@@ -745,11 +731,11 @@ OnlineELBOScoreGradients = lambda p, q, num_samples, **options: OnlineVariationa
                                                                 p, 
                                                                 q, 
                                                                 online_elbo_functional,
-                                                                preprocess_for_bptt,
-                                                                init_carry_score_gradients, 
-                                                                init_score_gradients,
-                                                                update_score_gradients,
-                                                                postprocess_score_gradients,
+                                                                init_carry_fn=init_carry_score_gradients, 
+                                                                init_fn=init_score_gradients,
+                                                                update_fn=update_score_gradients,
+                                                                preprocess_fn=preprocess_for_bptt,
+                                                                postprocess_fn=postprocess_score_gradients,
                                                                 num_samples=num_samples, 
                                                                 **options)
 
@@ -762,12 +748,3 @@ OnlineELBOScoreAutodiff = lambda p,q, num_samples: OnlineVariationalAdditiveSmoo
                                                                                 exp_and_normalize,
                                                                                 num_samples)
 
-# ThreePaRIS = lambda p,q,functional,num_samples: OnlineVariationalAdditiveSmoothing(
-#                                                         p, 
-#                                                         q, 
-#                                                         init_carry_gradients_score, 
-#                                                         init_gradients_score, 
-#                                                         update_gradients_F, 
-#                                                         functional,
-#                                                         exp_and_normalize,
-#                                                         num_samples)

@@ -59,7 +59,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
             transition_kernel:Kernel=None,
             backwd_layers=(8,8),
             update_layers=(8,8),
-            conjugate=False):
+            conjugate=True):
         
 
         self.state_dim = state_dim

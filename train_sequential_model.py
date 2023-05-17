@@ -105,9 +105,7 @@ if __name__ == '__main__':
     args.model, args.elbo_mode = args.model.split('__')
 
     args = misc.get_defaults(args)
-    args.transition_matrix_conditionning = 'diagonal'
-    args.range_transition_map_params = [0.9,1]
-    args.transition_bias = False
+
         
     misc.save_args(args, 'args', args.save_dir)
     args_p = misc.load_args('args', args.exp_dir)
