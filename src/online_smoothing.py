@@ -21,6 +21,7 @@ class OnlineVariationalAdditiveSmoothing:
                 p:HMM, 
                 q:BackwardSmoother, 
                 additive_functional, 
+                preprocess_fn,
                 init_carry_fn,
                 init_fn, 
                 update_fn, 
@@ -35,6 +36,8 @@ class OnlineVariationalAdditiveSmoothing:
         self.options = options
         self.options['normalizer'] = exp_and_normalize
 
+
+        self._preprocess_fn = preprocess_fn
         self._init_carry_fn = init_carry_fn
         self._init_fn = init_fn
         self._update_fn = update_fn
@@ -71,21 +74,25 @@ class OnlineVariationalAdditiveSmoothing:
         
         return carry, output
     
+    def preprocess(self, obs_seq):
+        return self._preprocess_fn(obs_seq, **self.options)
+
     def batch_compute(self, key, obs_seq, theta, phi):
 
 
-        bptt_depth = self.options['bptt_depth']
         T = len(obs_seq) - 1 # T + 1 observations
+
         keys = jax.random.split(key, T+1) # T+1 keys 
         timesteps = jnp.arange(0, T+1) # [0:T]
 
-        padded_ys = jnp.concatenate([jnp.empty((self.options['bptt_depth']-1, 
-                                        self.p.obs_dim)), obs_seq])
-        strided_ys = tree_get_strides(bptt_depth, padded_ys)
-            
+        
         def _step(carry, x):
             t, key_t, strided_ys = x
-            input_t = {'t':t, 't_true':t, 'key':key_t, 'T': T, 'ys_bptt':strided_ys, 'phi':phi}            
+            input_t = {'t':t, 
+                       'key':key_t, 
+                       'T': T, 
+                       'ys_bptt':strided_ys, 
+                       'phi':phi}            
             carry['theta'] = theta
             carry_t, output_t = self.step(carry, input_t)
             return carry_t, output_t
@@ -105,6 +112,8 @@ class OnlineVariationalAdditiveSmoothing:
         # return tree_map(lambda x:  jnp.mean(jnp.exp(carry['log_K']) * x, axis=0) / (T+1), stats)['tau'], outputs
         
     
+        strided_ys = self.preprocess(obs_seq)
+
         return lax.scan(_step, 
                         init=carry_m1,
                         xs=(timesteps, keys, strided_ys))
@@ -257,8 +266,6 @@ def update_PaRIS(
 def postprocess_PaRIS(carry, **kwargs):
     T = kwargs['T']
     return jnp.mean(carry['stats']['tau'], axis=0) / (T + 1)
-
-
 
 def init_carry_gradients_reparam(
             unformatted_params, 
@@ -430,6 +437,18 @@ def update_gradients_reparam(
 
 
 
+
+
+
+def preprocess_for_bptt(obs_seq, bptt_depth, **kwargs):
+
+
+    padded_ys = jnp.concatenate([jnp.empty((bptt_depth-1, obs_seq.shape[1])), 
+                                 obs_seq])
+    strided_ys = tree_get_strides(bptt_depth, padded_ys)
+
+    return strided_ys 
+    
 def init_carry_score_gradients(unformatted_params, **kwargs):
 
     num_samples = kwargs['num_samples']
@@ -506,7 +525,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
     bptt_depth = kwargs['bptt_depth']
     normalizer, variance_reduction = kwargs['normalizer'], kwargs['variance_reduction']
 
-    t, t_true, T, key_t, unformatted_phi_t = input_t['t'], input_t['t_true'], input_t['T'], input_t['key'], input_t['phi']
+    t, T, key_t, unformatted_phi_t = input_t['t'], input_t['T'], input_t['key'], input_t['phi']
     ys_for_bptt = input_t['ys_bptt']
     y_t = ys_for_bptt[-1]
 
@@ -517,14 +536,12 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
     
 
-
     def get_states(phi):
         if bptt_depth == 1:
             s_t = q.new_state(y_t, base_s_tm1, phi)
             return s_t, (base_s_tm1, s_t)
         
         return q.get_states(t, 
-                            t_true, 
                             base_s_tm1,
                             ys_for_bptt, 
                             phi)
@@ -691,9 +708,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
     
     return carry_t, 0.0
 
-def postprocess_score_gradients(carry, **kwargs):
-        T = kwargs['T']
-        variance_reduction = kwargs['variance_reduction']
+def postprocess_score_gradients(carry, T, variance_reduction, **kwargs):
         H_T = carry['stats']['H']
 
         F_T = carry['stats']['F']
@@ -709,7 +724,7 @@ def postprocess_score_gradients(carry, **kwargs):
                         -jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)
                                   (H_T, grad_log_q, F), 
                                 axis=0) / (T + 1), grad_log_q_T, F_T)
-        return elbo_T, grad_T
+        return -elbo_T, grad_T
 
 
 OnlineELBO = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoothing(          
@@ -727,6 +742,7 @@ OnlineELBOScoreGradients = lambda p, q, num_samples, **options: OnlineVariationa
                                                                 p, 
                                                                 q, 
                                                                 online_elbo_functional,
+                                                                preprocess_for_bptt,
                                                                 init_carry_score_gradients, 
                                                                 init_score_gradients,
                                                                 update_score_gradients,

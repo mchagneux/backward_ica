@@ -195,18 +195,18 @@ class Kernel:
                                                         key, 
                                                         self.out_dim)
 
-    def map(self, state, params):
-        mean, scale = self._apply_map(params, state)
+    def map(self, x, params):
+        mean, scale = self._apply_map(params, x)
         return self.format_output(mean, scale, params)
     
-    def sample(self, key, state, params):
-        return self.noise_dist.sample(key, self.map(state, params))
+    def sample(self, key, x, params):
+        return self.noise_dist.sample(key, self.map(x, params))
 
-    def logpdf(self, x, state, params):
-        return self.noise_dist.logpdf(x, self.map(state, params))
+    def logpdf(self, y, x, params):
+        return self.noise_dist.logpdf(y, self.map(x, params))
     
-    def pdf(self, x, state, params):
-        return self.noise_dist.pdf(x, self.map(state, params))
+    def pdf(self, y, x, params):
+        return self.noise_dist.pdf(y, self.map(x, params))
 
     def get_random_params(self, key):
         if self.inhomogeneous:
@@ -221,6 +221,7 @@ class Kernel:
                         self.noise_dist.format_noise_params(params.noise))
 
 class NonParametricKernel:
+    
     Params = namedtuple('NonParametricKernelParams', ['prior', 'potential'])
     def __init__(self, prior_dist, potential_fn):
         self.prior_dist:Gaussian = prior_dist 
@@ -230,14 +231,20 @@ class NonParametricKernel:
         
         self._unnorm_logpdf = _unnorm_logpdf 
 
-    def sample(self, state, params):
-        raise NotImplementedError
+    def sample(self, x, params):
+        raise NotImplementedError 
     
-    def logpdf(self, x, state, params, samples):
-        pass 
+    def logpdf(self, y, x, params, samples=None):
+        if samples is not None: 
+            log_cst = jax.scipy.special.logsumexp(jax.vmap(lambda x, y:
+                            self.potential_apply(params.potential, x, y), 
+                                                in_axes=(0, None))(samples, x))
+            return self.potential_apply(params.potential, x, y) - log_cst 
+        else: 
+            raise NotImplementedError
 
-    def pdf(self, x, state, params, samples):
-        pass
+    def pdf(self, y, x, params, samples=None):
+        return jnp.exp(self.logpdf(y, x, params, samples))
 
     def get_random_params(self, key):
         return self.potential_init(key)

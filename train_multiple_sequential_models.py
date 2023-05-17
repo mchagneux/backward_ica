@@ -4,24 +4,22 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['johnson_backward__offline_autodiff_on_backward',
-            'johnson_backward__offline_score_variance_reduction_bptt_depth_10',
-            'johnson_backward__offline_score_variance_reduction_bptt_depth_1']
+q_models = ['johnson_backward__online_20_reset_score_paris_variance_reduction_bptt_depth_20',
+            'johnson_backward__online_20_reset_autodiff_on_backward']
 
-num_samples_list = [20, 20, 20]
-learning_rates = [1e-3, 1e-3, 1e-3]
-
-num_epochs = 1000
+num_samples_list = [10, 10]
+learning_rates = [1e-3, 1e-3]
+num_epochs = 200
 dims = '5 5'
 load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
 loaded_seq = True
 batch_size = 1
 num_seqs = 1
-seq_length = 10
+seq_length = 2000
 store_every = 0
+ 
 
-
-optimizer = 'adam'
+optimizer = 'sgd'
 
 os.makedirs(base_dir, exist_ok=True)
 
