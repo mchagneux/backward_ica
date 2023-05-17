@@ -631,14 +631,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                                                     x_t)
             
 
-            h_t = _vmaped_h(x_tm1, 
-                            log_q_tm1_t,
-                            log_q_tm1)
-
-            if variance_reduction: 
-                moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
-            else: 
-                moving_average_H = 0.0
+            
             # log_w_t = jax.vmap(q.log_fwd_potential, 
             #                    in_axes=(0,None,None,None))(x_tm1, 
             #                                                x_t, 
@@ -678,6 +671,16 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
             
             sub_x_tm1 = x_tm1[backwd_indices]
             sub_H_tm1 = H_tm1[backwd_indices]
+
+            h_t = _vmaped_h(sub_x_tm1, 
+                            log_q_tm1_t[backwd_indices],
+                            log_q_tm1[backwd_indices])
+
+            if variance_reduction: 
+                moving_average_H = jnp.mean(sub_H_tm1 + h_t, axis=0)
+            else: 
+                moving_average_H = 0.0
+
             h_t = h_t[backwd_indices]
 
             grad_log_q_tm1_t = jax.vmap(jax.grad(_log_q_tm1_t),
