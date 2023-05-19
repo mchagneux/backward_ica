@@ -82,8 +82,8 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='neural_backward_explicit_transition__offline_autodiff_on_backward')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_15__11_16_09')
+    parser.add_argument('--model', type=str, default='johnson_backward__online_50_score_variance_reduction_bptt_depth_2')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_19__12_15_37')
 
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)

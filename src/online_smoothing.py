@@ -535,10 +535,13 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
         phi = q.format_params(unformatted_phi)
         _ , states = get_states(phi)
         params_q_tm1_t = q.backwd_params_from_states(states, phi)
+
         log_q_tm1_t = q.backwd_kernel.logpdf(x_tm1, 
                                              x_t, 
                                              params_q_tm1_t)
-        return log_q_tm1_t
+        return log_q_tm1_t, Gaussian.KL(q.filt_params_from_state(states[0], phi), 
+                            q.backwd_kernel.map(q.filt_params_from_state(states[1], phi).mean, 
+                                             params_q_tm1_t)) 
     
     def _log_q_t(unformatted_phi, key):
         phi = q.format_params(unformatted_phi)
@@ -581,13 +584,11 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
         if not paris: 
 
-            log_q_tm1_t, grad_log_q_tm1_t = jax.vmap(jax.value_and_grad(_log_q_tm1_t),
+            (log_q_tm1_t, kl),  grad_log_q_tm1_t = jax.vmap(jax.value_and_grad(_log_q_tm1_t, has_aux=True),
                                                     in_axes=(None,0,None))(unformatted_phi_t, 
                                                                         x_tm1, 
                                                                         x_t)
-            # print(x_tm1.shape)
-            # print(log_w_t.shape)
-            # print(log_q_tm1.shape)
+
             h_t = _vmaped_h(x_tm1, log_q_tm1_t, log_q_tm1)
 
             if variance_reduction: 
@@ -610,7 +611,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
  
         else: 
 
-            log_q_tm1_t = jax.vmap(_log_q_tm1_t,
+            log_q_tm1_t, kl = jax.vmap(_log_q_tm1_t,
                                 in_axes=(None,0,None))(unformatted_phi_t, 
                                                     x_tm1, 
                                                     x_t)
@@ -668,7 +669,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
             h_t = h_t[backwd_indices]
 
-            grad_log_q_tm1_t = jax.vmap(jax.grad(_log_q_tm1_t),
+            grad_log_q_tm1_t, _ = jax.vmap(jax.grad(_log_q_tm1_t, has_aux=True),
                                         in_axes=(None,0,None))(unformatted_phi_t, 
                                                             sub_x_tm1, 
                                                             x_t)
@@ -684,9 +685,10 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                                                                     grad_log_q_tm1_t)
             F_t = tree_map(lambda x: jnp.mean(x, axis=0), F_t)
 
-        return F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t
+        return F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t, kl[0]
 
-    F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
+    F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t, kl = jax.vmap(update)(jax.random.split(key_t, num_samples))
+
 
     carry_t = {'stats':{'F':F_t, 'H':H_t},
             'base_s':tree_get_idx(0,base_s_t), 
@@ -694,7 +696,8 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
             'log_q':log_q_t,
             'grad_log_q':grad_log_q_t}
     
-    return carry_t, 0.0
+
+    return carry_t, kl[0]
 
 def postprocess_score_gradients(carry, T, variance_reduction, **kwargs):
         H_T = carry['stats']['H']

@@ -4,11 +4,11 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['johnson_backward__online_50_reset_autodiff_on_backward',
-            'johnson_backward__online_50_reset_score_variance_reduction_bptt_depth_2']
+q_models = ['johnson_backward__online_50_reset_score_variance_reduction_bptt_depth_2',
+            'johnson_backward__online_50_reset_autodiff_on_backward']
 
 
-num_samples_list = [5, 5]
+num_samples_list = [10, 10]
 learning_rates = [1e-2, 1e-2]
 num_epochs = 1000
 dims = '5 5'
@@ -20,7 +20,7 @@ seq_length = 2000
 store_every = 0
  
 
-optimizer = 'adam'
+optimizer = 'sgd'
 
 os.makedirs(base_dir, exist_ok=True)
 

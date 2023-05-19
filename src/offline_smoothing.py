@@ -19,7 +19,7 @@ class OfflineVariationalAdditiveSmoothing:
 
         def t_strictly_greater_than_T(carry_tp1, input_t):
 
-            return carry_tp1, None
+            return carry_tp1, 0.0
 
         def t_smaller_or_equal_to_T(carry_tp1, input_t):
 
@@ -38,7 +38,7 @@ class OfflineVariationalAdditiveSmoothing:
 
                 carry_t = {'x':x_t, 'y': input_t['y'], 'tau': tau_t, 'state':state_t}
 
-                return carry_t, None
+                return carry_t, 0.0
                 
 
             def t_strictly_lower_than_T(carry_tp1, input_t):
@@ -70,7 +70,9 @@ class OfflineVariationalAdditiveSmoothing:
 
                     carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t, 'state':state_t}
 
-                    return carry_t, None
+                    return carry_t, Gaussian.KL(self.q.filt_params_from_state(states[0], phi),
+                                                self.q.backwd_kernel.map(self.q.filt_params_from_state(states[1], phi).mean,
+                                                                        params_q_t_tp1))
 
 
                 def t_strictly_greater_than_0(carry_tp1, input_t):
@@ -94,7 +96,9 @@ class OfflineVariationalAdditiveSmoothing:
 
                     carry_t = {'x':x_t, 'y':input_t['y'], 'tau': tau_t, 'state':state_t}
 
-                    return carry_t, None
+                    return carry_t, Gaussian.KL(self.q.filt_params_from_state(states[0], phi),
+                                                self.q.backwd_kernel.map(self.q.filt_params_from_state(states[1], phi).mean,
+                                                                        params_q_t_tp1))
 
                 return lax.cond(input_t['t'] > 0, 
                                 t_strictly_greater_than_0, t_equals_0, 
@@ -135,11 +139,11 @@ class OfflineVariationalAdditiveSmoothing:
             return lax.scan(compute, 
                             init=dummy_carry, 
                             xs=inputs, 
-                            reverse=True)[0]['tau']
+                            reverse=True)
 
-        tau = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
+        carry, kl = jax.vmap(evaluate_one_path)(jax.random.split(key, self.num_samples))
         
-        return jnp.mean(tau, axis=0), 0.0
+        return jnp.mean(carry['tau'], axis=0), kl[0]
 
 GeneralBackwardELBO = lambda p, q, num_samples: OfflineVariationalAdditiveSmoothing(p, q, offline_elbo_functional(p,q), num_samples)
 
