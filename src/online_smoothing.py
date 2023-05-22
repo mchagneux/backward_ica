@@ -477,9 +477,9 @@ def init_score_gradients(carry_m1, input_0, **kwargs):
         return q.filt_dist.logpdf(x_t, params_q_t), x_t
 
 
-    log_q_0, x_0 = jax.vmap(_log_q_0, 
-                                    in_axes=(None,0))(unformatted_phi_0, 
-                                                        jax.random.split(key_0, num_samples))
+    (log_q_0, x_0), grad_log_q_0 = jax.vmap(jax.value_and_grad(_log_q_0, has_aux=True), 
+                            in_axes=(None,0))(unformatted_phi_0, 
+                                                jax.random.split(key_0, num_samples))
     
     h = partial(h_0, models={'p':p, 'q':q})
 
@@ -489,7 +489,7 @@ def init_score_gradients(carry_m1, input_0, **kwargs):
 
     H_0 = named_vmap(h, axes_names={'t':{'x':0, 'log_q_x':0}}, input_dict=data)
 
-    F_0 = tree_map(lambda x: jnp.zeros_like(x), carry_m1['stats']['F'])
+    F_0 = tree_map(lambda grad_term:jax.vmap(lambda x,y:x*y)(grad_term, H_0), grad_log_q_0)
 
     carry = {'stats':{'F':F_0, 
                       'H':H_0},
@@ -595,7 +595,14 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                 moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
             else: 
                 moving_average_H = 0.0
-            w_t = normalizer(log_q_tm1_t - log_q_tm1)
+            
+
+            # log_w_t = jax.vmap(q.log_fwd_potential, 
+            #                    in_axes=(0,None,None))(x_tm1, 
+            #                                           x_t, 
+            #                                           q.format_params(unformatted_phi_t))
+            log_w_t = log_q_tm1_t - log_q_tm1
+            w_t = normalizer(log_w_t)
             H_t = jax.vmap(lambda w, H, h: w * (H+h))(w_t, H_tm1, h_t)
 
             F_t = tree_map(lambda F, grad_log_backwd: jax.vmap(lambda w, F, H, h, grad_log_backwd: w*(F + grad_log_backwd*(H+h-moving_average_H)))(
@@ -658,16 +665,16 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
             sub_x_tm1 = x_tm1[backwd_indices]
             sub_H_tm1 = H_tm1[backwd_indices]
 
-            h_t = _vmaped_h(sub_x_tm1, 
-                            log_q_tm1_t[backwd_indices],
-                            log_q_tm1[backwd_indices])
+            h_t = _vmaped_h(x_tm1, 
+                            log_q_tm1_t,
+                            log_q_tm1)
 
             if variance_reduction: 
-                moving_average_H = jnp.mean(sub_H_tm1 + h_t, axis=0)
+                moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
             else: 
                 moving_average_H = 0.0
 
-            h_t = h_t[backwd_indices]
+            sub_h_t = h_t[backwd_indices]
 
             grad_log_q_tm1_t, _ = jax.vmap(jax.grad(_log_q_tm1_t, has_aux=True),
                                         in_axes=(None,0,None))(unformatted_phi_t, 
@@ -675,11 +682,11 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                                                             x_t)
 
 
-            H_t = jnp.mean(sub_H_tm1 + h_t, axis=0)
+            H_t = jnp.mean(sub_H_tm1 + sub_h_t, axis=0)
             F_t = tree_map(lambda F, grad_log_backwd: jax.vmap(lambda F, H, h, grad_log_backwd: F + grad_log_backwd*(H+h-moving_average_H))(
                                                                     F[backwd_indices], 
                                                                     sub_H_tm1,
-                                                                    h_t, 
+                                                                    sub_h_t, 
                                                                     grad_log_backwd[backwd_indices]), 
                                                                     F_tm1, 
                                                                     grad_log_q_tm1_t)

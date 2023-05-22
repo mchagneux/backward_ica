@@ -35,28 +35,22 @@ def main(args):
                                         theta_star)
 
 
-    online_str, elbo_mode = str.split(args.elbo_mode, '_', 1)
 
-    online = (online_str == 'online')
-    if online: 
-        online_batch_size, elbo_mode = elbo_mode.split('_', 1)
-        online_batch_size = int(online_batch_size)
-    else: 
-        online_batch_size = None
+    
     trainer = SVITrainer(p=p, 
                         theta_star=theta_star,
                         q=q, 
                         optimizer=args.optimizer, 
                         learning_rate=args.learning_rate,
+                        optim_options=args.optim_options,
                         num_epochs=args.num_epochs, 
                         batch_size=args.batch_size, 
                         num_samples=args.num_samples,
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
                         seq_length=data.shape[1],
-                        elbo_mode=elbo_mode,
-                        online=online,
-                        online_batch_size=online_batch_size)
+                        training_mode=args.training_mode,
+                        elbo_mode=args.elbo_mode)
 
 
     key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
@@ -82,28 +76,26 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='johnson_backward__online_50_score_variance_reduction_bptt_depth_2')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_19__12_15_37')
-
+    parser.add_argument('--settings', type=str, default='johnson_backward.5.adam,1e-3,cst.online,50,reset.score,variance_reduction,bptt_depth_2')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_05_22__10_28_44')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
-    parser.add_argument('--learning_rate', type=float, default=1e-3)
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--num_samples', type=int, default=20)
-    parser.add_argument('--optimizer', type=str, default='adam')
     parser.add_argument('--store_every', type=int, default=0)
     parser.add_argument('--seed', type=int, default=1)
 
     args = parser.parse_args()
 
     # args.online = True
-    args.full_mc = '_mc' in args.model # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
-    args.frozen_params  = args.model.split('freeze__')[1:] # list of parameter groups which are not learnt
-    args.save_dir = os.path.join(args.exp_dir, args.model)
+    args.full_mc = '_mc' in args.settings # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
+    args.frozen_params  = args.settings.split('freeze__')[1:] # list of parameter groups which are not learnt
+    args.save_dir = os.path.join(args.exp_dir, args.settings)
     os.makedirs(args.save_dir, exist_ok=True)
     
-    args.model, args.elbo_mode = args.model.split('__')
-
+    args.model, num_samples, optim, args.training_mode, args.elbo_mode = args.settings.split('.')
+    args.num_samples = int(num_samples)
+    args.optimizer, learning_rate, args.optim_options = optim.split(',')
+    args.learning_rate = float(learning_rate)
     args = misc.get_defaults(args)
 
         

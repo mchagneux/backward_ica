@@ -10,7 +10,7 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model
 from src.utils.misc import *
 import os 
-path = 'experiments/p_chaotic_rnn/2023_05_19__12_50_33'
+path = 'experiments/p_chaotic_rnn/2023_05_22__13_57_57'
 num_smoothing_samples = 1000
 
 key = jax.random.PRNGKey(0)
@@ -25,7 +25,7 @@ x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
 y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
 T = len(y) - 1 
 
-models = ['johnson_backward__online_50_reset_autodiff_on_backward']
+models = ['johnson_backward.10.adam,1e-3,cst.online,10,reset.autodiff_on_backward']
 
 def eval_model(model):
     model_path = os.path.join(path, model)

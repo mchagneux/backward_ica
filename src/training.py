@@ -40,22 +40,22 @@ def define_frozen_tree(key, frozen_params, q, theta_star):
     
 class SVITrainer:
 
-    def __init__(self, p:HMM, 
+    def __init__(self, 
+                p:HMM, 
                 theta_star,
                 q:BackwardSmoother, 
                 optimizer, 
                 learning_rate, 
+                optim_options,
                 num_epochs, 
                 batch_size, 
                 seq_length,
                 num_samples=1, 
                 force_full_mc=False,
                 frozen_params=None,
-                elbo_mode='autodiff_on_backward',
-                online=False,
-                online_batch_size=10):
+                training_mode='offline',
+                elbo_mode='autodiff_on_backward'):
         
-        self.online_batch_size = online_batch_size
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.q = q 
@@ -66,15 +66,21 @@ class SVITrainer:
         self.frozen_params = frozen_params
 
         self.elbo_mode = elbo_mode
-        self.online = online
 
-        if online:
-            if 'polyak' in self.elbo_mode:
-                self.polyak_averaging = True
-            else: 
-                self.polyak_averaging = False
-            self.online_reset = 'reset' in elbo_mode
-        
+
+
+        if 'online' in training_mode: 
+            online = True 
+            self.online_batch_size = int(training_mode.split(',')[1])
+            self.online_reset = 'reset' in training_mode
+            
+        else:
+            online = False 
+
+        self.online = online
+            
+
+
         self.monitor = False
 
         self.elbo_options = {}
@@ -97,10 +103,25 @@ class SVITrainer:
         self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
         self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
 
-        learning_rate = optax.linear_schedule(learning_rate, 
-                                              end_value=learning_rate / 100, 
-                                              transition_steps=num_epochs * self.online_batch_size)
+
+
+        if 'linear_sched' in optim_options:
+            
+            learning_rate = optax.linear_schedule(learning_rate, 
+                                                  end_value=learning_rate / 10, 
+                                                  transition_steps=num_epochs * self.online_batch_size)
         
+        elif 'cst' in optim_options:
+            pass 
+
+        else:
+            raise NotImplementedError
+                
+        if 'polyak' in optim_options:
+            self.polyak_averaging = True
+        else: 
+            self.polyak_averaging = False
+
         base_optimizer = optax.apply_if_finite(getattr(optax, optimizer)(learning_rate),
                                             max_consecutive_errors=10)
 
@@ -227,7 +248,7 @@ class SVITrainer:
                      
                 self.elbo_step = self.elbo.step
 
-            elif 'autodiff_on_forward' in self.elbo_mode and self.online_reset:
+            elif ('autodiff_on_forward' in self.elbo_mode) and self.online_reset:
                 print('USING AUTODIFF ON FORWARD ELBO.')
 
                 self.elbo = OnlineELBO(p, q, num_samples, **self.elbo_options)
@@ -245,7 +266,7 @@ class SVITrainer:
                     return (neg_elbo, neg_grad), aux
                 
                     
-            elif 'autodiff_on_backward' in self.elbo_mode and self.online_reset:
+            elif ('autodiff_on_backward' in self.elbo_mode) and self.online_reset:
                 self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
                 print('USING AUTODIFF ON BACKWARD ELBO.')
 
@@ -266,7 +287,7 @@ class SVITrainer:
             self.elbo_batch = elbo_and_grads_batch
             self.get_montecarlo_keys = get_keys
 
-            if not 'reset' in self.elbo_mode: 
+            if not self.online_reset: 
                 init_carry = jax.vmap(self.elbo.init_carry, 
                                         axis_size=batch_size, 
                                         in_axes=(None,))(self.q.get_random_params(jax.random.PRNGKey(0)))   

@@ -4,12 +4,12 @@ from datetime import datetime
 p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
-q_models = ['johnson_backward__online_50_reset_score_variance_reduction_bptt_depth_2',
-            'johnson_backward__online_50_reset_autodiff_on_backward']
+
+settings_list = ['johnson_backward.10.adam,1e-3,cst.online,10,reset.autodiff_on_backward',
+                 'johnson_backward.10.adam,1e-3,cst.online,10,reset.score,variance_reduction,bptt_depth_2']
 
 
-num_samples_list = [10, 10]
-learning_rates = [1e-2, 1e-2]
+
 num_epochs = 1000
 dims = '5 5'
 load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
@@ -19,8 +19,6 @@ num_seqs = 1
 seq_length = 2000
 store_every = 0
  
-
-optimizer = 'sgd'
 
 os.makedirs(base_dir, exist_ok=True)
 
@@ -42,19 +40,12 @@ subprocess.run(f'python generate_toy_sequential_data.py {loaded_seq} {load_from}
 
 
 processes = [subprocess.Popen(f'python train_sequential_model.py \
-                                --model {model} \
+                                --settings {settings} \
                                 --exp_dir {exp_dir} \
                                 --batch_size {batch_size} \
-                                --learning_rate {learning_rate} \
                                 --num_epochs {num_epochs} \
-                                --store_every {store_every} \
-                                --num_samples {num_samples} \
-                                --optimizer {optimizer}', 
-                            shell=True) \
-                for model, num_samples, learning_rate in zip(
-                                        q_models, 
-                                        num_samples_list, 
-                                        learning_rates)]
+                                --store_every {store_every}',
+                            shell=True) for settings in settings_list]
 
          
 tensorboard_process = subprocess.Popen(f'tensorboard --logdir {exp_dir}', shell=True)
