@@ -309,9 +309,10 @@ def get_defaults(args):
         args.slope = 0 # amount of linearity in the emission function
         args.injective = True
 
-    if 'neural_backward' or 'johnson' in args.model:
+    if ('neural_backward' in args.model) or ('johnson' in args.model) :
         ## variational family
-        args.update_layers = (100,) # number of layers in the GRU which updates the variational filtering dist
+        nb_layers = int(args.model.split('_')[-1])
+        args.update_layers = (nb_layers,) # number of layers in the GRU which updates the variational filtering dist
         # args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     if 'johnson' in args.model:
