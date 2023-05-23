@@ -85,7 +85,7 @@ class SVITrainer:
 
         self.elbo_options = {}
         if 'score' in elbo_mode: 
-            for option in ['paris', 'variance_reduction']:
+            for option in ['paris', 'variance_reduction', 'mcmc']:
                 self.elbo_options[option] = True if option in elbo_mode else False
 
             if 'bptt_depth' in elbo_mode: 
@@ -244,7 +244,7 @@ class SVITrainer:
                     
                     neg_elbo, neg_grad = self.elbo.postprocess(carry, 
                                                                T=len(ys)-1)
-                    return (neg_elbo, neg_grad), jnp.mean(aux[1:-1])
+                    return (neg_elbo, neg_grad), aux
                      
                 self.elbo_step = self.elbo.step
 
@@ -279,7 +279,7 @@ class SVITrainer:
                                               q.format_params(params))
                         return -elbo / len(ys), aux 
                     (neg_elbo, aux), neg_grad = jax.value_and_grad(f, has_aux=True)(params)
-                    return (neg_elbo, neg_grad), jnp.mean(aux[1:-1])
+                    return (neg_elbo, neg_grad), aux
 
             else: 
                 print('ELBO mode not suitable for online learning.')
@@ -467,7 +467,6 @@ class SVITrainer:
             if log_writer is not None:
                 with log_writer.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
-                    tf.summary.scalar('Epoch mean distance', avg_aux_epoch, epoch_nb)
 
                     if self.batch_size > 1:
                          for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
@@ -482,10 +481,6 @@ class SVITrainer:
                                             avg_elbo_batch, 
                                             epoch_nb*step_size + batch_nb * self.online_batch_size)
                             
-                        for batch_nb, avg_aux_batch in enumerate(avg_aux_batches):
-                                                    tf.summary.scalar('Temporal step KL', 
-                                                                    avg_aux_batch, 
-                                                                    epoch_nb*step_size + batch_nb * self.online_batch_size)
             if log_writer_monitor is not None:
                 with log_writer_monitor.as_default():
                     tf.summary.scalar('Epoch ELBO', monitor_elbo_epoch, epoch_nb)

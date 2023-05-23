@@ -508,6 +508,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
     num_samples = kwargs['num_samples']
     paris = kwargs['paris']
     bptt_depth = kwargs['bptt_depth']
+    mcmc = kwargs['mcmc']
     normalizer, variance_reduction = kwargs['normalizer'], kwargs['variance_reduction']
 
     t, T, key_t, unformatted_phi_t = input_t['t'], input_t['T'], input_t['key'], input_t['phi']
@@ -539,9 +540,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
         log_q_tm1_t = q.backwd_kernel.logpdf(x_tm1, 
                                              x_t, 
                                              params_q_tm1_t)
-        return log_q_tm1_t, Gaussian.KL(q.filt_params_from_state(states[0], phi), 
-                            q.backwd_kernel.map(q.filt_params_from_state(states[1], phi).mean, 
-                                             params_q_tm1_t)) 
+        return log_q_tm1_t
     
     def _log_q_t(unformatted_phi, key):
         phi = q.format_params(unformatted_phi)
@@ -568,6 +567,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
             key_new_sample, key_paris = jax.random.split(key_t, 2)
         else: 
             key_new_sample = key_t
+        
 
         (log_q_t, (x_t, base_s_t)), grad_log_q_t = lax.cond(t == T, 
                                                     _log_q_t_and_grad,
@@ -584,7 +584,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
         if not paris: 
 
-            (log_q_tm1_t, kl), grad_log_q_tm1_t = jax.vmap(jax.value_and_grad(_log_q_tm1_t, has_aux=True),
+            log_q_tm1_t, grad_log_q_tm1_t = jax.vmap(jax.value_and_grad(_log_q_tm1_t),
                                                     in_axes=(None,0,None))(unformatted_phi_t, 
                                                                         x_tm1, 
                                                                         x_t)
@@ -621,7 +621,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
  
         else: 
 
-            log_q_tm1_t, kl = jax.vmap(_log_q_tm1_t,
+            log_q_tm1_t = jax.vmap(_log_q_tm1_t,
                                 in_axes=(None,0,None))(unformatted_phi_t, 
                                                     x_tm1, 
                                                     x_t)
@@ -635,69 +635,67 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
             #                                                q.format_params(unformatted_phi_t))
 
             log_w_t = log_q_tm1_t - log_q_tm1
-
-            # backwd_sampler = blackjax.irmh(logprob_fn=lambda i: log_w_t[i], 
-            #                                proposal_distribution=lambda key: jax.random.choice(key, a=num_samples))
-
-
-            # def _backwd_sample_step(state, x):
-            #     step_nb, key = x
-
-            #     def _init(state, key):
-            #         return backwd_sampler.init(jax.random.choice(key, a=num_samples))
-            #     def _step(state, key):
-            #         return backwd_sampler.step(key, state)[0]
-                
-            #     new_state = jax.lax.cond(step_nb > 0, _step, _init, state, key)
-            #     return new_state, new_state.position
-                
-            # backwd_indices = jax.lax.scan(_backwd_sample_step, 
-            #                               init=backwd_sampler.init(0), 
-            #                               xs=(jnp.arange(2), 
-            #                                   jax.random.split(key_backwd_resampling, 2)))[1]
             
+            if mcmc:
+                backwd_sampler = blackjax.irmh(logprob_fn=lambda i: log_w_t[i], 
+                                            proposal_distribution=lambda key: jax.random.choice(key, a=num_samples))
 
 
-            w_t = normalizer(log_w_t)
+                def _backwd_sample_step(state, x):
+                    step_nb, key = x
 
-            backwd_indices = jax.random.choice(key_paris, 
-                                               a=num_samples, 
-                                               p=w_t, 
-                                               shape=(2,))
+                    def _init(state, key):
+                        return backwd_sampler.init(jax.random.choice(key, a=num_samples))
+                    def _step(state, key):
+                        return backwd_sampler.step(key, state)[0]
+                    
+                    new_state = jax.lax.cond(step_nb > 0, _step, _init, state, key)
+                    return new_state, new_state.position
+                    
+                backwd_indices = jax.lax.scan(_backwd_sample_step, 
+                                            init=backwd_sampler.init(0), 
+                                            xs=(jnp.arange(2), 
+                                                jax.random.split(key_paris, 2)))[1]
+            else:
+
+                backwd_indices = jax.random.choice(key_paris, 
+                                                   a=num_samples, 
+                                                   p=normalizer(log_w_t), 
+                                                   shape=(2,))
             
             sub_x_tm1 = x_tm1[backwd_indices]
             sub_H_tm1 = H_tm1[backwd_indices]
 
-            h_t = _vmaped_h(x_tm1, 
-                            log_q_tm1_t,
-                            log_q_tm1)
+            sub_h_t = _vmaped_h(sub_x_tm1, 
+                            log_q_tm1_t[backwd_indices],   
+                            log_q_tm1[backwd_indices])
+
+            H_t = jnp.mean(sub_H_tm1 + sub_h_t, axis=0)
 
             if variance_reduction: 
-                moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
+                control_variate = H_t
             else: 
-                moving_average_H = 0.0
+                control_variate = 0.0
 
-            sub_h_t = h_t[backwd_indices]
 
-            grad_log_q_tm1_t, _ = jax.vmap(jax.grad(_log_q_tm1_t, has_aux=True),
+            sub_grad_log_q_tm1_t = jax.vmap(jax.grad(_log_q_tm1_t),
                                         in_axes=(None,0,None))(unformatted_phi_t, 
                                                             sub_x_tm1, 
                                                             x_t)
 
 
-            H_t = jnp.mean(sub_H_tm1 + sub_h_t, axis=0)
-            F_t = tree_map(lambda F, grad_log_backwd: jax.vmap(lambda F, H, h, grad_log_backwd: F + grad_log_backwd*(H+h-moving_average_H))(
+            F_t = tree_map(lambda F, sub_grad_log_backwd: jax.vmap(lambda F, H, h, grad_log_backwd: F + grad_log_backwd*(H+h-control_variate))(
                                                                     F[backwd_indices], 
                                                                     sub_H_tm1,
                                                                     sub_h_t, 
-                                                                    grad_log_backwd[backwd_indices]), 
+                                                                    sub_grad_log_backwd), 
                                                                     F_tm1, 
-                                                                    grad_log_q_tm1_t)
+                                                                    sub_grad_log_q_tm1_t)
             F_t = tree_map(lambda x: jnp.mean(x, axis=0), F_t)
 
-        return F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t, kl[0]
+        return F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t
 
-    F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t, kl = jax.vmap(update)(jax.random.split(key_t, num_samples))
+    F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
 
 
     carry_t = {'stats':{'F':F_t, 'H':H_t},
@@ -707,7 +705,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
             'grad_log_q':grad_log_q_t}
     
 
-    return carry_t, kl[0]
+    return carry_t, 0.0
 
 def postprocess_score_gradients(carry, T, variance_reduction, **kwargs):
         H_T = carry['stats']['H']
