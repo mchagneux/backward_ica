@@ -5,8 +5,8 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['johnson_backward.10.rmsprop,1e-3,cst.online,10,reset.autodiff_on_backward',
-                 'johnson_backward.10.rmsprop,1e-3,cst.online,10,reset.score,variance_reduction,bptt_depth_2']
+settings_list = ['johnson_backward.10.adam,1e-3,cst.online,10,reset.autodiff_on_backward',
+                 'johnson_backward.10.adam,1e-3,cst.online,10,reset.score,variance_reduction,bptt_depth_1']
 
 
 

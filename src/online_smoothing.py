@@ -591,21 +591,24 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
             h_t = _vmaped_h(x_tm1, log_q_tm1_t, log_q_tm1)
 
+            log_w_t = log_q_tm1_t - log_q_tm1
+            w_t = normalizer(log_w_t)
+            H_t = jax.vmap(lambda w, H, h: w * (H+h))(w_t, H_tm1, h_t)
+            H_t = jnp.sum(H_t, axis=0)
+
             if variance_reduction: 
-                moving_average_H = jnp.mean(H_tm1 + h_t, axis=0)
+                control_variate = H_t
             else: 
-                moving_average_H = 0.0
+                control_variate = 0.0
             
 
             # log_w_t = jax.vmap(q.log_fwd_potential, 
             #                    in_axes=(0,None,None))(x_tm1, 
             #                                           x_t, 
             #                                           q.format_params(unformatted_phi_t))
-            log_w_t = log_q_tm1_t - log_q_tm1
-            w_t = normalizer(log_w_t)
-            H_t = jax.vmap(lambda w, H, h: w * (H+h))(w_t, H_tm1, h_t)
 
-            F_t = tree_map(lambda F, grad_log_backwd: jax.vmap(lambda w, F, H, h, grad_log_backwd: w*(F + grad_log_backwd*(H+h-moving_average_H)))(
+
+            F_t = tree_map(lambda F, grad_log_backwd: jax.vmap(lambda w, F, H, h, grad_log_backwd: w*(F + grad_log_backwd*(H+h-control_variate)))(
                                                         w_t, 
                                                         F, 
                                                         H_tm1,
@@ -613,7 +616,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                                                         grad_log_backwd), 
                                                         F_tm1, 
                                                         grad_log_q_tm1_t)
-            F_t, H_t = tree_map(lambda x: jnp.sum(x, axis=0), F_t), jnp.sum(H_t, axis=0)
+            F_t = tree_map(lambda x: jnp.sum(x, axis=0), F_t)
 
  
         else: 

@@ -467,7 +467,7 @@ class SVITrainer:
             if log_writer is not None:
                 with log_writer.as_default():
                     tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
-                    tf.summary.scalar('Epoch mean KL', avg_aux_epoch, epoch_nb)
+                    tf.summary.scalar('Epoch mean distance', avg_aux_epoch, epoch_nb)
 
                     if self.batch_size > 1:
                          for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
