@@ -584,7 +584,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
         if not paris: 
 
-            (log_q_tm1_t, kl),  grad_log_q_tm1_t = jax.vmap(jax.value_and_grad(_log_q_tm1_t, has_aux=True),
+            (log_q_tm1_t, kl), grad_log_q_tm1_t = jax.vmap(jax.value_and_grad(_log_q_tm1_t, has_aux=True),
                                                     in_axes=(None,0,None))(unformatted_phi_t, 
                                                                         x_tm1, 
                                                                         x_t)
