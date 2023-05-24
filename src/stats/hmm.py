@@ -207,10 +207,13 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
     def backwd_params_from_states(self, states, params):
 
         state = states[0]
-        return self.linear_gaussian_backwd_params_from_transition_and_filt(state.out[0], state.out[1], params.transition)
+        return self.linear_gaussian_backwd_params_from_transition_and_filt(state.out[0], 
+                                                                           state.out[1], 
+                                                                           params.transition)
 
     def filt_params_from_state(self, state, params):
-        return Gaussian.Params(mean=state.out[0], scale=Scale(cov=state.out[1]))
+        return Gaussian.Params(mean=state.out[0], 
+                               scale=Scale(cov=state.out[1]))
 
     def likelihood_seq(self, obs_seq, params):
 

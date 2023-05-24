@@ -121,7 +121,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
             def _log_fwd_potential(x_0, x_1, backwd_params):
 
                 params, aux = backwd_params
-
+                
                 _ , (eta1, eta2) = self.backwd_kernel.nonlinear_map_apply(params, aux, x_1)
                 
                 return x_0.T @ eta2 @ x_0 + eta1.T @ x_0

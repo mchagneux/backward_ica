@@ -78,7 +78,8 @@ def classify_fn(latents: jax.Array) -> jax.Array:
 _conditionnings = {'diagonal':lambda param, d: jnp.diag(param),
                 'sym_def_pos': lambda param, d: mat_from_chol_vec(param, d) + jnp.eye(d),
                 None:lambda x, d:x,
-                'init_sym_def_pos': lambda x,d:x}
+                'init_sym_def_pos': lambda x,d:x,
+                'init_scaled_by_dim':lambda x,d:x}
 
 
 def get_keys(key, num_seqs, num_epochs):
@@ -287,8 +288,11 @@ def get_defaults(args):
         
     if 'chaotic_rnn' in args.model:
         args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
-        args.transition_matrix_conditionning = 'init_sym_def_pos' # constraint
-        args.default_transition_matrix = os.path.join(args.load_from, 'W.npy')
+        args.transition_matrix_conditionning = 'init_scale_by_dim' # constraint
+        if args.load_from != '':
+            args.default_transition_matrix = os.path.join(args.load_from, 'W.npy')
+        else: 
+            args.default_transition_matrix = None
         args.grid_size = 0.001 # discretization parameter for the chaotic rnn
         args.gamma = 2.5 # gamma for the chaotic rnn
         args.tau = 0.025 # tau for the chaotic rnn
@@ -300,9 +304,9 @@ def get_defaults(args):
         args.transition_bias = False 
         args.emission_bias = False
     else: 
-        args.transition_matrix_conditionning = 'diagonal'
+        args.transition_matrix_conditionning = 'sym_def_pos'
         args.range_transition_map_params = [0.9,1]
-        args.transition_bias = False
+        args.transition_bias = True
 
     if 'nonlinear_emission' in args.model:
         args.emission_map_layers = (8,)
@@ -311,7 +315,11 @@ def get_defaults(args):
 
     if ('neural_backward' in args.model) or ('johnson' in args.model) :
         ## variational family
-        nb_layers = int(args.model.split('_')[-1])
+        args.anisotropic = 'anisotropic' in args.model
+        if 'diagonal_transition' in args.model:
+            args.transition_matrix_conditionning = 'diagonal'
+
+        nb_layers = int(args.model.split(',')[-1])
         args.update_layers = (nb_layers,) # number of layers in the GRU which updates the variational filtering dist
         # args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
@@ -320,7 +328,7 @@ def get_defaults(args):
 
     if 'neural_backward' in args.model:
         if not 'explicit_transition' in args.model:
-            args.backwd_layers = (8,)
+            args.backwd_layers = (int(args.model.split(',')[-1]),)
         else: 
             args.backwd_layers = 0
 

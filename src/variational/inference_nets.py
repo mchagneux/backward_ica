@@ -67,7 +67,7 @@ def johnson_anisotropic(obs, layers, state_dim):
 
     out = rec_net(obs)
     eta1 = out[:d]
-    eta2 = mat_from_chol_vec(out[d:],d)
+    eta2 = -mat_from_chol_vec(out[d:],d)
 
     return eta1, eta2
 

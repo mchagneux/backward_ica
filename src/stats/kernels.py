@@ -86,6 +86,8 @@ class Maps:
             d = out_dim 
             w = random.uniform(key_w, ((d*(d+1)) // 2,), minval=range_params[0], maxval=range_params[1])
             w = _conditionnings['sym_def_pos'](w, d)
+        elif conditionning == 'init_scaled_by_dim':
+            w = random.normal(key_w, (d,d)) / jnp.sqrt(d)
         else: 
             w = random.uniform(key_w, (out_dim, len(dummy_in)), minval=range_params[0], maxval=range_params[1])
             
@@ -213,7 +215,8 @@ class Kernel:
             return self._get_random_map_params(key)
         else:
             key, subkey = random.split(key, 2)
-            return self.Params(self._get_random_map_params(key), self._get_random_noise_params(subkey))
+            return self.Params(self._get_random_map_params(key), 
+                               self._get_random_noise_params(subkey))
 
     def format_params(self, params):
         return self.Params(

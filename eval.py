@@ -10,7 +10,7 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model
 from src.utils.misc import *
 import os 
-path = 'experiments/p_chaotic_rnn/2023_05_24__09_46_31'
+path = 'experiments/p_chaotic_rnn/2023_05_24__15_41_14'
 num_smoothing_samples = 1000
 
 key = jax.random.PRNGKey(0)
@@ -27,11 +27,9 @@ seq_length = 2000
 y = y[:seq_length]
 x = x[:seq_length]
 T = seq_length - 1 
-models = [
-        'johnson_backward_100.5.adam,1e-2,cst.online,2000,reset.autodiff_on_backward',
-        'johnson_backward_100.5.adam,1e-2,cst.online,2000,reset.score,variance_reduction,bptt_depth_2',
-        'johnson_backward_100.5.adam,1e-3,cst.online,10,reset.autodiff_on_backward',
-        'johnson_backward_100.5.adam,1e-3,cst.online,10,reset.score,variance_reduction,bptt_depth_2']
+
+
+models = ['johnson_backward,anisotropic,10.10.adam,1e-3,cst.online,10,reset.autodiff_on_backward']
 
 def eval_model(model):
     model_path = os.path.join(path, model)
@@ -72,7 +70,7 @@ nb_sigma = 1.96
 filt = False
 timesteps = jnp.arange(seq_length)
 for model in models: 
-    fig, axes = plt.subplots(p_args.state_dim, 1, figsize=(15,15))
+    fig, axes = plt.subplots(p_args.state_dim, 1, figsize=(15,1.5*p_args.state_dim))
     plt.suptitle(model)
 
     plt.autoscale(True)
