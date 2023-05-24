@@ -6,8 +6,11 @@ base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
 settings_list = ['johnson_backward_100.5.adam,1e-2,cst.online,2000,reset.autodiff_on_backward',
+                 'johnson_backward_100.5.adam,1e-2,cst.online,2000,reset.score,variance_reduction,bptt_depth_1',
                  'johnson_backward_100.5.adam,1e-2,cst.online,2000,reset.score,variance_reduction,bptt_depth_2',
+                 
                  'johnson_backward_100.5.adam,1e-3,cst.online,10,reset.autodiff_on_backward',
+                 'johnson_backward_100.5.adam,1e-3,cst.online,10,reset.score,variance_reduction,bptt_depth_1',
                  'johnson_backward_100.5.adam,1e-3,cst.online,10,reset.score,variance_reduction,bptt_depth_2']
 
 
