@@ -304,7 +304,7 @@ def get_defaults(args):
         args.emission_bias = False
 
     if not args.model == 'linear':
-        args.transition_matrix_conditionning = 'sym_def_pos'
+        args.transition_matrix_conditionning = 'diagonal'
         args.range_transition_map_params = [0.9,1]
         args.transition_bias = True
     else: 

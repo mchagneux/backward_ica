@@ -108,12 +108,22 @@ class SVITrainer:
         if 'linear_sched' in optim_options:
             
             learning_rate = optax.linear_schedule(learning_rate, 
-                                                  end_value=learning_rate / 10, 
-                                                  transition_steps=num_epochs * self.online_batch_size)
+                                                  end_value=learning_rate / 100, 
+                                                  transition_steps=num_epochs * (seq_length / self.online_batch_size))
         
+        elif 'warmup_cosine' in optim_options:
+
+            learning_rate = optax.warmup_cosine_decay_schedule(
+                init_value=learning_rate / 100,
+                peak_value=learning_rate / 10,
+                warmup_steps=20 * seq_length / self.online_batch_size,
+                decay_steps=num_epochs * (seq_length / self.online_batch_size),
+                end_value=learning_rate / 1000,
+                )
         elif 'cst' in optim_options:
             pass 
 
+        
         else:
             raise NotImplementedError
                 
