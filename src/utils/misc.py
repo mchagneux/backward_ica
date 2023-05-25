@@ -303,10 +303,16 @@ def get_defaults(args):
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
         args.transition_bias = False 
         args.emission_bias = False
-    else: 
+
+    if not args.model == 'linear':
         args.transition_matrix_conditionning = 'sym_def_pos'
         args.range_transition_map_params = [0.9,1]
         args.transition_bias = True
+    else: 
+        args.transition_matrix_conditionning = 'diagonal'
+        args.range_transition_map_params = [0.99,1]
+        args.transition_bias = False
+
 
     if 'nonlinear_emission' in args.model:
         args.emission_map_layers = (8,)
@@ -320,7 +326,7 @@ def get_defaults(args):
             args.transition_matrix_conditionning = 'diagonal'
 
         nb_layers = int(args.model.split(',')[-1])
-        args.update_layers = (nb_layers,) # number of layers in the GRU which updates the variational filtering dist
+        args.update_layers = (nb_layers,nb_layers,) # number of layers in the GRU which updates the variational filtering dist
         # args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     if 'johnson' in args.model:
