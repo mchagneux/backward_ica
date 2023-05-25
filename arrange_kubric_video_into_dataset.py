@@ -24,7 +24,7 @@ class Config:
   video_path:str = ''
   train_video_path: str = ''
   valid_video_path: str = ''
-  train_proportion: float = -1  
+  train_proportion: float = -1
 
 
 def one_video_per_split(train_video_path, valid_video_path):

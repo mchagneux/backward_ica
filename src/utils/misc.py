@@ -16,7 +16,6 @@ import matplotlib.transforms as transforms
 import numpy as np
 import pandas as pd
 import jax
-from jaxlib.xla_extension import DeviceArray
 import collections.abc
 import haiku as hk 
 import dataclasses
@@ -637,7 +636,7 @@ def cosine_similarity(oracle, estimate):
 
 
 def params_to_dict(params):
-    if isinstance(params, np.ndarray) or isinstance(params, DeviceArray):
+    if isinstance(params, np.ndarray) or isinstance(params, jax.Array):
         return params
     elif isinstance(params, dict):
         for key, value in params.items():
