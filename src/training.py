@@ -82,7 +82,7 @@ class SVITrainer:
                     self.online_batch_size = int(training_mode.split(',')[1])
                     self.online_reset = 'reset' in training_mode
             
-            learning_rate *= self.online_batch_size / seq_length
+            learning_rate *= self.online_batch_size / 1000
         else:
             online = False 
             true_online = False
@@ -266,28 +266,13 @@ class SVITrainer:
                                                 self.formatted_theta_star, 
                                                 params)
                     
-                    neg_elbo, neg_grad = self.elbo.postprocess(carry, 
-                                                               T=len(ys)-1)
+                    elbo, grad = self.elbo.postprocess(carry) 
+                    T = len(ys) - 1 
+                    neg_elbo = -elbo / (T+1)
+                    neg_grad = tree_map(lambda x: -x / (T+1), grad)
                     return (neg_elbo, neg_grad), aux
                      
                 self.elbo_step = self.elbo.step
-
-            elif ('autodiff_on_forward' in self.elbo_mode) and self.online_reset:
-                print('USING AUTODIFF ON FORWARD ELBO.')
-
-                self.elbo = OnlineELBO(p, q, num_samples, **self.elbo_options)
-                
-                def elbo_and_grads_batch(key, ys, params):
-                    def f(params):
-                        carry, aux = self.elbo.batch_compute(
-                                            key, 
-                                            ys, 
-                                            self.formatted_theta_star, 
-                                            params)
-                        neg_elbo = self.elbo.postprocess(carry, T=len(ys)-1)
-                        return neg_elbo, aux
-                    (neg_elbo, aux), neg_grad = jax.value_and_grad(f, has_aux=True)(params)
-                    return (neg_elbo, neg_grad), aux
                 
                     
             elif ('autodiff_on_backward' in self.elbo_mode) and self.online_reset:
@@ -326,45 +311,52 @@ class SVITrainer:
                             timesteps, 
                             params):
                 key, subkey = jax.random.split(key, 2)
-                keys = jax.random.split(subkey, len(timesteps))
                 
                 if self.online_reset:
                     ys = data[timesteps]
                     
-                    (neg_elbo, neg_grad), aux = self.elbo_batch(key, ys, params)
+                    (neg_elbo, neg_grad), aux = self.elbo_batch(subkey, ys, params)
 
                 else: 
+                    keys = jax.random.split(subkey, len(timesteps))
                     strided_ys = self.elbo.preprocess(data)[timesteps]
 
                     if self.true_online: 
+
                         def _step(carry, x):
-                            key, t, ys_bptt = x
+                            key, t, strided_y = x
                             input_t = {'t':t, 
                                     'key': key, 
-                                    'ys_bptt':ys_bptt, 
+                                    'ys_bptt':strided_y, 
                                     'T':timesteps[-1],
                                     'phi':params}
                             
                             carry['theta'] = self.formatted_theta_star
-                            carry, aux = self.elbo.step(carry, input_t)
+                            new_carry, aux = self.elbo.step(carry, 
+                                                        input_t)
                         
-                            
-                            return carry, (carry, aux)
+                            elbo_t, grad_t = self.elbo.postprocess(new_carry)
+
+                            return new_carry, (aux, new_carry, elbo_t, grad_t)
+                        
+                        _ , (aux, carries, elbos, grads) = jax.lax.scan(_step, 
+                                                                        init=elbo_carry,
+                                                                        xs=(keys, 
+                                                                            timesteps, 
+                                                                            strided_ys))
+                        elbo_carry = tree_get_idx(0, 
+                                                  carries)
+
+                        neg_elbo = -elbos[-1] / (timesteps[-1]+1)
+                        grad_tm1 = tree_get_idx(0, grads)
+                        grad_t = tree_get_idx(1, grads)
+                        neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
+                        
                     
-                        _ , (carries, aux) = jax.lax.scan(_step, 
-                                                        init=elbo_carry, 
-                                                        xs=(keys, 
-                                                            timesteps, 
-                                                            strided_ys))
-                        
 
-                        
-                        neg_elbo, neg_grad = self.elbo.postprocess(carries, 
-                                                                T=timesteps[-1])
-
-                        elbo_carry = tree_get_idx(0, carries)
               
                     else: 
+
                         def _step(carry, x):
                             key, t, ys_bptt = x
                             input_t = {'t':t, 
@@ -386,9 +378,11 @@ class SVITrainer:
                                                     strided_ys))
                         
                     
-                        neg_elbo, neg_grad = self.elbo.postprocess(elbo_carry, 
-                                                        T=timesteps[-1])
-                
+                        elbo, grad = self.elbo.postprocess(elbo_carry)
+                        T = timesteps[-1]
+                        neg_elbo = -elbo / (T+1)
+                        neg_grad = tree_map(lambda x: -x / (T+1), grad)
+
            
                 return neg_elbo, neg_grad, key, elbo_carry, aux
             
@@ -449,8 +443,8 @@ class SVITrainer:
 
     def timesteps(self, seq_length, delta):
         if self.true_online: 
-            # return tree_get_strides(2, jnp.arange(0, seq_length))
-            jnp.arange(0, seq_length)
+            return tree_get_strides(2, jnp.arange(0, seq_length))
+            # return jnp.arange(0, seq_length)
         else:
             return jnp.array(jnp.array_split(jnp.arange(0, seq_length), 
                                             seq_length // delta))

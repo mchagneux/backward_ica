@@ -107,7 +107,6 @@ class OnlineVariationalAdditiveSmoothing:
                         init=carry_m1,
                         xs=(timesteps, keys, strided_ys))
 
-
     def postprocess(self, carry, **kwargs):
         return self._postprocess_fn(carry, **kwargs, **self.options)
 
@@ -254,12 +253,12 @@ def postprocess_PaRIS(carry, **kwargs):
     return -jnp.mean(carry['stats']['tau'], axis=0) / (T + 1)
 
 
-
 def preprocess_for_bptt(obs_seq, bptt_depth, **kwargs):
 
 
     padded_ys = jnp.concatenate([jnp.empty((bptt_depth-1, obs_seq.shape[1])), 
                                  obs_seq])
+    
     strided_ys = tree_get_strides(bptt_depth, padded_ys)
 
     return strided_ys 
@@ -484,8 +483,9 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                     
                 backwd_indices = jax.lax.scan(_backwd_sample_step, 
                                             init=backwd_sampler.init(0), 
-                                            xs=(jnp.arange(2), 
-                                                jax.random.split(key_paris, 2)))[1]
+                                            xs=(jnp.arange(3), 
+                                                jax.random.split(key_paris, 3)))[1][1:]
+                
             else:
 
                 backwd_indices = jax.random.choice(key_paris, 
@@ -538,66 +538,28 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
     return carry_t, 0.0
 
-def postprocess_score_gradients(carries, T, variance_reduction, **kwargs):
+def postprocess_score_gradients(carries, variance_reduction, **kwargs):
 
 
-        true_online = kwargs['true_online']
 
-        if not true_online:
-            H_T = carries['stats']['H']
+        H_T = carries['stats']['H']
+        F_T = carries['stats']['F']
+        grad_log_q_T = carries['grad_log_q']
 
-            F_T = carries['stats']['F']
-            grad_log_q_T = carries['grad_log_q']
+        elbo_T = jnp.mean(H_T, axis=0)
 
-            elbo_T = jnp.mean(H_T, axis=0)
-            if variance_reduction:
-                moving_average_H = elbo_T
-            else: 
-                moving_average_H = 0.0
-            elbo_T /= (T + 1)
-            neg_grad_T = tree_map(lambda grad_log_q, F: \
-                            -jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)
-                                    (H_T, grad_log_q, F), 
-                                    axis=0) / (T + 1), grad_log_q_T, F_T)
-            return -elbo_T, neg_grad_T
+        if variance_reduction:
+            moving_average_H = elbo_T
         else: 
-            carry_tm1 = tree_get_idx(0, carries)
-            carry_t = tree_get_idx(1, carries)
-
-            H_tm1 = carry_tm1['stats']['H']
-            F_tm1 = carry_tm1['stats']['F']
-            grad_log_q_tm1 = carry_tm1['grad_log_q']
-
-            elbo_tm1 = jnp.mean(H_tm1, axis=0)
-            if variance_reduction:
-                moving_average_H = elbo_tm1
-            else: 
-                moving_average_H = 0.0
-            grad_tm1 = tree_map(lambda grad_log_q, F: \
-                            jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)
-                                    (H_tm1, grad_log_q, F), 
-                                    axis=0), grad_log_q_tm1, F_tm1)
-            
-
-            H_t = carry_t['stats']['H']
-            F_t = carry_t['stats']['F']
-            grad_log_q_t = carry_t['grad_log_q']
-
-            grad_log_q_t = carry_t['grad_log_q']
-
-            elbo_t = jnp.mean(H_t, axis=0)
-            if variance_reduction:
-                moving_average_H = elbo_t
-            else: 
-                moving_average_H = 0.0
-            grad_t = tree_map(lambda grad_log_q, F: \
-                            jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)
-                                    (H_t, grad_log_q, F), 
-                                    axis=0), grad_log_q_t, F_t)
-            
+            moving_average_H = 0.0
+        grad_T = tree_map(lambda grad_log_q, F: \
+                        jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)
+                                (H_T, grad_log_q, F), 
+                                axis=0), grad_log_q_T, F_T)
+        return elbo_T, grad_T
+ 
 
 
-            return -elbo_t / (T+1), tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
 
 
 OnlineELBO = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoothing(          

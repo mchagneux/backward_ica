@@ -5,18 +5,16 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['johnson_backward,100.10.adam,1e-2,cst.online,2000,reset.autodiff_on_backward',
-                 'johnson_backward,100.10.adam,1e-2,cst.online,2.score,paris,variance_reduction,bptt_depth_2',
-                 'johnson_backward,100.10.adam,1e-2,cst.true_online.score,paris,variance_reduction,bptt_depth_1']
+settings_list = ['johnson_backward,100.10.adam,1e-2,cst.online,2.score,paris,variance_reduction,bptt_depth_2']
 
 
-num_epochs = 1000
+num_epochs = 1
 dims = '5 5'
-load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
-loaded_seq = True
+load_from = ''
+loaded_seq = False
 batch_size = 1
 num_seqs = 1
-seq_length = 2000
+seq_length = 100000
 store_every = 0
  
 
