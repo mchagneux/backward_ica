@@ -482,15 +482,24 @@ class SVITrainer:
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             
             data = jax.random.permutation(subkey_batcher, data)
+            if self.online: 
+                for x in batch_start_indices:
+                    carry = (data, 
+                            params, 
+                            opt_state, 
+                            subkeys_epoch)
+                    
+                    (_ , params, opt_state, _), (avg_elbo_batch, avg_grads_batch, avg_aux_batch) = self.batch_step(carry, x)
+            else: 
 
-            (_ , params, opt_state, _), (avg_elbo_batches, avg_grads_batches, avg_aux_batches) = jax.lax.scan(
-                                                                    f=self.batch_step,  
-                                                                    init=(
-                                                                        data, 
-                                                                        params, 
-                                                                        opt_state, 
-                                                                        subkeys_epoch), 
-                                                                    xs=batch_start_indices)
+                (_ , params, opt_state, _), (avg_elbo_batches, avg_grads_batches, avg_aux_batches) = jax.lax.scan(
+                                                                        f=self.batch_step,  
+                                                                        init=(
+                                                                            data, 
+                                                                            params, 
+                                                                            opt_state, 
+                                                                            subkeys_epoch), 
+                                                                        xs=batch_start_indices)
             
 
 
