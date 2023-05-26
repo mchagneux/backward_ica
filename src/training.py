@@ -68,17 +68,29 @@ class SVITrainer:
         self.elbo_mode = elbo_mode
 
 
+        if 'online' in training_mode:
+            if training_mode == 'true_online':
+                online = True 
+                true_online = True
+                self.online_batch_size = 1
+                self.online_reset = False
 
-        if 'online' in training_mode: 
-            online = True 
-            self.online_batch_size = int(training_mode.split(',')[1])
-            self.online_reset = 'reset' in training_mode
+            else: 
+                true_online = False
+                if 'online' in training_mode: 
+                    online = True 
+                    self.online_batch_size = int(training_mode.split(',')[1])
+                    self.online_reset = 'reset' in training_mode
             
+            learning_rate *= self.online_batch_size / seq_length
         else:
             online = False 
+            true_online = False
+
+        
 
         self.online = online
-            
+        self.true_online = true_online
 
 
         self.monitor = False
@@ -91,6 +103,8 @@ class SVITrainer:
             if 'bptt_depth' in elbo_mode: 
                 self.elbo_options['bptt_depth'] = int(elbo_mode.split('bptt_depth')[1].split('_')[1])
 
+            self.elbo_options['true_online'] = True if self.true_online else False
+        
         def optimizer_update_fn(params, updates):
             new_params = optax.apply_updates(params, updates)
             # if self.online:
@@ -300,7 +314,8 @@ class SVITrainer:
             if not self.online_reset: 
                 init_carry = jax.vmap(self.elbo.init_carry, 
                                         axis_size=batch_size, 
-                                        in_axes=(None,))(self.q.get_random_params(jax.random.PRNGKey(0)))   
+                                        in_axes=(None,))(self.q.get_random_params(jax.random.PRNGKey(0)))
+                
 
             else: 
                 init_carry = jnp.empty((self.batch_size,1))
@@ -321,32 +336,60 @@ class SVITrainer:
                 else: 
                     strided_ys = self.elbo.preprocess(data)[timesteps]
 
-                    def _step(carry, x):
-                        key, t, ys_bptt = x
-                        input_t = {'t':t, 
-                                'key': key, 
-                                'ys_bptt':ys_bptt, 
-                                'T':timesteps[-1],
-                                'phi':params}
+                    if self.true_online: 
+                        def _step(carry, x):
+                            key, t, ys_bptt = x
+                            input_t = {'t':t, 
+                                    'key': key, 
+                                    'ys_bptt':ys_bptt, 
+                                    'T':timesteps[-1],
+                                    'phi':params}
+                            
+                            carry['theta'] = self.formatted_theta_star
+                            carry, aux = self.elbo.step(carry, input_t)
                         
-                        carry['theta'] = self.formatted_theta_star
-                        carry, aux = self.elbo.step(carry, input_t)
-                       
-                        
-                        return carry, aux
-                
-                    elbo_carry, aux = jax.lax.scan(_step, 
-                                            init=elbo_carry, 
-                                            xs=(keys, 
-                                                timesteps, 
-                                                strided_ys))
+                            
+                            return carry, (carry, aux)
                     
-                
-                    neg_elbo, neg_grad = self.elbo.postprocess(elbo_carry, 
-                                                    T=timesteps[-1])
+                        _ , (carries, aux) = jax.lax.scan(_step, 
+                                                        init=elbo_carry, 
+                                                        xs=(keys, 
+                                                            timesteps, 
+                                                            strided_ys))
+                        
+
+                        
+                        neg_elbo, neg_grad = self.elbo.postprocess(carries, 
+                                                                T=timesteps[-1])
+
+                        elbo_carry = tree_get_idx(0, carries)
+              
+                    else: 
+                        def _step(carry, x):
+                            key, t, ys_bptt = x
+                            input_t = {'t':t, 
+                                    'key': key, 
+                                    'ys_bptt':ys_bptt, 
+                                    'T':timesteps[-1],
+                                    'phi':params}
+                            
+                            carry['theta'] = self.formatted_theta_star
+                            carry, aux = self.elbo.step(carry, input_t)
+                        
+                            
+                            return carry, aux
+                    
+                        elbo_carry, aux = jax.lax.scan(_step, 
+                                                init=elbo_carry, 
+                                                xs=(keys, 
+                                                    timesteps, 
+                                                    strided_ys))
+                        
+                    
+                        neg_elbo, neg_grad = self.elbo.postprocess(elbo_carry, 
+                                                        T=timesteps[-1])
                 
            
-                    
                 return neg_elbo, neg_grad, key, elbo_carry, aux
             
             self.loss = online_step
@@ -405,9 +448,12 @@ class SVITrainer:
         self.batch_step = batch_step
 
     def timesteps(self, seq_length, delta):
-
-        return jnp.array(jnp.array_split(jnp.arange(0, seq_length), 
-                                         seq_length // delta))
+        if self.true_online: 
+            # return tree_get_strides(2, jnp.arange(0, seq_length))
+            jnp.arange(0, seq_length)
+        else:
+            return jnp.array(jnp.array_split(jnp.arange(0, seq_length), 
+                                            seq_length // delta))
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None, log_writer_monitor=None):
 

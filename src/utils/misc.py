@@ -302,12 +302,7 @@ def get_defaults(args):
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
         args.transition_bias = False 
         args.emission_bias = False
-
-    if not args.model == 'linear':
-        args.transition_matrix_conditionning = 'diagonal'
-        args.range_transition_map_params = [0.9,1]
-        args.transition_bias = True
-    else: 
+    else:
         args.transition_matrix_conditionning = 'diagonal'
         args.range_transition_map_params = [0.99,1]
         args.transition_bias = False
@@ -324,8 +319,8 @@ def get_defaults(args):
         if 'diagonal_transition' in args.model:
             args.transition_matrix_conditionning = 'diagonal'
 
-        nb_layers = int(args.model.split(',')[-1])
-        args.update_layers = (nb_layers,nb_layers,) # number of layers in the GRU which updates the variational filtering dist
+        layers = [int(nb) for nb in args.model.split(',')[-1].split('_')]
+        args.update_layers = (*layers,) # number of layers in the GRU which updates the variational filtering dist
         # args.backwd_map_layers = (32,) # number of layers in the MLP which predicts backward parameters (not used in the Johnson method)
 
     if 'johnson' in args.model:
