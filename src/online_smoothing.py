@@ -268,13 +268,13 @@ def init_carry_score_gradients(unformatted_params, **kwargs):
     dummy_state = kwargs['q'].empty_state()
     out_shape = kwargs['h'].out_shape
     
-    dummy_x = jnp.empty((num_samples, state_dim))
-    dummy_H = jnp.empty((num_samples, *out_shape))
+    dummy_x = jnp.zeros((num_samples, state_dim))
+    dummy_H = jnp.zeros((num_samples, *out_shape))
     dummy_F = jax.jacrev(lambda phi:dummy_H)(unformatted_params)
 
     carry = {'base_s': dummy_state, 
             'x':dummy_x, 
-            'log_q':jnp.empty((num_samples,)),
+            'log_q':jnp.zeros((num_samples,)),
             'stats':{'H':dummy_H, 
                     'F':dummy_F},
             'grad_log_q':dummy_F}
@@ -380,7 +380,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
     
     def _log_q_t_and_dummy_grad(unformatted_phi, key):
         log_q_t, (x_t, base_s_t) = _log_q_t(unformatted_phi, key)
-        dummy_grad = tree_map(lambda x: jnp.empty_like(x[0]), carry_tm1['grad_log_q'])
+        dummy_grad = tree_map(lambda x: jnp.zeros_like(x[0]), carry_tm1['grad_log_q'])
         return (log_q_t, (x_t, base_s_t)), dummy_grad
     
     def _log_q_t_and_grad(unformatted_phi, key):
