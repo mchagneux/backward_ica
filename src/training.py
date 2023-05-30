@@ -239,7 +239,7 @@ class SVITrainer:
                                                                         xs=(keys, 
                                                                             timesteps, 
                                                                             strided_ys))
-                        neg_elbo = -elbos[-1] / (timesteps[-1]+1)
+                        elbo = elbos[-1] / (timesteps[-1]+1)
                         grad_tm1 = tree_get_idx(0, grads)
                         grad_t = tree_get_idx(1, grads)
                         neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
@@ -266,7 +266,7 @@ class SVITrainer:
                         elbo_t, grad_t = self.elbo.postprocess(new_carry)
                         neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
                         # neg_grad = tree_map(lambda x: -x / (t+1), grad_t)
-                        neg_elbo = -elbo_t / (t+1)
+                        elbo = elbo_t / (t+1)
                         elbo_carry = new_carry
 
 
@@ -296,17 +296,17 @@ class SVITrainer:
                 
                     elbo, grad = self.elbo.postprocess(elbo_carry)
                     T = timesteps[-1]
-                    neg_elbo = -elbo / (T+1)
+                    elbo/=(T+1)
                     neg_grad = tree_map(lambda x: -x / (T+1), grad)
 
         
-            return neg_elbo, neg_grad, elbo_carry, aux
+            return elbo, neg_grad, elbo_carry, aux
                     
 
         @jax.jit
         def step(key, strided_data_on_timesteps, elbo_carry, timesteps, params, opt_state):
 
-            neg_elbo, grad, elbo_carry, aux = online_update(
+            elbo, neg_grad, elbo_carry, aux = online_update(
                                                             key, 
                                                             elbo_carry, 
                                                             strided_data_on_timesteps, 
@@ -314,13 +314,13 @@ class SVITrainer:
                                                             params)
 
             
-            updates, opt_state = self.optimizer.update(grad, 
+            updates, opt_state = self.optimizer.update(neg_grad, 
                                                         opt_state, 
                                                         params)
             
             params = self.optimizer_update_fn(params, updates)
 
-            return (params, opt_state, elbo_carry), (-neg_elbo, ravel_pytree(grad)[0], aux)
+            return (params, opt_state, elbo_carry), (elbo, ravel_pytree(grad)[0], aux)
         
         self.step = step
 
