@@ -67,29 +67,21 @@ class SVITrainer:
 
         self.elbo_mode = elbo_mode
 
+        self.training_mode = training_mode
+        if 'true_online' in training_mode:
+            true_online = True
+            self.online_batch_size = 1
+            self.online_reset = False
+                
 
-        if 'online' in training_mode:
-            if training_mode == 'true_online':
-                online = True 
-                true_online = True
-                self.online_batch_size = 1
-                self.online_reset = False
-
-            else: 
-                true_online = False
-                if 'online' in training_mode: 
-                    online = True 
-                    self.online_batch_size = int(training_mode.split(',')[1])
-                    self.online_reset = 'reset' in training_mode
-            
-            learning_rate *= self.online_batch_size / 1000
-        else:
-            online = False 
+        else: 
             true_online = False
-
+            if 'online' in training_mode: 
+                self.online_batch_size = int(training_mode.split(',')[1])
+                self.online_reset = 'reset' in training_mode
         
+        learning_rate *= self.online_batch_size / 100
 
-        self.online = online
         self.true_online = true_online
 
 
@@ -141,186 +133,86 @@ class SVITrainer:
         else:
             raise NotImplementedError
                 
-        if 'polyak' in optim_options:
-            self.polyak_averaging = True
-        else: 
-            self.polyak_averaging = False
-
         base_optimizer = optax.apply_if_finite(getattr(optax, optimizer)(learning_rate),
                                             max_consecutive_errors=10)
 
-        # base_optimizer = optax.apply_if_finite(
-        #                             optax.masked(getattr(optax, optimizer)(learning_rate), 
-        #                                                     self.trainable_params), 
-        #                                     max_consecutive_errors=10)
-        
-        # zero_grads_optimizer = optax.masked(optax.set_to_zero(), self.fixed_params)
 
-        self.optimizer = optax.chain(
-                                # optax.clip(1.0),
-                                # zero_grads_optimizer, 
-                                base_optimizer)
+        self.optimizer = base_optimizer
 
+        if self.monitor:
+            self.monitor_elbo = GeneralBackwardELBO(p, q, num_samples)
 
-        if not self.online: 
+        if 'score' in self.elbo_mode:
+            print('USING SCORE ELBO.')
+            self.elbo = OnlineELBOScoreGradients(
+                                            self.p, 
+                                            self.q, 
+                                            num_samples=num_samples, 
+                                            **self.elbo_options)
+            
+                    
+            def elbo_and_grads_batch(key, ys, params):
+                carry, aux = self.elbo.batch_compute(
+                                            key, 
+                                            ys, 
+                                            self.formatted_theta_star, 
+                                            params)
+                
+                elbo, grad = self.elbo.postprocess(carry) 
+                T = len(ys) - 1 
+                neg_elbo = -elbo / (T+1)
+                neg_grad = tree_map(lambda x: -x / (T+1), grad)
+                return (neg_elbo, neg_grad), aux
+                    
+            self.elbo_step = self.elbo.step
+            
+                
+        elif ('autodiff_on_backward' in self.elbo_mode) and self.online_reset:
+            self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
+            print('USING AUTODIFF ON BACKWARD ELBO.')
 
-            if isinstance(self.p, LinearGaussianHMM) and isinstance(self.q, LinearGaussianHMM) and (not force_full_mc):
-                self.elbo = LinearGaussianELBO(self.p, self.q)
-                self.get_montecarlo_keys = get_dummy_keys
-                def closed_form_elbo(key, data, compute_up_to, params):
-                    value, dummy_aux = self.elbo(
-                                        data, 
-                                        compute_up_to, 
-                                        self.formatted_theta_star, 
-                                        q.format_params(params))
-                    return -value, dummy_aux
-                self.loss = closed_form_elbo
-            else: 
-                if 'score' in self.elbo_mode:
-                    self.elbo = OnlineELBOScoreGradients(
-                                                        self.p, 
-                                                        self.q, 
-                                                        num_samples=num_samples, 
-                                                        **self.elbo_options)
+            def elbo_and_grads_batch(key, ys, params):
+                def f(params):
+                    elbo, aux = self.elbo(key, 
+                                            ys, 
+                                            len(ys)-1, 
+                                            self.formatted_theta_star, 
+                                            q.format_params(params))
+                    return -elbo / len(ys), aux 
+                (neg_elbo, aux), neg_grad = jax.value_and_grad(f, has_aux=True)(params)
+                return (neg_elbo, neg_grad), aux
 
-                    self.get_montecarlo_keys = get_keys
-                    def online_elbo(key, data, compute_up_to, params):
-                        carry, aux = self.elbo.batch_compute(key, 
-                                                    data, 
-                                                    self.formatted_theta_star, 
-                                                    params)
-                        neg_elbo, neg_grad = self.elbo.postprocess(carry, 
-                                                           T=compute_up_to)
-                        return (neg_elbo, neg_grad), aux
-                    self.loss = online_elbo
+        else:
+            print('ELBO mode not suitable for gradient accumulation.')
+            raise NotImplementedError
 
-                elif 'autodiff_on_backward' in self.elbo_mode: 
-                    self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-                    self.get_montecarlo_keys = get_keys
-                    def offline_elbo(key, data, compute_up_to, params):
-                        value, aux = self.elbo(
-                                        key, 
-                                        data, 
-                                        compute_up_to, 
-                                        self.formatted_theta_star, 
-                                        q.format_params(params))
-                        return -value / (compute_up_to + 1), aux
+        self.elbo_batch = elbo_and_grads_batch
+        self.get_montecarlo_keys = get_keys
 
-                    self.loss = offline_elbo
-
-                else: 
-                    print('ELBO mode not suitable for offline learning.')
-
-                def step(carry, x):
-                    def _step(params, opt_state, batch, keys):
-                        if 'score' in self.elbo_mode:
-                            (neg_elbo_values, grads), aux = vmap(self.loss, in_axes=(0, 0, None, None))(keys, 
-                                                                                                        batch, 
-                                                                                                        batch.shape[1]-1, 
-                                                                                                        params)
-                        else:
-                            (neg_elbo_values, aux), grads = vmap(value_and_grad(self.loss, 
-                                                                                argnums=3, 
-                                                                                has_aux=True), 
-                                                                in_axes=(0, 0, None, None))(keys, 
-                                                                                            batch, 
-                                                                                            batch.shape[1]-1, 
-                                                                                            params)
-                        
-                        avg_grads = jax.tree_util.tree_map(partial(jnp.mean, axis=0), grads)
-                        updates, opt_state = self.optimizer.update(avg_grads, opt_state, params)
-
-                        params = self.optimizer_update_fn(params, updates)
-
-                        return params, \
-                            opt_state, \
-                            -jnp.mean(neg_elbo_values), ravel_pytree(avg_grads)[0], aux
-
-                    data, params, opt_state, subkeys_epoch = carry
-
-                    batch_start = x
-                    batch_obs_seq = jax.lax.dynamic_slice_in_dim(data, batch_start, self.batch_size)
-                    batch_keys = jax.lax.dynamic_slice_in_dim(subkeys_epoch, batch_start, self.batch_size)
-
-                    params, opt_state, avg_elbo_batch, avg_grads_batch, aux = _step(params, opt_state, batch_obs_seq, batch_keys)
-
-                    return (data, params, opt_state, subkeys_epoch), (avg_elbo_batch, avg_grads_batch, aux)
-        
+        if self.online_reset:
+            init_carry = 0.0
         else: 
-            if self.monitor:
-                self.monitor_elbo = GeneralBackwardELBO(p, q, num_samples)
+            init_carry = self.elbo.init_carry(self.q.get_random_params(jax.random.PRNGKey(0)))
 
-            if 'score' in self.elbo_mode:
-                print('USING SCORE ELBO.')
-                self.elbo = OnlineELBOScoreGradients(
-                                                self.p, 
-                                                self.q, 
-                                                num_samples=num_samples, 
-                                                **self.elbo_options)
-                
-                        
-                def elbo_and_grads_batch(key, ys, params):
-                    carry, aux = self.elbo.batch_compute(
-                                                key, 
-                                                ys, 
-                                                self.formatted_theta_star, 
-                                                params)
-                    
-                    elbo, grad = self.elbo.postprocess(carry) 
-                    T = len(ys) - 1 
-                    neg_elbo = -elbo / (T+1)
-                    neg_grad = tree_map(lambda x: -x / (T+1), grad)
-                    return (neg_elbo, neg_grad), aux
-                     
-                self.elbo_step = self.elbo.step
-                
-                    
-            elif ('autodiff_on_backward' in self.elbo_mode) and self.online_reset:
-                self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-                print('USING AUTODIFF ON BACKWARD ELBO.')
+        self.init_carry = init_carry
 
-                def elbo_and_grads_batch(key, ys, params):
-                    def f(params):
-                        elbo, aux = self.elbo(key, 
-                                              ys, 
-                                              len(ys)-1, 
-                                              self.formatted_theta_star, 
-                                              q.format_params(params))
-                        return -elbo / len(ys), aux 
-                    (neg_elbo, aux), neg_grad = jax.value_and_grad(f, has_aux=True)(params)
-                    return (neg_elbo, neg_grad), aux
+        def online_update(key, 
+                        elbo_carry, 
+                        data, 
+                        timesteps, 
+                        params):
+            
+            if self.online_reset:
+                ys = data[timesteps]
+                
+                (neg_elbo, neg_grad), aux = self.elbo_batch(key, ys, params)
 
             else: 
-                print('ELBO mode not suitable for online learning.')
+                strided_ys = self.elbo.preprocess(data)[timesteps]
 
-            self.elbo_batch = elbo_and_grads_batch
-            self.get_montecarlo_keys = get_keys
-
-            if not self.online_reset: 
-                init_carry = self.elbo.init_carry(self.q.get_random_params(jax.random.PRNGKey(0)))
-                
-
-            else: 
-                init_carry = 0.0
-
-            self.init_carry = init_carry
-
-            def online_update(key, 
-                            elbo_carry, 
-                            data, 
-                            timesteps, 
-                            params):
-                
-                if self.online_reset:
-                    ys = data[timesteps]
-                    
-                    (neg_elbo, neg_grad), aux = self.elbo_batch(key, ys, params)
-
-                else: 
-                    keys = jax.random.split(key, len(timesteps))
-                    strided_ys = self.elbo.preprocess(data)[timesteps]
-
-                    if self.true_online: 
+                if self.true_online: 
+                    if 'v1' in training_mode:
+                        keys = jax.random.split(key, len(timesteps))
 
                         def _step(carry, x):
                             key, t, strided_y = x
@@ -344,73 +236,102 @@ class SVITrainer:
                                                                             timesteps, 
                                                                             strided_ys))
                         elbo_carry = tree_get_idx(0, 
-                                                  carries)
+                                                    carries)
 
                         neg_elbo = -elbos[-1] / (timesteps[-1]+1)
                         grad_tm1 = tree_get_idx(0, grads)
                         grad_t = tree_get_idx(1, grads)
                         neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
                         
-                    
-
-              
                     else: 
 
                         def _step(carry, x):
-                            key, t, ys_bptt = x
+                            key, t, strided_y = x
                             input_t = {'t':t, 
                                     'key': key, 
-                                    'ys_bptt':ys_bptt, 
-                                    'T':timesteps[-1],
+                                    'ys_bptt':strided_y, 
+                                    'T':t,
                                     'phi':params}
                             
                             carry['theta'] = self.formatted_theta_star
-                            carry, aux = self.elbo.step(carry, input_t)
+                            new_carry, aux = self.elbo.step(carry, 
+                                                        input_t)
                         
-                            
-                            return carry, aux
+                            elbo_t, grad_t = self.elbo.postprocess(new_carry)
+
+                            return new_carry, elbo_t, grad_t, aux
+                        
+                        new_carry, elbo_t, grad_t, aux = _step(elbo_carry, (key, timesteps, strided_ys))
+
+                        neg_elbo = -elbo_t / (timesteps+1)
+
+                        grad_tm1 = self.elbo.postprocess(elbo_carry)[1]
+
+                        neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
+
+                        elbo_carry = new_carry
+
+                else: 
+                    keys = jax.random.split(key, len(timesteps))
+
+                    def _step(carry, x):
+                        key, t, ys_bptt = x
+                        input_t = {'t':t, 
+                                'key': key, 
+                                'ys_bptt':ys_bptt, 
+                                'T':timesteps[-1],
+                                'phi':params}
+                        
+                        carry['theta'] = self.formatted_theta_star
+                        carry, aux = self.elbo.step(carry, input_t)
                     
-                        elbo_carry, aux = jax.lax.scan(_step, 
-                                                init=elbo_carry, 
-                                                xs=(keys, 
-                                                    timesteps, 
-                                                    strided_ys))
                         
-                    
-                        elbo, grad = self.elbo.postprocess(elbo_carry)
-                        T = timesteps[-1]
-                        neg_elbo = -elbo / (T+1)
-                        neg_grad = tree_map(lambda x: -x / (T+1), grad)
-
-           
-                return neg_elbo, neg_grad, elbo_carry, aux
-                        
-
-            @jax.jit
-            def step(key, data, elbo_carry, timesteps, params, opt_state):
-
-                neg_elbo, grad, elbo_carry, aux = online_update(
-                                                                key, 
-                                                                elbo_carry, 
-                                                                data, 
-                                                                timesteps, 
-                                                                params)
-
+                        return carry, aux
                 
-                updates, opt_state = self.optimizer.update(grad, 
-                                                            opt_state, 
+                    elbo_carry, aux = jax.lax.scan(_step, 
+                                            init=elbo_carry, 
+                                            xs=(keys, 
+                                                timesteps, 
+                                                strided_ys))
+                    
+                
+                    elbo, grad = self.elbo.postprocess(elbo_carry)
+                    T = timesteps[-1]
+                    neg_elbo = -elbo / (T+1)
+                    neg_grad = tree_map(lambda x: -x / (T+1), grad)
+
+        
+            return neg_elbo, neg_grad, elbo_carry, aux
+                    
+
+        @jax.jit
+        def step(key, data, elbo_carry, timesteps, params, opt_state):
+
+            neg_elbo, grad, elbo_carry, aux = online_update(
+                                                            key, 
+                                                            elbo_carry, 
+                                                            data, 
+                                                            timesteps, 
                                                             params)
-                
-                params = self.optimizer_update_fn(params, updates)
 
-                return (params, opt_state, elbo_carry), (-neg_elbo, ravel_pytree(grad)[0], aux)
             
+            updates, opt_state = self.optimizer.update(grad, 
+                                                        opt_state, 
+                                                        params)
+            
+            params = self.optimizer_update_fn(params, updates)
+
+            return (params, opt_state, elbo_carry), (-neg_elbo, ravel_pytree(grad)[0], aux)
+        
         self.step = step
 
     def timesteps(self, seq_length, delta):
         if self.true_online: 
-            return tree_get_strides(2, jnp.arange(0, seq_length))
-            # return jnp.arange(0, seq_length)
+            if 'v1' in self.training_mode:
+                return tree_get_strides(2, jnp.arange(0, seq_length))
+            else:
+                return jnp.arange(0, seq_length)
+
         else:
             return jnp.array(jnp.array_split(jnp.arange(0, seq_length), 
                                             seq_length // delta))
@@ -420,13 +341,6 @@ class SVITrainer:
 
 
         params = self.q.get_random_params(key_params, args)
-
-        # with open(os.path.join('experiments/p_chaotic_rnn/2023_03_29__19_51_59/neural_backward__offline' ,'data'), 'rb') as f: 
-        #     all_params_through_epochs = dill.load(f)
-
-
-        # params = all_params_through_epochs[-1]
-
 
         params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
                         params, 
@@ -439,89 +353,28 @@ class SVITrainer:
         aux_list = []
 
         t = tqdm(total=self.num_epochs, desc='Epoch')
-        if self.online: 
-            data = data[0]
-            seq_length = data.shape[0]
-            plot_step_size = seq_length
-            keys = get_keys(key_montecarlo, seq_length // self.online_batch_size, self.num_epochs)
-            for epoch_nb, keys_epoch in enumerate(keys):
-                elbo_carry = self.init_carry
-                for step_nb, (timesteps, key_step)in enumerate(zip(self.timesteps(data.shape[0], self.online_batch_size), keys_epoch)):
-                    (params, opt_state, elbo_carry), (elbo, _ , _) = self.step(key_step, 
-                                                                                data, 
-                                                                                elbo_carry, 
-                                                                                timesteps, 
-                                                                                params, 
-                                                                                opt_state)
-                    with log_writer.as_default():
-                        tf.summary.scalar('ELBO', 
-                                        elbo, 
-                                        epoch_nb*plot_step_size + step_nb * self.online_batch_size)
-                        
-                all_params.append(params)
-                avg_elbos.append(elbo)
-                t.update(1)
+        data = data[0]
+        seq_length = data.shape[0]
+        plot_step_size = seq_length
+        keys = get_keys(key_montecarlo, seq_length // self.online_batch_size, self.num_epochs)
+        for epoch_nb, keys_epoch in enumerate(keys):
+            elbo_carry = self.init_carry
+            for step_nb, (timesteps, key_step)in enumerate(zip(self.timesteps(data.shape[0], self.online_batch_size), keys_epoch)):
+                (params, opt_state, elbo_carry), (elbo, _ , _) = self.step(key_step, 
+                                                                            data, 
+                                                                            elbo_carry, 
+                                                                            timesteps, 
+                                                                            params, 
+                                                                            opt_state)
+                with log_writer.as_default():
+                    tf.summary.scalar('ELBO', 
+                                    elbo, 
+                                    epoch_nb*plot_step_size + step_nb * self.online_batch_size)
+                    
+            all_params.append(params)
+            avg_elbos.append(elbo)
+            t.update(1)
 
-        
-                
-        else: 
-            num_seqs = data.shape[0]
-            pass
-
-            # (_ , params, opt_state, _), (avg_elbo_batches, avg_grads_batches, avg_aux_batches) = jax.lax.scan(
-            #                                                         f=self.step,  
-            #                                                         init=(
-            #                                                             data, 
-            #                                                             params, 
-            #                                                             opt_state, 
-            #                                                             subkeys_epoch), 
-            #                                                         xs=batch_start_indices)
-        
-
-
-            # # print(jnp.linalg.norm(jax.flatten_util.ravel_pytree(avg_grads)[0]))
-            # avg_aux_epoch = jnp.mean(avg_aux_batches)
-            # avg_elbo_epoch = jnp.mean(avg_elbo_batches, axis=0)
-
-            # if self.online: 
-            #     if self.monitor: 
-            #         _, monitor_elbo_batches = avg_aux_batches
-            #         monitor_elbo_epoch = jnp.mean(monitor_elbo_batches, axis=0)[-1]
-            #         monitor_elbo_batches = monitor_elbo_batches[-1]
-
-            #     avg_elbo_epoch = avg_elbo_epoch[-1]
-            #     avg_elbo_batches = avg_elbo_batches[0]
-            #     avg_aux_batches = avg_aux_batches[0]
-
-                
-            
-            # aux_list.append(params)
-
-            # t.set_postfix({'Avg ELBO epoch':avg_elbo_epoch})
-
-            # if log_writer is not None:
-            #     with log_writer.as_default():
-            #         tf.summary.scalar('Epoch ELBO', avg_elbo_epoch, epoch_nb)
-
-            #         if self.batch_size > 1:
-            #              for batch_nb, avg_elbo_batch in enumerate(avg_elbo_batches):
-            #                 tf.summary.scalar('Minibatch ELBO', 
-            #                                 avg_elbo_batch, 
-            #                                 epoch_nb*self.batch_size + batch_nb)
-                                                    
-                            
-            # if log_writer_monitor is not None:
-            #     with log_writer_monitor.as_default():
-            #         tf.summary.scalar('Epoch ELBO', monitor_elbo_epoch, epoch_nb)
-
-            #         step_size = len(avg_elbo_batches)*self.online_batch_size
-            #         for batch_nb, monitor_elbo_batch in enumerate(monitor_elbo_batches):
-            #             tf.summary.scalar('Temporal step ELBO', 
-            #                             monitor_elbo_batch, 
-            #                             epoch_nb*step_size + batch_nb * self.online_batch_size)
-                        
-            # avg_elbos.append(avg_elbo_epoch)
-            # all_params.append(params)
         t.close()
                     
         return all_params, avg_elbos, aux_list
@@ -543,7 +396,7 @@ class SVITrainer:
 
         for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
             log_writer = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}'))
-            if self.online and self.monitor:
+            if self.monitor:
                 log_writer_monitor = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}_monitor'))
             else:
                 log_writer_monitor = None
