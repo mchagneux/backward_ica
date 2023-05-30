@@ -77,10 +77,10 @@ class OnlineVariationalAdditiveSmoothing:
     def preprocess(self, obs_seq, **kwargs):
         return self._preprocess_fn(obs_seq, **kwargs, **self.options)
 
-    def batch_compute(self, key, obs_seq, theta, phi):
+    def batch_compute(self, key, strided_obs_seq, theta, phi):
 
 
-        T = len(obs_seq) - 1 # T + 1 observations
+        T = len(strided_obs_seq) - 1 # T + 1 observations
 
         keys = jax.random.split(key, T+1) # T+1 keys 
         timesteps = jnp.arange(0, T+1) # [0:T]
@@ -101,11 +101,9 @@ class OnlineVariationalAdditiveSmoothing:
         carry_m1 = self.init_carry(phi)
 
     
-        strided_ys = self.preprocess(obs_seq)
-
         return lax.scan(_step, 
                         init=carry_m1,
-                        xs=(timesteps, keys, strided_ys))
+                        xs=(timesteps, keys, strided_obs_seq))
 
     def postprocess(self, carry, **kwargs):
         return self._postprocess_fn(carry, **kwargs, **self.options)
