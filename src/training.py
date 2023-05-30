@@ -71,13 +71,13 @@ class SVITrainer:
         if 'true_online' in training_mode:
             true_online = True
             self.online_batch_size = 1
-            self.online_reset = False
+            self.reset = False
                 
 
         else: 
             true_online = False
             self.online_batch_size = int(training_mode.split(',')[1])
-            self.online_reset = 'reset' in training_mode
+            self.reset = 'reset' in training_mode
         
         # if elbo_mode != 'autodiff_on_backward':
         #     learning_rate *= self.online_batch_size / 100
@@ -169,7 +169,7 @@ class SVITrainer:
             self.elbo_step = self.elbo.step
             
                 
-        elif ('autodiff_on_backward' in self.elbo_mode) and self.online_reset:
+        elif ('autodiff_on_backward' in self.elbo_mode) and self.reset:
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
             print('USING AUTODIFF ON BACKWARD ELBO.')
 
@@ -191,7 +191,7 @@ class SVITrainer:
         self.elbo_batch = elbo_and_grads_batch
         self.get_montecarlo_keys = get_keys
 
-        if self.online_reset:
+        if self.reset:
             init_carry = 0.0
         else: 
             init_carry = self.elbo.init_carry(self.q.get_random_params(jax.random.PRNGKey(0)))
@@ -204,7 +204,7 @@ class SVITrainer:
                         timesteps, 
                         params):
             
-            if self.online_reset:
+            if self.reset:
                 
                 (neg_elbo, neg_grad), aux = self.elbo_batch(key, strided_ys, params)
 

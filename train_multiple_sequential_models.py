@@ -16,7 +16,7 @@ load_from = ''
 loaded_seq = False
 batch_size = 1
 num_seqs = 1
-seq_length = 100000
+seq_length = 1000
 store_every = 0
  
 
