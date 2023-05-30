@@ -219,7 +219,7 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
 
         return Kalman.filter_seq(obs_seq, self.format_params(params))[-1]
     
-    def fit_kalman_rmle(self, 
+    def fit_kalman_mle(self, 
                         key, 
                         data, 
                         optimizer='adam', 
