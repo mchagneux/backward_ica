@@ -13,6 +13,10 @@ class OfflineVariationalAdditiveSmoothing:
         self.num_samples = num_samples
         self.functional: AdditiveFunctional = functional
 
+
+    def preprocess(self, data, **kwargs):
+        return data 
+    
     def __call__(self, key, obs_seq, T, theta: HMM.Params, phi):
 
         # theta.compute_covs()

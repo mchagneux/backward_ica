@@ -76,11 +76,11 @@ class SVITrainer:
 
         else: 
             true_online = False
-            if 'online' in training_mode: 
-                self.online_batch_size = int(training_mode.split(',')[1])
-                self.online_reset = 'reset' in training_mode
+            self.online_batch_size = int(training_mode.split(',')[1])
+            self.online_reset = 'reset' in training_mode
         
-        learning_rate *= self.online_batch_size / 100
+        if elbo_mode != 'autodiff_on_backward':
+            learning_rate *= self.online_batch_size / 100
 
         self.true_online = true_online
 
@@ -323,22 +323,22 @@ class SVITrainer:
         seq_length = data.shape[0]
         plot_step_size = seq_length
         keys = get_keys(key_montecarlo, seq_length // self.online_batch_size, self.num_epochs)
-        for epoch_nb, keys_epoch in enumerate(keys):
-            elbo_carry = self.init_carry
-            strided_data = self.elbo.preprocess(data)
-            for step_nb, (timesteps, key_step) in enumerate(zip(self.timesteps(data.shape[0], self.online_batch_size), keys_epoch)):
-                
-                (params, opt_state, elbo_carry), (elbo, _ , _) = self.step(key_step, 
-                                                                            strided_data[timesteps], 
-                                                                            elbo_carry, 
-                                                                            timesteps, 
-                                                                            params, 
-                                                                            opt_state)
-                with log_writer.as_default():
+        with log_writer.as_default():
+            for epoch_nb, keys_epoch in enumerate(keys):
+                elbo_carry = self.init_carry
+                strided_data = self.elbo.preprocess(data)
+                for step_nb, (timesteps, key_step) in enumerate(zip(self.timesteps(data.shape[0], self.online_batch_size), keys_epoch)):
+                    
+                    (params, opt_state, elbo_carry), (elbo, _ , _) = self.step(key_step, 
+                                                                                strided_data[timesteps], 
+                                                                                elbo_carry, 
+                                                                                timesteps, 
+                                                                                params, 
+                                                                                opt_state)
                     tf.summary.scalar('ELBO', 
                                     elbo, 
                                     epoch_nb*plot_step_size + step_nb * self.online_batch_size)
-                    
+            
             all_params.append(params)
             avg_elbos.append(elbo)
             t.update(1)
