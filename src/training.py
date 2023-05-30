@@ -79,8 +79,8 @@ class SVITrainer:
             self.online_batch_size = int(training_mode.split(',')[1])
             self.online_reset = 'reset' in training_mode
         
-        if elbo_mode != 'autodiff_on_backward':
-            learning_rate *= self.online_batch_size / 100
+        # if elbo_mode != 'autodiff_on_backward':
+        #     learning_rate *= self.online_batch_size / 100
 
         self.true_online = true_online
 
@@ -114,17 +114,19 @@ class SVITrainer:
         if 'linear_sched' in optim_options:
             
             learning_rate = optax.linear_schedule(learning_rate, 
-                                                  end_value=learning_rate / 100, 
+                                                  end_value=10*learning_rate, 
+                                                  transition_begin=2000,
                                                   transition_steps=num_epochs * (seq_length / self.online_batch_size))
         
         elif 'warmup_cosine' in optim_options:
+            print('Setting up warmup cosine schedule. Starting at {} and ending at {}.'.format(learning_rate / 10, learning_rate))
 
             learning_rate = optax.warmup_cosine_decay_schedule(
-                init_value=learning_rate / 100,
-                peak_value=learning_rate / 10,
-                warmup_steps=20 * seq_length / self.online_batch_size,
-                decay_steps=num_epochs * (seq_length / self.online_batch_size),
-                end_value=learning_rate / 1000,
+                init_value=learning_rate / 10,
+                peak_value=learning_rate,
+                warmup_steps=10000,
+                decay_steps=seq_length,
+                end_value=learning_rate,
                 )
         elif 'cst' in optim_options:
             pass 
