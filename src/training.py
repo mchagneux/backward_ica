@@ -71,7 +71,7 @@ class SVITrainer:
 
 
         if 'true_online' in training_mode:
-            self.recompute = 'recompute' in training_mode
+            self.online_difference = 'difference' in training_mode
             true_online = True
             self.online_batch_size = 1
             self.reset = False
@@ -102,8 +102,7 @@ class SVITrainer:
         
         def optimizer_update_fn(params, updates):
             new_params = optax.apply_updates(params, updates)
-            # if self.online:
-            #     new_params = optax.incremental_update(new_params, params, step_size=0.8)
+            # new_params = optax.incremental_update(new_params, params, step_size=0.8)
             return new_params
         
         self.optimizer_update_fn = optimizer_update_fn
@@ -165,9 +164,9 @@ class SVITrainer:
                 
                 elbo, grad = self.elbo.postprocess(carry) 
                 T = len(ys) - 1 
-                neg_elbo = -elbo / (T+1)
+                elbo = elbo / (T+1)
                 neg_grad = tree_map(lambda x: -x / (T+1), grad)
-                return (neg_elbo, neg_grad), aux
+                return (elbo, neg_grad), aux
                     
             self.elbo_step = self.elbo.step
             
@@ -185,7 +184,7 @@ class SVITrainer:
                                             q.format_params(params))
                     return -elbo / len(ys), aux 
                 (neg_elbo, aux), neg_grad = jax.value_and_grad(f, has_aux=True)(params)
-                return (neg_elbo, neg_grad), aux
+                return (-neg_elbo, neg_grad), aux
 
         else:
             print('ELBO mode not suitable for gradient accumulation.')
@@ -209,65 +208,69 @@ class SVITrainer:
             
             if self.reset:
                 
-                (neg_elbo, neg_grad), aux = self.elbo_batch(key, strided_ys, params)
+                (elbo, neg_grad), aux = self.elbo_batch(key, strided_ys, params)
 
             else: 
 
                 if self.true_online: 
-                    if self.recompute: 
-                        keys = jax.random.split(key, len(timesteps))
+                    # if self.recompute: 
+                    #     keys = jax.random.split(key, len(timesteps))
 
-                        def _step(carry, x):
-                            key, t, strided_y = x
+                    #     def _step(carry, x):
+                    #         key, t, strided_y = x
                             
-                            input_t = {'t':t, 
-                                    'key': key, 
-                                    'ys_bptt':strided_y, 
-                                    'T':timesteps[-1],
-                                    'phi':params}
+                    #         input_t = {'t':t, 
+                    #                 'key': key, 
+                    #                 'ys_bptt':strided_y, 
+                    #                 'T':timesteps[-1],
+                    #                 'phi':params}
                             
-                            carry['theta'] = self.formatted_theta_star
-                            new_carry, aux = self.elbo.step(carry, 
-                                                        input_t)
+                    #         carry['theta'] = self.formatted_theta_star
+                    #         new_carry, aux = self.elbo.step(carry, 
+                    #                                     input_t)
                         
-                            elbo_t, grad_t = self.elbo.postprocess(new_carry)
+                    #         elbo_t, grad_t = self.elbo.postprocess(new_carry)
 
-                            return new_carry, (aux, new_carry, elbo_t, grad_t)
+                    #         return new_carry, (aux, new_carry, elbo_t, grad_t)
                         
-                        _ , (aux, carries, elbos, grads) = jax.lax.scan(_step, 
-                                                                        init=elbo_carry,
-                                                                        xs=(keys, 
-                                                                            timesteps, 
-                                                                            strided_ys))
-                        elbo = elbos[-1] / (timesteps[-1]+1)
-                        grad_tm1 = tree_get_idx(0, grads)
-                        grad_t = tree_get_idx(1, grads)
-                        neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
-                        elbo_carry = tree_get_idx(0, carries)
+                    #     _ , (aux, carries, elbos, grads) = jax.lax.scan(_step, 
+                    #                                                     init=elbo_carry,
+                    #                                                     xs=(keys, 
+                    #                                                         timesteps, 
+                    #                                                         strided_ys))
+                    #     elbo = elbos[-1] / (timesteps[-1]+1)
+                    #     grad_tm1 = tree_get_idx(0, grads)
+                    #     grad_t = tree_get_idx(1, grads)
+                    #     neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
+                    #     elbo_carry = tree_get_idx(0, carries)
 
-                    else: 
-                        t = timesteps
-                        def _step(carry, x):
-                            key, t, strided_y = x
+                    # else: 
+                    t = timesteps
+                    def _step(carry, x):
+                        key, t, strided_y = x
 
-                            input_t = {'t':t, 
-                                    'key': key, 
-                                    'ys_bptt':strided_y, 
-                                    'T':t,
-                                    'phi':params}
-                            
-                            carry['theta'] = self.formatted_theta_star
-                            new_carry, aux = self.elbo.step(carry, 
-                                                        input_t)
-                            return new_carry, aux
+                        input_t = {'t':t, 
+                                'key': key, 
+                                'ys_bptt':strided_y, 
+                                'T':t,
+                                'phi':params}
+                        
+                        carry['theta'] = self.formatted_theta_star
+                        new_carry, aux = self.elbo.step(carry, 
+                                                    input_t)
+                        return new_carry, aux
+
+                    new_carry, aux = _step(elbo_carry, (key, t, strided_ys))
+                    elbo_t, grad_t = self.elbo.postprocess(new_carry)
+                    if self.online_difference:
                         grad_tm1 = self.elbo.postprocess(elbo_carry)[1]
-
-                        new_carry, aux = _step(elbo_carry, (key, t, strided_ys))
-                        elbo_t, grad_t = self.elbo.postprocess(new_carry)
                         neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
-                        # neg_grad = tree_map(lambda x: -x / (t+1), grad_t)
-                        elbo = elbo_t / (t+1)
-                        elbo_carry = new_carry
+                    else: 
+                        neg_grad = tree_map(lambda x: -x / (t+1), grad_t)
+
+                    # neg_grad = tree_map(lambda x: -x / (t+1), grad_t)
+                    elbo = elbo_t / (t+1)
+                    elbo_carry = new_carry
 
 
                 else: 
@@ -320,14 +323,12 @@ class SVITrainer:
             
             params = self.optimizer_update_fn(params, updates)
 
-            return (params, opt_state, elbo_carry), (elbo, ravel_pytree(grad)[0], aux)
+            return (params, opt_state, elbo_carry), (elbo, ravel_pytree(neg_grad)[0], aux)
         
         self.step = step
 
     def timesteps(self, seq_length, delta):
         if self.true_online: 
-            if self.recompute: 
-                return tree_get_strides(2, jnp.arange(0, seq_length))
             return jnp.arange(0, seq_length)
 
         else:
@@ -371,7 +372,7 @@ class SVITrainer:
                                                                             opt_state)
                     tf.summary.scalar('ELBO', 
                                     elbo, 
-                                    epoch_nb*plot_step_size + (step_nb+1)*self.online_batch_size)
+                                    (step_nb+1)*self.online_batch_size)
             
             all_params.append(params)
             avg_elbos.append(elbo)

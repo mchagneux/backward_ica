@@ -276,10 +276,10 @@ def get_defaults(args):
     args.float64 = True
 
     args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior
-    args.default_prior_base_scale = math.sqrt(0.1) # default value for the diagonal components of the covariance matrix of the prior
-    args.default_transition_base_scale = math.sqrt(0.1) # default value for the diagonal components of the covariance matrix of the transition kernel
+    args.default_prior_base_scale = 0.1 # default value for the diagonal components of the covariance matrix of the prior
+    args.default_transition_base_scale = 0.1 # default value for the diagonal components of the covariance matrix of the transition kernel
     args.default_transition_bias = 0.0
-    args.default_emission_base_scale = math.sqrt(0.1)
+    args.default_emission_base_scale = 0.1
 
 
     if args.model == 'linear' and (not hasattr(args, 'emission_bias')):
