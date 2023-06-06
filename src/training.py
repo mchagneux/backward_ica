@@ -333,15 +333,15 @@ class SVITrainer:
 
             return (params, opt_state, elbo_carry), (elbo, ravel_pytree(neg_grad)[0], aux)
         
+
+        timesteps_lists = self.timesteps(seq_length, self.online_batch_size)
         with log_writer.as_default():
             absolute_step_nb = 0
             for epoch_nb, keys_epoch in enumerate(keys):
                 elbo_carry = self.init_carry
                 strided_data = self.elbo.preprocess(data)
 
-                for step_nb, (timesteps, key_step) in enumerate(zip(self.timesteps(data.shape[0], 
-                                                                                   self.online_batch_size), 
-                                                                    keys_epoch)):
+                for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
                     
                     (params, opt_state, elbo_carry), (elbo, _ , _) = step(
                                                                     key_step, 

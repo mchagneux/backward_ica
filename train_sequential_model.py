@@ -76,8 +76,8 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--settings', type=str, default='johnson_backward,8.5.adam,1e-3,cst.reset,50.autodiff_on_backward')
-    parser.add_argument('--exp_dir', type=str, default='2023_06_06__18_59_36')
+    parser.add_argument('--settings', type=str, default='johnson_backward,100.10.adam,1e-4,cst.accumulate,50.score,paris,variance_reduction,bptt_depth_2')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_06_06__20_52_34')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=500)
