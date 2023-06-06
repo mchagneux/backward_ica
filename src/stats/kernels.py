@@ -3,8 +3,6 @@ import haiku as hk
 from jax import nn 
 from src.utils.misc import _conditionnings
 from collections import namedtuple
-import blackjax 
-
 
 class Maps:
 
@@ -30,7 +28,6 @@ class Maps:
 
         def __repr__(self):
             return str(vars(self))
-
 
     @staticmethod
     def neural_map(input, layers, slope, out_dim):
@@ -71,7 +68,6 @@ class Maps:
         out =  jnp.dot(map_params.w, input)
         return out + jnp.broadcast_to(map_params.b, out.shape)
 
-
     @classmethod
     def linear_map_init_params(cls, key, dummy_in, out_dim, conditionning, bias, range_params):
 
@@ -110,7 +106,9 @@ class Maps:
 
         return cls.LinearMapParams(w,b)
 
-class Kernel:
+
+
+class ParametricKernel:
 
     Params = namedtuple('KernelParams', ['map','noise'])
 
@@ -120,7 +118,7 @@ class Kernel:
                         'map_info' : {'conditionning': matrix_conditonning, 
                                     'bias': bias,
                                     'range_params':range_params}}
-        return lambda in_dim, out_dim: Kernel(in_dim, out_dim, transition_kernel_def)
+        return lambda in_dim, out_dim: ParametricKernel(in_dim, out_dim, transition_kernel_def)
                                                                  
     def __init__(self,
                 in_dim, 
@@ -135,11 +133,14 @@ class Kernel:
 
         self.map_type = map_def['map_type']
         self.inhomogeneous = False
+
         if noise_dist == Gaussian:
+            self.exponential = True
             self.format_output = lambda mean, noise, params: Gaussian.Params(mean, noise.scale)
             self.params_type = Gaussian.NoiseParams
             
         elif noise_dist == Student:
+            self.exponential = False
             self.format_output = lambda mean, noise, params: Student.Params(mean=mean, df=noise.df, scale=noise.scale)
             self.params_type = Student.NoiseParams
 
@@ -157,7 +158,6 @@ class Kernel:
             format_map_params = partial(Maps.linear_map_format_params, 
                                         conditionning_func=_conditionnings[map_def['map_info']['conditionning']],
                                         d=self.out_dim)
-
 
         elif self.map_type == 'nonlinear':
             if map_def['map_info']['homogeneous']: 
@@ -209,7 +209,7 @@ class Kernel:
     
     def pdf(self, y, x, params):
         return self.noise_dist.pdf(y, self.map(x, params))
-
+        
     def get_random_params(self, key):
         if self.inhomogeneous:
             return self._get_random_map_params(key)

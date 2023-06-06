@@ -10,7 +10,7 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model
 from src.utils.misc import *
 import os 
-path = 'experiments/p_linear/2023_05_25__11_56_13'
+path = 'experiments/p_chaotic_rnn/2023_06_01__10_39_41'
 num_smoothing_samples = 1000
 
 key = jax.random.PRNGKey(0)
@@ -23,13 +23,13 @@ theta_star = load_params('theta_star', path)
 
 x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
 y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
-seq_length = len(y)
+seq_length = 2000
 y = y[:seq_length]
 x = x[:seq_length]
 T = seq_length - 1 
 
 
-models = ['linear.5.adam,1e-2,cst.online,100,reset.autodiff_on_backward']
+models = ['johnson_backward,10.20.adam,1e-4,cst.true_online,difference.score,variance_reduction,bptt_depth_2']
 
 def eval_model(model):
     model_path = os.path.join(path, model)

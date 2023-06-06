@@ -49,8 +49,8 @@ class HMM:
     class Params:
         
         prior: Gaussian.NoiseParams 
-        transition: Kernel.Params
-        emission: Kernel.Params
+        transition: ParametricKernel.Params
+        emission: ParametricKernel.Params
 
 
         def tree_flatten(self):
@@ -71,8 +71,8 @@ class HMM:
 
         self.state_dim, self.obs_dim = state_dim, obs_dim
         self.prior_dist:Gaussian = prior_dist
-        self.transition_kernel:Kernel = transition_kernel_type(state_dim)
-        self.emission_kernel:Kernel = emission_kernel_type(state_dim, obs_dim)
+        self.transition_kernel:ParametricKernel = transition_kernel_type(state_dim)
+        self.emission_kernel:ParametricKernel = emission_kernel_type(state_dim, obs_dim)
         
     def sample_multiple_sequences(self, key, params, num_seqs, seq_length, single_split_seq=False, load_from='', loaded_seq=False):
 
@@ -170,11 +170,11 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
                 transition_bias=False,
                 emission_bias=False):
 
-        transition_kernel = Kernel.linear_gaussian(transition_matrix_conditionning, 
+        transition_kernel = ParametricKernel.linear_gaussian(transition_matrix_conditionning, 
                                                     transition_bias, 
                                                     range_transition_map_params)
                                         
-        emission_kernel = Kernel.linear_gaussian(None, emission_bias, (0,1))                     
+        emission_kernel = ParametricKernel.linear_gaussian(None, emission_bias, (0,1))                     
 
         HMM.__init__(self, 
                     state_dim, 
@@ -243,10 +243,10 @@ class LinearGaussianHMM(HMM, LinearBackwardSmoother):
                             prior=Gaussian.Params(
                                                 mean=params[0], 
                                                 scale=params[1]),
-                            transition=Kernel.Params(
+                            transition=ParametricKernel.Params(
                                                     map=params[2], 
                                                     noise=Gaussian.NoiseParams(params[3])),
-                            emission=Kernel.Params(map=Maps.LinearMapParams(w=jnp.eye(self.state_dim)),
+                            emission=ParametricKernel.Params(map=Maps.LinearMapParams(w=jnp.eye(self.state_dim)),
                                         noise=Gaussian.NoiseParams(params[4])))
                                                                    
         
@@ -404,8 +404,8 @@ class NonLinearHMM(HMM):
         HMM.__init__(self, 
                     state_dim, 
                     obs_dim, 
-                    transition_kernel_type = lambda state_dim: Kernel(state_dim, state_dim, transition_kernel_def['map'], transition_kernel_def['noise_dist']), 
-                    emission_kernel_type  = lambda state_dim, obs_dim:Kernel(state_dim, obs_dim, emission_kernel_def['map'], emission_kernel_def['noise_dist']),
+                    transition_kernel_type = lambda state_dim: ParametricKernel(state_dim, state_dim, transition_kernel_def['map'], transition_kernel_def['noise_dist']), 
+                    emission_kernel_type  = lambda state_dim, obs_dim:ParametricKernel(state_dim, obs_dim, emission_kernel_def['map'], emission_kernel_def['noise_dist']),
                     prior_dist = prior_dist)
 
         self.smc = SMC(self.transition_kernel, 

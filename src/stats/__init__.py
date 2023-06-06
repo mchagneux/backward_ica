@@ -16,7 +16,7 @@ class BackwardSmoother(metaclass=ABCMeta):
     def __init__(self, filt_dist, backwd_kernel):
 
         self.filt_dist:Gaussian = filt_dist
-        self.backwd_kernel:Kernel = backwd_kernel
+        self.backwd_kernel:ParametricKernel = backwd_kernel
 
     @abstractmethod
     def get_random_params(self, key):
@@ -145,9 +145,9 @@ class BackwardSmoother(metaclass=ABCMeta):
 
 class TwoFilterSmoother(metaclass=ABCMeta):
         
-    def __init__(self, state_dim, forward_kernel:Kernel):
+    def __init__(self, state_dim, forward_kernel:ParametricKernel):
         self.marginal_dist = Gaussian
-        self.forward_kernel:Kernel = forward_kernel(state_dim, state_dim)
+        self.forward_kernel:ParametricKernel = forward_kernel(state_dim, state_dim)
 
     @abstractmethod
     def init_filt_params(self, state, params):
@@ -200,7 +200,7 @@ class TwoFilterSmoother(metaclass=ABCMeta):
 
 
 def linear_gaussian_forward_params_from_backwd_variable_and_transition(filt_params:Gaussian.Params, 
-                                                                        transition_params:Kernel.Params):
+                                                                        transition_params:ParametricKernel.Params):
     A, b, Q_prec = transition_params.map.w, transition_params.map.b, transition_params.noise.scale.prec
 
     prec_forward = 2 * (Q_prec + filt_params.scale.prec)
@@ -210,7 +210,7 @@ def linear_gaussian_forward_params_from_backwd_variable_and_transition(filt_para
     A_forward = K @ Q_prec @ A
     b_forward = K @ (Q_prec @ b + filt_params.scale.prec @ filt_params.mean)
 
-    return Kernel.Params(map=Maps.LinearMapParams(A_forward, b_forward), 
+    return ParametricKernel.Params(map=Maps.LinearMapParams(A_forward, b_forward), 
                         noise=Gaussian.NoiseParams(Scale(prec=prec_forward)))
 
 class LinearBackwardSmoother(BackwardSmoother):
@@ -229,7 +229,7 @@ class LinearBackwardSmoother(BackwardSmoother):
         a_back = C @ mu - K @ a
         cov_back = C @ Sigma
 
-        return Kernel.Params(Maps.LinearMapParams(A_back, a_back), Gaussian.NoiseParams(Scale(cov=cov_back)))
+        return ParametricKernel.Params(Maps.LinearMapParams(A_back, a_back), Gaussian.NoiseParams(Scale(cov=cov_back)))
 
     def __init__(self, state_dim):
 
@@ -239,7 +239,7 @@ class LinearBackwardSmoother(BackwardSmoother):
                                         'range_params':(0,1)}}
 
         super().__init__(filt_dist=Gaussian, 
-                        backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
+                        backwd_kernel=ParametricKernel(state_dim, state_dim, backwd_kernel_def))
         
     def compute_marginals(self, last_filt_params, backwd_params_seq):
         last_filt_params_mean, last_filt_params_cov = last_filt_params.mean, last_filt_params.scale.cov

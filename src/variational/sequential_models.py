@@ -39,7 +39,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
     @classmethod
     def with_linear_gaussian_transition_kernel(cls, args):
 
-        transition_kernel = Kernel.linear_gaussian(
+        transition_kernel = ParametricKernel.linear_gaussian(
                                         matrix_conditonning=args.transition_matrix_conditionning,
                                         bias=args.transition_bias, 
                                         range_params=args.range_transition_map_params)(
@@ -56,7 +56,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
     def __init__(self, 
             state_dim,
             obs_dim, 
-            transition_kernel:Kernel=None,
+            transition_kernel:ParametricKernel=None,
             backwd_layers=(8,8),
             update_layers=(8,8),
             conjugate=True):
@@ -64,7 +64,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
         self.state_dim = state_dim
         self.obs_dim = obs_dim
-        self.transition_kernel:Kernel = transition_kernel
+        self.transition_kernel:ParametricKernel = transition_kernel
         self.update_layers = update_layers
         self.backwd_layers = backwd_layers
         d = self.state_dim
@@ -99,8 +99,9 @@ class NeuralBackwardSmoother(BackwardSmoother):
             
             def _backwd_map(aux, x_1, state_dim):
                 filt_params_0 = aux[0]
+                filt_params_1 = aux[1]
                 eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
-                eta1_potential, eta2_potential = inference_nets.backwd_net(filt_params_0.vec, x_1, backwd_layers, state_dim)
+                eta1_potential, eta2_potential = inference_nets.backwd_net(filt_params_0.vec, x_1-filt_params_1.mean, backwd_layers, state_dim)
                 eta1_backwd, eta2_backwd = eta1_filt + eta1_potential, eta2_filt + eta2_potential 
                 out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
                 return (out_params.mean, out_params.scale), (eta1_potential, eta2_potential)
@@ -133,7 +134,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
         super().__init__(
                 filt_dist=Gaussian,
-                backwd_kernel=Kernel(state_dim, state_dim, backwd_kernel_def))
+                backwd_kernel=ParametricKernel(state_dim, state_dim, backwd_kernel_def))
             
         self._log_fwd_potential =  _log_fwd_potential
             
@@ -285,7 +286,7 @@ class NeuralBackwardSmoother(BackwardSmoother):
 class JohnsonParams:
 
     prior: Gaussian.Params
-    transition:Kernel.Params
+    transition:ParametricKernel.Params
     net:Any
 
 
@@ -311,8 +312,7 @@ class JohnsonSmoother:
         self.state_dim = state_dim 
         self.obs_dim = obs_dim 
         self.prior_dist = Gaussian
-
-        self.transition_kernel = Kernel.linear_gaussian(
+        self.transition_kernel = ParametricKernel.linear_gaussian(
                                             matrix_conditonning=transition_matrix_conditionning,
                                             bias=transition_bias, 
                                             range_params=range_transition_map_params)(
@@ -357,7 +357,6 @@ class JohnsonSmoother:
         params = self.get_random_params(random.PRNGKey(0))
         print('Num params:', len(ravel_pytree(params)[0]))
     
-
 class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
 
 
@@ -371,7 +370,6 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
             args.transition_bias, 
             args.update_layers, 
             args.anisotropic)
-
 
     def __init__(
             self, 
@@ -456,7 +454,7 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
                 
 
 #         super().__init__(filt_dist, 
-#                         Kernel(state_dim, state_dim, backwd_kernel_map_def, Gaussian))
+#                         ParametricKernel(state_dim, state_dim, backwd_kernel_map_def, Gaussian))
 
 #     def get_random_params(self, key, args=None):
         
