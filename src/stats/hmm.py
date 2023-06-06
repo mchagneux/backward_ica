@@ -149,9 +149,9 @@ class HMM:
             elif k == 'default_prior_base_scale':
                 new_params.prior._scale = Scale.set_default(params.prior.scale, v, HMM.parametrization)
             elif k == 'default_transition_base_scale': 
-                new_params.transition.noise._scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
+                new_params.transition.noise.scale = Scale.set_default(params.transition.noise.scale, v, HMM.parametrization)
             elif k == 'default_emission_base_scale': 
-                new_params.emission.noise._scale = Scale.set_default(params.emission.noise.scale, v, HMM.parametrization)
+                new_params.emission.noise.scale = Scale.set_default(params.emission.noise.scale, v, HMM.parametrization)
             elif k == 'default_emission_df':
                 new_params.emission.noise.df = v
             elif k == 'default_emission_matrix' and hasattr(new_params.emission.map, 'w'):

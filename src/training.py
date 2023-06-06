@@ -31,7 +31,7 @@ def define_frozen_tree(key, frozen_params, q, theta_star):
         if isinstance(q, LinearGaussianHMM) or isinstance(q, JohnsonSmoother):
             frozen_phi.prior = theta_star.prior
         elif isinstance(q, NeuralBackwardSmoother):
-            frozen_phi.prior = q.frozen_prior()
+            raise NotImplementedError
 
     if 'covariances' in frozen_params: 
         frozen_phi.transition.noise.scale = theta_star.transition.noise.scale
@@ -52,7 +52,7 @@ class SVITrainer:
                 seq_length,
                 num_samples=1, 
                 force_full_mc=False,
-                frozen_params=None,
+                frozen_params='',
                 training_mode='offline',
                 elbo_mode='autodiff_on_backward'):
         
@@ -294,6 +294,8 @@ class SVITrainer:
         params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
                         params, 
                         self.frozen_params)
+        
+
 
         opt_state = self.optimizer.init(params)
 
@@ -336,7 +338,8 @@ class SVITrainer:
                 strided_data = self.elbo.preprocess(data)
 
                 for step_nb, (timesteps, key_step) in enumerate(zip(self.timesteps(data.shape[0], 
-                                                                                   self.online_batch_size), keys_epoch)):
+                                                                                   self.online_batch_size), 
+                                                                    keys_epoch)):
                     
                     (params, opt_state, elbo_carry), (elbo, _ , _) = step(
                                                                     key_step, 
@@ -352,14 +355,22 @@ class SVITrainer:
                                     elbo, 
                                     (epoch_nb*seq_length) + (step_nb+1)*self.online_batch_size)
                     
-            
-            all_params.append(params)
-            avg_elbos.append(elbo)
+                
+                    all_params.append(params)
+                    avg_elbos.append(elbo)
 
                     
         return all_params, avg_elbos, aux_list
 
-    def multi_fit(self, key_params, key_batcher, key_montecarlo, data, num_fits, store_every=None, log_dir='', args=None):
+    def multi_fit(self, 
+                  key_params, 
+                  key_batcher, 
+                  key_montecarlo, 
+                  data, 
+                  num_fits, 
+                  store_every=None, 
+                  log_dir='', 
+                  args=None):
 
 
         all_avg_elbos = []
@@ -380,7 +391,7 @@ class SVITrainer:
                 log_writer_monitor = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}_monitor'))
             else:
                 log_writer_monitor = None
-            print(f'Fit {fit_nb+1}/{num_fits}')
+            print(f'Starting fit {fit_nb+1}/{num_fits}...')
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
@@ -398,7 +409,7 @@ class SVITrainer:
                 all_params.append({epoch_nb:params[epoch_nb] for epoch_nb in selected_epochs})
 
             else: 
-                all_params.append(params[-1])
+                all_params.append(params[best_epoch])
             all_avg_elbos.append(avg_elbos)
 
 

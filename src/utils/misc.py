@@ -75,7 +75,7 @@ def classify_fn(latents: jax.Array) -> jax.Array:
 
 
 _conditionnings = {'diagonal':lambda param, d: jnp.diag(param),
-                'sym_def_pos': lambda param, d: mat_from_chol_vec(param, d) + jnp.eye(d),
+                'sym_def_pos': lambda param, d: mat_from_chol_vec(param, d),
                 None:lambda x, d:x,
                 'init_sym_def_pos': lambda x,d:x,
                 'init_scaled_by_dim':lambda x,d:x}
@@ -276,10 +276,10 @@ def get_defaults(args):
     args.float64 = True
 
     args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior
-    args.default_prior_base_scale = 0.316227766 # default value for the diagonal components of the covariance matrix of the prior
-    args.default_transition_base_scale = 0.316227766 # default value for the diagonal components of the covariance matrix of the transition kernel
+    args.default_prior_base_scale = 0.1 # default value for the diagonal components of the covariance matrix of the prior
+    args.default_transition_base_scale = 0.1 # default value for the diagonal components of the covariance matrix of the transition kernel
     args.default_transition_bias = 0.0
-    args.default_emission_base_scale = 0.316227766
+    args.default_emission_base_scale = 0.1
 
 
     if args.model == 'linear' and (not hasattr(args, 'emission_bias')):
@@ -300,12 +300,13 @@ def get_defaults(args):
         args.range_emission_map_params = (0.99,1)
         args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
-        args.transition_bias = False 
+        args.transition_bias = True 
         args.emission_bias = False
     else:
         args.transition_matrix_conditionning = 'diagonal'
         args.range_transition_map_params = [0.99,1]
         args.transition_bias = False
+        args.emission_bias = False
 
 
     if 'nonlinear_emission' in args.model:

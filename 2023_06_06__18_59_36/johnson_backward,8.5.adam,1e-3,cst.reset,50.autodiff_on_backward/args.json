@@ -1,0 +1,39 @@
+{
+    "settings": "johnson_backward,8.5.adam,1e-3,cst.reset,50.autodiff_on_backward",
+    "exp_dir": "2023_06_06__18_59_36",
+    "num_fits": 1,
+    "batch_size": 1,
+    "num_epochs": 500,
+    "store_every": 0,
+    "seed": 1,
+    "full_mc": false,
+    "frozen_params": [],
+    "save_dir": "2023_06_06__18_59_36/johnson_backward,8.5.adam,1e-3,cst.reset,50.autodiff_on_backward",
+    "model": "johnson_backward,8",
+    "training_mode": "reset,50",
+    "elbo_mode": "autodiff_on_backward",
+    "num_samples": 5,
+    "optimizer": "adam",
+    "optim_options": "cst",
+    "learning_rate": 0.001,
+    "float64": true,
+    "default_prior_mean": 0.0,
+    "default_prior_base_scale": 0.1,
+    "default_transition_base_scale": 0.1,
+    "default_transition_bias": 0.0,
+    "default_emission_base_scale": 0.1,
+    "transition_matrix_conditionning": "diagonal",
+    "range_transition_map_params": [
+        0.99,
+        1
+    ],
+    "transition_bias": false,
+    "emission_bias": false,
+    "anisotropic": false,
+    "update_layers": [
+        8
+    ],
+    "parametrization": "cov_chol",
+    "num_particles": 10000,
+    "num_smooth_particles": 1000
+}

@@ -10,7 +10,7 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model
 from src.utils.misc import *
 import os 
-path = 'experiments/p_chaotic_rnn/2023_06_06__11_41_40'
+path = 'experiments/p_chaotic_rnn/2023_06_06__18_22_34'
 num_smoothing_samples = 1000
 
 key = jax.random.PRNGKey(0)
@@ -24,12 +24,12 @@ theta_star = load_params('theta_star', path)
 x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
 y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
 seq_length = len(y)
-y = y[:seq_length]
-x = x[:seq_length]
+
 T = seq_length - 1 
 
 
-models = ['johnson_backward,100.10.adam,1e-2,cst.reset,500.autodiff_on_backward',
+models = ['johnson_backward,100.50.adam,1e-2,cst.reset,500.autodiff_on_backward',
+          'linear.50.adam,1e-2,cst.reset,500.autodiff_on_backward',
           'data/crnn/2023-06-06_10-34-04_Train_run']
 
 def eval_model(model):
@@ -66,10 +66,11 @@ def eval_model(model):
         covs_filt = jax.vmap(jnp.diag)(covs_filt)
 
 
-    return (means_smooth, jnp.sqrt(covs_smooth)), (means_filt, jnp.sqrt(covs_filt))
+    return (means_smooth[:seq_length], jnp.sqrt(covs_smooth))[:seq_length], (means_filt[:seq_length], jnp.sqrt(covs_filt))[:seq_length]
 
 
-
+y = y[:seq_length]
+x = x[:seq_length]
 
 color = 'grey'
 plot_params = {'marker':'x',
