@@ -294,7 +294,9 @@ class SVITrainer:
         params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
                         params, 
                         self.frozen_params)
-        
+        print(self.q.format_params(params))
+        print(self.formatted_theta_star)
+
 
 
         opt_state = self.optimizer.init(params)
