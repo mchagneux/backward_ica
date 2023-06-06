@@ -10,7 +10,7 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model
 from src.utils.misc import *
 import os 
-path = 'experiments/p_chaotic_rnn/2023_06_01__10_39_41'
+path = 'experiments/p_chaotic_rnn/2023_06_06__11_41_40'
 num_smoothing_samples = 1000
 
 key = jax.random.PRNGKey(0)
@@ -23,38 +23,48 @@ theta_star = load_params('theta_star', path)
 
 x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
 y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
-seq_length = 2000
+seq_length = len(y)
 y = y[:seq_length]
 x = x[:seq_length]
 T = seq_length - 1 
 
 
-models = ['johnson_backward,10.20.adam,1e-4,cst.true_online,difference.score,variance_reduction,bptt_depth_2']
+models = ['johnson_backward,100.10.adam,1e-2,cst.reset,500.autodiff_on_backward',
+          'data/crnn/2023-06-06_10-34-04_Train_run']
 
 def eval_model(model):
-    model_path = os.path.join(path, model)
-    q_args = load_args('args', model_path)
-    q_args.state_dim, q_args.obs_dim = p_args.state_dim, p_args.obs_dim
-    q = get_variational_model(q_args, p)
-    phi = load_params('phi', model_path)
-    
-
-    def filt_seq():
-        state_seq = q.compute_state_seq(y, T, q.format_params(phi))
-        def get_mean_and_cov(state):
-            filt_params = q.filt_params_from_state(state, phi)
-            return filt_params.mean, filt_params.scale.cov
-
-        return jax.vmap(get_mean_and_cov)(state_seq)
-    
-    if isinstance(q, NeuralBackwardSmoother):
-        means_smooth, covs_smooth = q.smooth_seq(key, y, phi, num_smoothing_samples)
+    if 'crnn' in model:
+        means_filt = jnp.load(os.path.join(model, 'filter_means.npy'))
+        covs_filt = jnp.load(os.path.join(model, 'filter_covs.npy'))
+        covs_filt = jax.vmap(jnp.diagonal)(covs_filt)
+        smoothing_samples = jnp.load(os.path.join(model, 'smoothing_stats.npy'))
+        means_smooth = jnp.mean(smoothing_samples, axis=1)
+        covs_smooth = jnp.var(smoothing_samples, axis=1)
     else: 
-        means_smooth, covs_smooth = q.smooth_seq(y, phi)
-        covs_smooth = jax.vmap(jnp.diagonal)(covs_smooth)
+        model_path = os.path.join(path, model)
+        q_args = load_args('args', model_path)
+        q_args.state_dim, q_args.obs_dim = p_args.state_dim, p_args.obs_dim
+        q = get_variational_model(q_args, p)
+        phi = load_params('phi', model_path)
+        
 
-    means_filt, covs_filt = filt_seq()
-    covs_filt = jax.vmap(jnp.diag)(covs_filt)
+        def filt_seq():
+            state_seq = q.compute_state_seq(y, T, q.format_params(phi))
+            def get_mean_and_cov(state):
+                filt_params = q.filt_params_from_state(state, phi)
+                return filt_params.mean, filt_params.scale.cov
+
+            return jax.vmap(get_mean_and_cov)(state_seq)
+        
+        if isinstance(q, NeuralBackwardSmoother):
+            means_smooth, covs_smooth = q.smooth_seq(key, y, phi, num_smoothing_samples)
+        else: 
+            means_smooth, covs_smooth = q.smooth_seq(y, phi)
+            covs_smooth = jax.vmap(jnp.diagonal)(covs_smooth)
+
+        means_filt, covs_filt = filt_seq()
+        covs_filt = jax.vmap(jnp.diag)(covs_filt)
+
 
     return (means_smooth, jnp.sqrt(covs_smooth)), (means_filt, jnp.sqrt(covs_filt))
 
@@ -71,17 +81,20 @@ filt = False
 timesteps = jnp.arange(seq_length)
 for model in models: 
     fig, axes = plt.subplots(p_args.state_dim, 1, figsize=(15,1.5*p_args.state_dim))
-    plt.suptitle(model)
 
     plt.autoscale(True)
-    plt.tight_layout()
+    # plt.tight_layout()
     smoothed_results, filt_results = eval_model(model)
 
+    
 
     if filt: 
         means, stds = filt_results
     else: 
         means, stds = smoothed_results
+
+    rmse_avg_over_dims = jnp.mean(jnp.sqrt(jnp.mean((means - x)**2, axis=0)))
+    
     for dim in range(p_args.state_dim):
         ax = axes[dim]
         means_d = means[:,dim]
@@ -97,6 +110,8 @@ for model in models:
         # ax.plot(filt_means[:,dim], label='Filt', **plot_params)
         ax.plot(x[:,dim], label='True', color='black', **plot_params)
         ax.legend()
+    plt.suptitle(f'model: {model}, rmse: {rmse_avg_over_dims:.3f}')
+
 #%%
 
 

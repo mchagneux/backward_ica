@@ -305,41 +305,29 @@ class SVITrainer:
         seq_length = data.shape[0]
         keys = get_keys(key_montecarlo, seq_length // self.online_batch_size, self.num_epochs)
 
-        num_grad_steps=1
 
         @jax.jit
         def step(key, strided_data_on_timesteps, elbo_carry, timesteps, params, opt_state):
 
-            keys = jax.random.split(key, num_grad_steps)
-
-            def _step(carry, x):
-
-                params, opt_state = carry
-                key = x
-                elbo, neg_grad, new_carry, aux = self.update(
-                                                            key, 
-                                                            elbo_carry, 
-                                                            strided_data_on_timesteps, 
-                                                            timesteps, 
-                                                            params)
-                
-                updates, opt_state = self.optimizer.update(neg_grad, 
-                                                            opt_state, 
-                                                            params)
-                
-                params = self.optimizer_update_fn(params, updates)
-
-                return (params, opt_state), (elbo, neg_grad, new_carry, aux)
-
-            (params, opt_state), outputs = jax.lax.scan(_step, 
-                                                        init=(params, opt_state), 
-                                                        xs=keys)
 
 
-            elbos = outputs[0]
-            neg_grad, elbo_carry, aux  = tree_get_idx(-1, outputs[1:])
+            elbo, neg_grad, elbo_carry, aux = self.update(
+                                                        key, 
+                                                        elbo_carry, 
+                                                        strided_data_on_timesteps, 
+                                                        timesteps, 
+                                                        params)
+            
+            updates, opt_state = self.optimizer.update(neg_grad, 
+                                                        opt_state, 
+                                                        params)
+            
+            params = self.optimizer_update_fn(params, updates)
 
-            return (params, opt_state, elbo_carry), (elbos, ravel_pytree(neg_grad)[0], aux)
+
+
+
+            return (params, opt_state, elbo_carry), (elbo, ravel_pytree(neg_grad)[0], aux)
         
         with log_writer.as_default():
             absolute_step_nb = 0
@@ -350,7 +338,7 @@ class SVITrainer:
                 for step_nb, (timesteps, key_step) in enumerate(zip(self.timesteps(data.shape[0], 
                                                                                    self.online_batch_size), keys_epoch)):
                     
-                    (params, opt_state, elbo_carry), (elbos, _ , _) = step(
+                    (params, opt_state, elbo_carry), (elbo, _ , _) = step(
                                                                     key_step, 
                                                                     strided_data[timesteps], 
                                                                     elbo_carry, 
@@ -358,11 +346,10 @@ class SVITrainer:
                                                                     params, 
                                                                     opt_state)
                     absolute_step_nb += 1 
-                    for grad_step_nb, elbo in enumerate(elbos): 
-                        tf.summary.scalar('ELBO', elbo, absolute_step_nb + grad_step_nb + 1)
+                    tf.summary.scalar('ELBO', elbo, absolute_step_nb)
                    
                     tf.summary.scalar('ELBO w.r.t. nb observations processed', 
-                                    elbos[-1], 
+                                    elbo, 
                                     (epoch_nb*seq_length) + (step_nb+1)*self.online_batch_size)
                     
             
