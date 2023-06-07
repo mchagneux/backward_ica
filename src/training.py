@@ -217,7 +217,7 @@ class SVITrainer:
             else: 
 
                 if self.true_online: 
-                    t = timesteps
+                    t = timesteps[0]
                     def _step(carry, x):
                         key, t, strided_y = x
 
@@ -277,13 +277,10 @@ class SVITrainer:
         
         self.update = update
 
-    def timesteps(self, seq_length, delta):
-        if self.true_online: 
-            return jnp.arange(0, seq_length)
-
-        else:
-            return jnp.array(jnp.array_split(jnp.arange(0, seq_length), 
-                                            seq_length // delta))
+    def timesteps(self, seq_length):
+        all_timesteps = jnp.arange(0, seq_length)
+        for cnt in range(0, seq_length, self.online_batch_size):
+            yield all_timesteps[cnt:cnt+self.online_batch_size]
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None, log_writer_monitor=None):
 
@@ -307,7 +304,9 @@ class SVITrainer:
 
         data = data[0]
         seq_length = data.shape[0]
-        keys = get_keys(key_montecarlo, seq_length // self.online_batch_size, self.num_epochs)
+        keys = get_keys(key_montecarlo, 
+                        seq_length // self.online_batch_size, 
+                        self.num_epochs)
 
 
         @jax.jit
@@ -334,12 +333,12 @@ class SVITrainer:
             return (params, opt_state, elbo_carry), (elbo, ravel_pytree(neg_grad)[0], aux)
         
 
-        timesteps_lists = self.timesteps(seq_length, self.online_batch_size)
         with log_writer.as_default():
             absolute_step_nb = 0
             for epoch_nb, keys_epoch in enumerate(keys):
                 elbo_carry = self.init_carry
                 strided_data = self.elbo.preprocess(data)
+                timesteps_lists = self.timesteps(seq_length)
 
                 for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
                     

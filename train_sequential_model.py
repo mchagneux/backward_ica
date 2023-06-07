@@ -80,7 +80,7 @@ if __name__ == '__main__':
     parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_06_06__20_52_34')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
-    parser.add_argument('--num_epochs', type=int, default=500)
+    parser.add_argument('--num_epochs', type=int, default=1)
     parser.add_argument('--store_every', type=int, default=0)
     parser.add_argument('--seed', type=int, default=1)
 
