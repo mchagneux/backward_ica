@@ -101,9 +101,19 @@ class NeuralBackwardSmoother(BackwardSmoother):
                 filt_params_0 = aux[0]
                 filt_params_1 = aux[1]
                 eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
-                eta1_potential, eta2_potential = inference_nets.backwd_net(filt_params_0.vec, x_1-filt_params_1.mean, backwd_layers, state_dim)
+                eta1_potential, eta2_potential = inference_nets.backwd_net(filt_params_0.vec, x_1, backwd_layers, state_dim)
                 eta1_backwd, eta2_backwd = eta1_filt + eta1_potential, eta2_filt + eta2_potential 
                 out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
+
+
+                # eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
+                # mu_0 = aux[0].mean
+                # mu_1 = aux[1].mean
+                # eta1_potential, eta2_potential = inference_nets.backwd_net(aux[0].vec, x_1-mu_1, backwd_layers, state_dim)
+                # # eta1_backwd, eta2_backwd = eta1_potential + eta1_filt, eta2_potential + eta2_filt
+                # eta1_backwd, eta2_backwd = eta1_filt + eta1_potential - 2 * eta2_potential.T @ mu_0, eta2_filt + eta2_potential 
+                # out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
+
                 return (out_params.mean, out_params.scale), (eta1_potential, eta2_potential)
                             
 
@@ -299,7 +309,6 @@ class JohnsonParams:
 
 class JohnsonSmoother:
 
-
     def __init__(self, 
                     state_dim, 
                     obs_dim, 
@@ -313,11 +322,11 @@ class JohnsonSmoother:
         self.obs_dim = obs_dim 
         self.prior_dist = Gaussian
         self.transition_kernel = ParametricKernel.linear_gaussian(
-                                            matrix_conditonning=transition_matrix_conditionning,
-                                            bias=transition_bias, 
-                                            range_params=range_transition_map_params)(
-                                                                        state_dim, 
-                                                                        state_dim)
+                                                    matrix_conditonning=transition_matrix_conditionning,
+                                                    bias=transition_bias, 
+                                                    range_params=range_transition_map_params)(
+                                                                                            state_dim, 
+                                                                                            state_dim)
 
         net = inference_nets.johnson_anisotropic if anisotropic else inference_nets.johnson
         self._net = hk.without_apply_rng(hk.transform(partial(net, layers=layers, state_dim=state_dim)))
@@ -370,6 +379,14 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
             args.transition_bias, 
             args.update_layers, 
             args.anisotropic)
+    
+
+    @classmethod
+    def from_p(cls, p:HMM, args):
+        obj = cls.from_args(args)
+        obj.prior_dist = p.prior_dist
+        obj.transition_kernel = p.transition_kernel
+        return obj
 
     def __init__(
             self, 
@@ -391,7 +408,8 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
                             update_layers, 
                             anisotropic)
         
-        LinearBackwardSmoother.__init__(self, state_dim)
+        LinearBackwardSmoother.__init__(self, 
+                                        state_dim)
 
     def init_state(self, obs, params):
         out = self._net.apply(params.net, obs)

@@ -10,7 +10,7 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model
 from src.utils.misc import *
 import os 
-path = 'experiments/p_chaotic_rnn/2023_06_06__19_10_15'
+path = 'experiments/p_chaotic_rnn/2023_06_07__14_18_10'
 num_smoothing_samples = 1000
 
 key = jax.random.PRNGKey(0)
@@ -28,7 +28,7 @@ seq_length = 5000
 T = seq_length - 1 
 
 
-models = ['johnson_backward,100.2.adam,1e-2,cst.reset,5000.autodiff_on_backward']
+models = ['johnson_backward,100.5.adam,1e-2,cst.reset,5000.autodiff_on_backward']
 
 def eval_model(model):
     if 'crnn' in model:

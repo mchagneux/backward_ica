@@ -44,6 +44,8 @@ def backwd_net(aux, obs, layers, state_dim):
         b_init=hk.initializers.RandomNormal(),
         activate_final=False)
     
+
+
     eta1, out2 = jnp.split(net(obs),2)
     eta2 = -jnp.diag(nn.softplus(out2))# - jnp.eye(d)
 

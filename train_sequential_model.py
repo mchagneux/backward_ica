@@ -29,6 +29,7 @@ def main(args):
     q = variational.get_variational_model(args)
 
 
+    # q.transition_kernel = p.transition_kernel
     frozen_params = define_frozen_tree(key_phi, 
                                         args.frozen_params, 
                                         q, 
@@ -76,8 +77,8 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--settings', type=str, default='johnson_backward,100.10.adam,1e-4,cst.accumulate,50.score,paris,variance_reduction,bptt_depth_2')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_06_06__20_52_34')
+    parser.add_argument('--settings', type=str, default='johnson_backward,100.10.adam,1e-3,cst.true_online,difference.score,paris,variance_reduction,bptt_depth_2')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_06_07__11_31_53')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=1)
@@ -88,7 +89,7 @@ if __name__ == '__main__':
 
     # args.online = True
     args.full_mc = '_mc' in args.settings # whether to force the use the full MCMC ELBO (e.g. prevent using closed-form terms even with linear models)
-    args.frozen_params  = args.settings.split('freeze__')[1:] # list of parameter groups which are not learnt
+    args.frozen_params  = '' #args.settings.split('freeze__')[1:] # list of parameter groups which are not learnt
     args.save_dir = os.path.join(args.exp_dir, args.settings)
     os.makedirs(args.save_dir, exist_ok=True)
     

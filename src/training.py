@@ -26,12 +26,12 @@ def define_frozen_tree(key, frozen_params, q, theta_star):
     frozen_phi = q.get_random_params(key)
     frozen_phi = tree_map(lambda x: '', frozen_phi)
 
-
     if 'prior' in frozen_params:
         if isinstance(q, LinearGaussianHMM) or isinstance(q, JohnsonSmoother):
             frozen_phi.prior = theta_star.prior
         elif isinstance(q, NeuralBackwardSmoother):
             raise NotImplementedError
+
 
     if 'covariances' in frozen_params: 
         frozen_phi.transition.noise.scale = theta_star.transition.noise.scale
@@ -60,14 +60,13 @@ class SVITrainer:
         self.batch_size = batch_size
         self.q = q 
         self.q.print_num_params()
-        self.p = p 
+        self.p = p
         
         self.formatted_theta_star = self.p.format_params(theta_star)
         self.frozen_params = frozen_params
 
         self.elbo_mode = elbo_mode
         self.training_mode = training_mode
-
 
 
         if 'true_online' in training_mode:
@@ -109,8 +108,7 @@ class SVITrainer:
 
 
         self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
-        self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
-
+        # self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
 
         schedule = None
 
@@ -141,6 +139,7 @@ class SVITrainer:
                 
         base_optimizer = optax.apply_if_finite(getattr(optax, optimizer)(learning_rate),
                                             max_consecutive_errors=10)
+        
 
         if schedule is not None:
             self.optimizer = optax.chain(base_optimizer, schedule)
@@ -218,6 +217,7 @@ class SVITrainer:
 
                 if self.true_online: 
                     t = timesteps[0]
+                    strided_ys = strided_ys[0]
                     def _step(carry, x):
                         key, t, strided_y = x
 
@@ -277,9 +277,14 @@ class SVITrainer:
         
         self.update = update
 
-    def timesteps(self, seq_length):
+    def timesteps(self, seq_length, key):
         all_timesteps = jnp.arange(0, seq_length)
-        for cnt in range(0, seq_length, self.online_batch_size):
+        if key is None: 
+            cnts = range(0, seq_length, self.online_batch_size)
+        else: 
+            cnts = jax.random.permutation(key, jnp.arange(0, seq_length, self.online_batch_size))
+        
+        for cnt in cnts:
             yield all_timesteps[cnt:cnt+self.online_batch_size]
 
     def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None, log_writer_monitor=None):
@@ -288,11 +293,11 @@ class SVITrainer:
 
         params = self.q.get_random_params(key_params, args)
 
-        params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
-                        params, 
-                        self.frozen_params)
-        print(self.q.format_params(params))
-        print(self.formatted_theta_star)
+        # params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
+        #                 params, 
+        #                 self.frozen_params)
+        # print(self.q.format_params(params))
+        # print(self.formatted_theta_star)
 
 
 
@@ -338,7 +343,11 @@ class SVITrainer:
             for epoch_nb, keys_epoch in enumerate(keys):
                 elbo_carry = self.init_carry
                 strided_data = self.elbo.preprocess(data)
-                timesteps_lists = self.timesteps(seq_length)
+                # if self.reset: 
+                #     key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
+                #     timesteps_lists = self.timesteps(seq_length, subkey_batcher)
+                # else:
+                timesteps_lists = self.timesteps(seq_length, None)
 
                 for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
                     
