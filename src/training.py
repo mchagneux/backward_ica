@@ -303,10 +303,6 @@ class SVITrainer:
 
         opt_state = self.optimizer.init(params)
 
-        avg_elbos = []
-        all_params = []
-        aux_list = []
-
         data = data[0]
         seq_length = data.shape[0]
         keys = get_keys(key_montecarlo, 
@@ -364,13 +360,10 @@ class SVITrainer:
                     tf.summary.scalar('ELBO w.r.t. nb observations processed', 
                                     elbo, 
                                     (epoch_nb*seq_length) + (step_nb+1)*self.online_batch_size)
-                    
                 
-                    all_params.append(params)
-                    avg_elbos.append(elbo)
 
                     
-        return all_params, avg_elbos, aux_list
+                yield params, elbo
 
     def multi_fit(self, 
                   key_params, 
@@ -384,9 +377,9 @@ class SVITrainer:
 
 
         all_avg_elbos = []
-        all_params = []
-        best_elbos = []
-        best_epochs = []
+        best_params_per_fit = []
+        best_elbos_per_fit = []
+        best_steps_per_fit = []
         
         print('Starting training...')
         
@@ -405,30 +398,35 @@ class SVITrainer:
             key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
             key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
 
-            params, avg_elbos, aux_list = self.fit(subkey_params, subkey_batcher, subkey_montecarlo, data, log_writer, args, log_writer_monitor=log_writer_monitor)
-            with open(os.path.join(log_dir, 'data'), 'wb') as f:
-                dill.dump(aux_list, f)
-            best_epoch = jnp.nanargmax(jnp.array(avg_elbos))
-            best_epochs.append(best_epoch)
-            best_elbo = avg_elbos[best_epoch]
-            best_elbos.append(best_elbo)
-            print(f'Best ELBO {best_elbo:.3f} at epoch {best_epoch}')
-
-            if store_every != 0:
-                selected_epochs = list(range(0, self.num_epochs, store_every))
-                all_params.append({epoch_nb:params[epoch_nb] for epoch_nb in selected_epochs})
-
-            else: 
-                all_params.append(params[best_epoch])
-            all_avg_elbos.append(avg_elbos)
+            params, elbos = [], []
+            intermediate_params_dir = os.path.join(log_dir, f'fit_{fit_nb}_intermediate_params')
+            os.makedirs(intermediate_params_dir, exist_ok=True)
+            for global_step_nb, (params_at_step, elbo_at_step) in enumerate(self.fit(subkey_params, 
+                                         subkey_batcher, 
+                                         subkey_montecarlo, 
+                                         data, 
+                                         log_writer, 
+                                         args, 
+                                         log_writer_monitor=log_writer_monitor)):
+                if global_step_nb % 10 == 0:
+                    save_params(params_at_step, f'params_{global_step_nb}', intermediate_params_dir)
+                params.append(params_at_step)
+                elbos.append(elbo_at_step)
 
 
-        best_optim = jnp.argmax(jnp.array(best_elbos))
+            best_step = jnp.nanargmax(jnp.array(elbos))
+            best_elbo = elbos[best_step]
+
+            best_steps_per_fit.append(best_step)
+            best_elbos_per_fit.append(best_elbo)
+            print(f'Best ELBO {best_elbo:.3f} at step {best_step}')
+
+            best_params_per_fit.append(params[best_step])
+
+
+        best_optim = jnp.argmax(jnp.array(best_elbos_per_fit))
         print(f'Best fit is {best_optim+1}.')
-        best_params = all_params[best_optim]
+        best_params = best_params_per_fit[best_optim]
 
-        if store_every != 0: 
-            return all_params[best_optim], all_avg_elbos[best_optim]
-        else: 
-            return best_params, (best_optim, best_epochs, all_avg_elbos)
+        return best_params
 

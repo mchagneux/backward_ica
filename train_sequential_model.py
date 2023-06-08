@@ -63,7 +63,7 @@ def main(args):
                                                             num_fits=args.num_fits,
                                                             log_dir=args.save_dir,
                                                             store_every=args.store_every,
-                                                            args=args)[0] # returns the best fit (based on the last value of the elbo)
+                                                            args=args) # returns the best fit (based on the last value of the elbo)
     
     # utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), args.save_dir, plot=True, best_epochs_only=True)
     misc.save_params(params, 'phi', args.save_dir)
