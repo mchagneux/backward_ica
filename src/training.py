@@ -409,7 +409,7 @@ class SVITrainer:
                                          args, 
                                          log_writer_monitor=log_writer_monitor)):
                 if global_step_nb % 10 == 0:
-                    save_params(params_at_step, f'params_{global_step_nb}', intermediate_params_dir)
+                    save_params(params_at_step, f'phi_{global_step_nb}', intermediate_params_dir)
                 params.append(params_at_step)
                 elbos.append(elbo_at_step)
 
