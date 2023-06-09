@@ -358,10 +358,12 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                             base_s_tm1,
                             ys_for_bptt, 
                             phi)
-    
+
+    base_s_t = get_states(q.format_params(unformatted_phi_t))[0]
+
     def _log_q_tm1_t(unformatted_phi, x_tm1, x_t):
         phi = q.format_params(unformatted_phi)
-        _ , states = get_states(phi)
+        states = get_states(phi)[1]
         params_q_tm1_t = q.backwd_params_from_states(states, phi)
 
         log_q_tm1_t = q.backwd_kernel.logpdf(x_tm1, 
@@ -371,17 +373,17 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
     
     def _log_q_t(unformatted_phi, key):
         phi = q.format_params(unformatted_phi)
-        base_s_t, (_, s_t) = get_states(phi)
+        s_t = get_states(phi)[1][1]
         
         params_q_t = q.filt_params_from_state(s_t, phi)
         x_t = q.filt_dist.sample(key, params_q_t)
         x_t = jax.lax.stop_gradient(x_t)
-        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, base_s_t)
+        return q.filt_dist.logpdf(x_t, params_q_t), x_t
     
     def _log_q_t_and_dummy_grad(unformatted_phi, key):
-        log_q_t, (x_t, base_s_t) = _log_q_t(unformatted_phi, key)
+        log_q_t, x_t = _log_q_t(unformatted_phi, key)
         dummy_grad = tree_map(lambda x: jnp.zeros_like(x[0]), carry_tm1['grad_log_q'])
-        return (log_q_t, (x_t, base_s_t)), dummy_grad
+        return (log_q_t, x_t), dummy_grad
     
     def _log_q_t_and_grad(unformatted_phi, key):
         return jax.value_and_grad(_log_q_t, has_aux=True)(
@@ -396,7 +398,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
             key_new_sample = key_t
         
 
-        (log_q_t, (x_t, base_s_t)), grad_log_q_t = lax.cond(t == T, 
+        (log_q_t, x_t), grad_log_q_t = lax.cond(t == T, 
                                                     _log_q_t_and_grad,
                                                     _log_q_t_and_dummy_grad, 
                                                     unformatted_phi_t, 
@@ -522,13 +524,13 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                                                                     sub_grad_log_q_tm1_t)
             F_t = tree_map(lambda x: jnp.mean(x, axis=0), F_t)
 
-        return F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t
+        return F_t, H_t, x_t, log_q_t, grad_log_q_t
 
-    F_t, H_t, x_t, base_s_t, log_q_t, grad_log_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
+    F_t, H_t, x_t, log_q_t, grad_log_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
 
 
     carry_t = {'stats':{'F':F_t, 'H':H_t},
-            'base_s':tree_get_idx(0,base_s_t), 
+            'base_s':base_s_t, 
             'x':x_t,
             'log_q':log_q_t,
             'grad_log_q':grad_log_q_t}
