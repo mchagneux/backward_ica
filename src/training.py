@@ -67,7 +67,7 @@ class SVITrainer:
 
         self.elbo_mode = elbo_mode
         self.training_mode = training_mode
-
+        self.monitor_elbo = GeneralBackwardELBO(p, q, num_samples)
 
         if 'true_online' in training_mode:
             self.online_difference = 'difference' in training_mode
@@ -87,7 +87,7 @@ class SVITrainer:
         self.true_online = true_online
 
 
-        self.monitor = False
+        self.monitor = 'monitor' in elbo_mode
 
         self.elbo_options = {}
         if 'score' in elbo_mode: 
@@ -260,10 +260,10 @@ class SVITrainer:
                         return carry, aux
                 
                     elbo_carry, aux = jax.lax.scan(_step, 
-                                            init=elbo_carry, 
-                                            xs=(keys, 
-                                                timesteps, 
-                                                strided_ys))
+                                                init=elbo_carry, 
+                                                xs=(keys, 
+                                                    timesteps, 
+                                                    strided_ys))
                     
                 
                     elbo, grad = self.elbo.postprocess(elbo_carry)
@@ -287,19 +287,16 @@ class SVITrainer:
         for cnt in cnts:
             yield all_timesteps[cnt:cnt+self.online_batch_size]
 
-    def fit(self, key_params, key_batcher, key_montecarlo, data, log_writer=None, args=None, log_writer_monitor=None):
-
-
+    def fit(self, 
+            key_params, 
+            key_batcher, 
+            key_montecarlo, 
+            data, 
+            log_writer=None, 
+            args=None, 
+            log_writer_monitor=None):
 
         params = self.q.get_random_params(key_params, args)
-
-        # params = tree_map(lambda param, frozen_param: param if frozen_param == '' else frozen_param, 
-        #                 params, 
-        #                 self.frozen_params)
-        # print(self.q.format_params(params))
-        # print(self.formatted_theta_star)
-
-
 
         opt_state = self.optimizer.init(params)
 
@@ -308,13 +305,21 @@ class SVITrainer:
         keys = get_keys(key_montecarlo, 
                         seq_length // self.online_batch_size, 
                         self.num_epochs)
-
-
+        
+        
         @jax.jit
-        def step(key, strided_data_on_timesteps, elbo_carry, timesteps, params, opt_state):
+        def step(key, strided_data_on_timesteps, data_on_timesteps, elbo_carry, timesteps, params, opt_state):
+                
 
-
-
+            if self.monitor:
+                monitor_elbo_value = self.monitor_elbo(key, 
+                                                       data_on_timesteps, 
+                                                       len(data_on_timesteps)-1, 
+                                                       self.formatted_theta_star, 
+                                                       self.q.format_params(params))[0] / len(data_on_timesteps)
+            else:
+                monitor_elbo_value = None
+                
             elbo, neg_grad, elbo_carry, aux = self.update(
                                                         key, 
                                                         elbo_carry, 
@@ -330,38 +335,45 @@ class SVITrainer:
 
 
 
-
-            return (params, opt_state, elbo_carry), (elbo, ravel_pytree(neg_grad)[0], aux)
+            return (params, opt_state, elbo_carry), (elbo, ravel_pytree(neg_grad)[0], aux, monitor_elbo_value)
         
 
-        with log_writer.as_default():
-            absolute_step_nb = 0
-            for epoch_nb, keys_epoch in enumerate(keys):
-                elbo_carry = self.init_carry
-                strided_data = self.elbo.preprocess(data)
-                # if self.reset: 
-                #     key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
-                #     timesteps_lists = self.timesteps(seq_length, subkey_batcher)
-                # else:
-                timesteps_lists = self.timesteps(seq_length, None)
+        absolute_step_nb = 0
 
-                for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
-                    
-                    (params, opt_state, elbo_carry), (elbo, _ , _) = step(
-                                                                    key_step, 
-                                                                    strided_data[timesteps], 
-                                                                    elbo_carry, 
-                                                                    timesteps, 
-                                                                    params, 
-                                                                    opt_state)
-                    absolute_step_nb += 1 
+        for epoch_nb, keys_epoch in enumerate(keys):
+            elbo_carry = self.init_carry
+            strided_data = self.elbo.preprocess(data)
+
+            timesteps_lists = self.timesteps(seq_length, None)
+
+            for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
+                
+                (params, opt_state, elbo_carry), (elbo, _ , _, monitor_elbo) = step(
+                                                                                key_step, 
+                                                                                strided_data[timesteps], 
+                                                                                data[timesteps],
+                                                                                elbo_carry, 
+                                                                                timesteps, 
+                                                                                params, 
+                                                                                opt_state)
+                absolute_step_nb += 1 
+
+
+                        
+                with log_writer.as_default():
+
                     tf.summary.scalar('ELBO', elbo, absolute_step_nb)
-                   
                     tf.summary.scalar('ELBO w.r.t. nb observations processed', 
                                     elbo, 
                                     (epoch_nb*seq_length) + (step_nb+1)*self.online_batch_size)
-                
+                    
 
+                if self.monitor: 
+                    with log_writer_monitor.as_default():
+                        tf.summary.scalar('ELBO', monitor_elbo, absolute_step_nb)
+                        tf.summary.scalar('ELBO w.r.t. nb observations processed', 
+                                        monitor_elbo, 
+                                        (epoch_nb*seq_length) + (step_nb+1)*self.online_batch_size)
                     
                 yield params, elbo
 
@@ -376,7 +388,6 @@ class SVITrainer:
                   args=None):
 
 
-        all_avg_elbos = []
         best_params_per_fit = []
         best_elbos_per_fit = []
         best_steps_per_fit = []
@@ -385,6 +396,7 @@ class SVITrainer:
         
         tensorboard_subdir = os.path.join(log_dir, 'tensorboard_logs')
         os.makedirs(tensorboard_subdir, exist_ok=True)
+
 
 
 
@@ -402,12 +414,12 @@ class SVITrainer:
             intermediate_params_dir = os.path.join(log_dir, f'fit_{fit_nb}_intermediate_params')
             os.makedirs(intermediate_params_dir, exist_ok=True)
             for global_step_nb, (params_at_step, elbo_at_step) in enumerate(self.fit(subkey_params, 
-                                         subkey_batcher, 
-                                         subkey_montecarlo, 
-                                         data, 
-                                         log_writer, 
-                                         args, 
-                                         log_writer_monitor=log_writer_monitor)):
+                                                                                    subkey_batcher, 
+                                                                                    subkey_montecarlo, 
+                                                                                    data, 
+                                                                                    log_writer, 
+                                                                                    args, 
+                                                                                    log_writer_monitor)):
                 if global_step_nb % 10 == 0:
                     save_params(params_at_step, f'phi_{global_step_nb}', intermediate_params_dir)
                 params.append(params_at_step)

@@ -5,15 +5,17 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['johnson_backward,100.5.adam,1e-4,cst.true_online.score,variance_reduction,bptt_depth_2']
+settings_list = ['johnson_backward,200.10.adam,1e-2,cst.reset,500.score,monitor,variance_reduction,bptt_depth_2',
+                 'johnson_backward,200.10.adam,1e-2,cst.reset,500.autodiff_on_backward']
 
-num_epochs = 100
+num_fits = 5
+num_epochs = 1000
 dims = '5 5'
-load_from = 'data/crnn/2023-05-29_10-45-05_Train_run'
+load_from = 'data/crnn/2023-06-09_14-47-15_Train_run'
 loaded_seq = True
 batch_size = 1
 num_seqs = 1
-seq_length = 100_000
+seq_length = 500
 store_every = 0
  
 
@@ -38,6 +40,7 @@ subprocess.run(f'python generate_toy_sequential_data.py {loaded_seq} {load_from}
 processes = [subprocess.Popen(f'python train_sequential_model.py \
                                 --settings {settings} \
                                 --exp_dir {exp_dir} \
+                                --num fits {num_fits} \
                                 --batch_size {batch_size} \
                                 --num_epochs {num_epochs} \
                                 --store_every {store_every}',

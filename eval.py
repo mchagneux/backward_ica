@@ -2,7 +2,7 @@
 import jax, jax.numpy as jnp
 jax.config.update('jax_disable_jit', False)
 jax.config.update('jax_platform_name', 'cpu')
-
+jax.config.update('jax_enable_x64', True)
 
 import pandas
 import matplotlib.pyplot as plt
@@ -10,7 +10,7 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model
 from src.utils.misc import *
 import os 
-path = 'experiments/p_chaotic_rnn/2023_06_06__19_10_15'
+path = 'experiments/p_chaotic_rnn/2023_06_09__17_29_28'
 num_smoothing_samples = 1000
 
 key = jax.random.PRNGKey(0)
@@ -23,12 +23,14 @@ theta_star = load_params('theta_star', path)
 
 x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
 y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
-seq_length = 2000
+seq_length = 5_00
 
 T = seq_length - 1 
 
-
-models = ['johnson_backward,100.2.adam,1e-2,cst.reset,5000.autodiff_on_backward']
+models = [
+        'data/crnn/2023-06-09_14-47-15_Train_run',
+        'johnson_backward,200.10.adam,1e-2,cst.reset,500.score,monitor,paris,variance_reduction,bptt_depth_2',
+        'johnson_backward,200.10.adam,1e-2,cst.reset,500.autodiff_on_backward']
 
 def eval_model(model):
     if 'crnn' in model:
@@ -82,7 +84,7 @@ for model in models:
     fig, axes = plt.subplots(p_args.state_dim, 1, figsize=(15,1.5*p_args.state_dim))
 
     plt.autoscale(True)
-    # plt.tight_layout()
+    plt.tight_layout()
     smoothed_results, filt_results = eval_model(model)
 
     
