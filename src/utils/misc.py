@@ -272,7 +272,6 @@ def named_vmap(f, axes_names, input_dict):
 
 
 def get_defaults(args):
-    import math
     args.float64 = True
 
     args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior

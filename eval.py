@@ -10,7 +10,7 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model
 from src.utils.misc import *
 import os 
-path = 'experiments/p_chaotic_rnn/2023_06_09__17_29_28'
+path = 'experiments/p_chaotic_rnn/2023_06_10__10_10_33'
 num_smoothing_samples = 1000
 
 key = jax.random.PRNGKey(0)
@@ -23,14 +23,14 @@ theta_star = load_params('theta_star', path)
 
 x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
 y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
-seq_length = 5_00
+seq_length = len(y)
 
 T = seq_length - 1 
 
 models = [
         'data/crnn/2023-06-09_14-47-15_Train_run',
-        'johnson_backward,200.10.adam,1e-2,cst.reset,500.score,monitor,paris,variance_reduction,bptt_depth_2',
-        'johnson_backward,200.10.adam,1e-2,cst.reset,500.autodiff_on_backward']
+        'johnson_backward,200.2.adam,1e-2,cst.reset,500.autodiff_on_backward',
+        'johnson_backward,200.2.adam,1e-2,cst.reset,500.score,variance_reduction,bptt_depth_2']
 
 def eval_model(model):
     if 'crnn' in model:

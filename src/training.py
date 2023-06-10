@@ -7,7 +7,7 @@ import tensorflow as tf
 from jax.tree_util import tree_flatten
 import jax
 from jax import vmap, value_and_grad, numpy as jnp
-
+import multiprocessing
 import optax 
 
 # def winsorize_grads():
@@ -289,7 +289,6 @@ class SVITrainer:
 
     def fit(self, 
             key_params, 
-            key_batcher, 
             key_montecarlo, 
             data, 
             log_writer=None, 
@@ -378,20 +377,12 @@ class SVITrainer:
                 yield params, elbo
 
     def multi_fit(self, 
-                  key_params, 
-                  key_batcher, 
-                  key_montecarlo, 
+                  key, 
                   data, 
                   num_fits, 
-                  store_every=None, 
                   log_dir='', 
                   args=None):
 
-
-        best_params_per_fit = []
-        best_elbos_per_fit = []
-        best_steps_per_fit = []
-        
         print('Starting training...')
         
         tensorboard_subdir = os.path.join(log_dir, 'tensorboard_logs')
@@ -399,46 +390,52 @@ class SVITrainer:
 
 
 
+        def run_fit(fit_nb, fit_key):
 
-        for fit_nb, subkey_params in enumerate(jax.random.split(key_params, num_fits)):
             log_writer = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}'))
             if self.monitor:
                 log_writer_monitor = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}_monitor'))
             else:
                 log_writer_monitor = None
-            print(f'Starting fit {fit_nb+1}/{num_fits}...')
-            key_batcher, subkey_batcher = jax.random.split(key_batcher, 2)
-            key_montecarlo, subkey_montecarlo = jax.random.split(key_montecarlo, 2)
+            print(f'Starting fit {fit_nb}/{num_fits-1}...')
+
+            key_params, key_montecarlo = jax.random.split(fit_key, 2)
 
             params, elbos = [], []
-            intermediate_params_dir = os.path.join(log_dir, f'fit_{fit_nb}_intermediate_params')
-            os.makedirs(intermediate_params_dir, exist_ok=True)
-            for global_step_nb, (params_at_step, elbo_at_step) in enumerate(self.fit(subkey_params, 
-                                                                                    subkey_batcher, 
-                                                                                    subkey_montecarlo, 
+            # intermediate_params_dir = os.path.join(log_dir, f'fit_{fit_nb}_intermediate_params')
+            # os.makedirs(intermediate_params_dir, exist_ok=True)
+            for global_step_nb, (params_at_step, elbo_at_step) in enumerate(self.fit(key_params, 
+                                                                                    key_montecarlo, 
                                                                                     data, 
                                                                                     log_writer, 
                                                                                     args, 
                                                                                     log_writer_monitor)):
-                if global_step_nb % 10 == 0:
-                    save_params(params_at_step, f'phi_{global_step_nb}', intermediate_params_dir)
+                # if global_step_nb % 10 == 0:
+                #     save_params(params_at_step, f'phi_{global_step_nb}', intermediate_params_dir)
                 params.append(params_at_step)
                 elbos.append(elbo_at_step)
 
 
-            best_step = jnp.nanargmax(jnp.array(elbos))
-            best_elbo = elbos[best_step]
+            best_step_for_fit = jnp.nanargmax(jnp.array(elbos))
+            best_elbo_for_fit = elbos[best_step_for_fit]
+            best_params_for_fit = params[best_step_for_fit]
+            print(f'Fit {fit_nb}: best ELBO {best_elbo_for_fit:.3f} at step {best_step_for_fit}')
 
-            best_steps_per_fit.append(best_step)
-            best_elbos_per_fit.append(best_elbo)
-            print(f'Best ELBO {best_elbo:.3f} at step {best_step}')
+            return best_params_for_fit, best_elbo_for_fit
+        
+        fit_nbs = range(args.num_fits)
+        fit_keys = jax.random.split(key, args.num_fits)
+        best_params_per_fit, best_elbos_per_fit = [], []
 
-            best_params_per_fit.append(params[best_step])
+        for fit_nb, fit_key in zip(fit_nbs, fit_keys): 
 
+            best_params_for_fit, best_elbo_for_fit = run_fit(fit_nb, fit_key)
+            best_params_per_fit.append(best_params_for_fit)
+            best_elbos_per_fit.append(best_elbo_for_fit)
+            
 
         best_optim = jnp.argmax(jnp.array(best_elbos_per_fit))
-        print(f'Best fit is {best_optim+1}.')
-        best_params = best_params_per_fit[best_optim]
+        print(f'Best fit is {best_optim}.')
 
-        return best_params
+        return best_params_per_fit[best_optim], best_params_per_fit, 
 

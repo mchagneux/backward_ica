@@ -56,19 +56,20 @@ def main(args):
                         elbo_mode=args.elbo_mode)
 
 
-    key_params, key_batcher, key_montecarlo = jax.random.split(key_phi, 3)
 
     print('Elbo mode:', args.elbo_mode)
 
-    params = trainer.multi_fit(key_params, key_batcher, key_montecarlo, 
+    best_params_across_all_fits, best_params_per_fit = trainer.multi_fit(key_phi,
                                                             data=data, 
                                                             num_fits=args.num_fits,
                                                             log_dir=args.save_dir,
-                                                            store_every=args.store_every,
                                                             args=args) # returns the best fit (based on the last value of the elbo)
     
+    misc.save_params(best_params_across_all_fits, 'phi', args.save_dir)
+
     # utils.save_train_logs((best_fit_idx, stored_epoch_nbs, avg_elbos, avg_evidence), args.save_dir, plot=True, best_epochs_only=True)
-    misc.save_params(params, 'phi', args.save_dir)
+    for fit_nb in range(args.num_fits):
+        misc.save_params(best_params_per_fit[fit_nb], f'phi_fit_{fit_nb}', args.save_dir)
 
 if __name__ == '__main__':
 
