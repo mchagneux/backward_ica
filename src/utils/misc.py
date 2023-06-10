@@ -671,6 +671,11 @@ def save_args(args, name, save_dir):
         args_dict = vars(args)
         json.dump(args_dict, f, indent=4)
 
+
+def save_dict(dict, name, save_dir):
+    with open(os.path.join(save_dir, f'{name}.json'), 'w') as f:
+        json.dump(dict, f, indent=4)
+
 def load_args(name, save_dir):
     with open(os.path.join(save_dir, f'{name}.json'), 'r') as f:
         args_dict = json.load(f)

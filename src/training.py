@@ -9,6 +9,7 @@ import jax
 from jax import vmap, value_and_grad, numpy as jnp
 import multiprocessing
 import optax 
+from time import time
 
 # def winsorize_grads():
 #     def init_fn(_): 
@@ -305,7 +306,7 @@ class SVITrainer:
                         seq_length // self.online_batch_size, 
                         self.num_epochs)
         
-        
+        num_grad_steps = 5000
         @jax.jit
         def step(key, strided_data_on_timesteps, data_on_timesteps, elbo_carry, timesteps, params, opt_state):
                 
@@ -318,23 +319,33 @@ class SVITrainer:
                                                        self.q.format_params(params))[0] / len(data_on_timesteps)
             else:
                 monitor_elbo_value = None
+            
+            def inner_step(carry, x):
+                params, opt_state = carry
+                key = x
+                elbo, neg_grad, new_carry, aux = self.update(
+                                                            key, 
+                                                            elbo_carry, 
+                                                            strided_data_on_timesteps, 
+                                                            timesteps, 
+                                                            params)
                 
-            elbo, neg_grad, elbo_carry, aux = self.update(
-                                                        key, 
-                                                        elbo_carry, 
-                                                        strided_data_on_timesteps, 
-                                                        timesteps, 
-                                                        params)
+                updates, opt_state = self.optimizer.update(neg_grad, 
+                                                            opt_state, 
+                                                            params)
+                
+                params = self.optimizer_update_fn(params, updates)
+                return (params, opt_state), (elbo, neg_grad, aux, new_carry)
             
-            updates, opt_state = self.optimizer.update(neg_grad, 
-                                                        opt_state, 
-                                                        params)
-            
-            params = self.optimizer_update_fn(params, updates)
+            (params, opt_state), results = jax.lax.scan(inner_step, 
+                                                        init=(params, opt_state), 
+                                                        xs=jax.random.split(key, 
+                                                                            num_grad_steps))
 
 
-
-            return (params, opt_state, elbo_carry), (elbo, ravel_pytree(neg_grad)[0], aux, monitor_elbo_value)
+            neg_grad, aux, elbo_carry = tree_get_idx(-1, results[1:])
+            elbos = results[0]
+            return (params, opt_state, elbo_carry), (elbos, ravel_pytree(neg_grad)[0], aux, monitor_elbo_value)
         
 
         absolute_step_nb = 0
@@ -347,7 +358,7 @@ class SVITrainer:
 
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
                 
-                (params, opt_state, elbo_carry), (elbo, _ , _, monitor_elbo) = step(
+                (params, opt_state, elbo_carry), (elbos, _ , _, monitor_elbo) = step(
                                                                                 key_step, 
                                                                                 strided_data[timesteps], 
                                                                                 data[timesteps],
@@ -355,25 +366,21 @@ class SVITrainer:
                                                                                 timesteps, 
                                                                                 params, 
                                                                                 opt_state)
-                absolute_step_nb += 1 
 
 
                         
                 with log_writer.as_default():
+                    for inner_step_nb, elbo in enumerate(elbos): 
+                        tf.summary.scalar('ELBO', elbo, num_grad_steps*absolute_step_nb + inner_step_nb)
 
-                    tf.summary.scalar('ELBO', elbo, absolute_step_nb)
-                    tf.summary.scalar('ELBO w.r.t. nb observations processed', 
-                                    elbo, 
-                                    (epoch_nb*seq_length) + (step_nb+1)*self.online_batch_size)
                     
 
                 if self.monitor: 
                     with log_writer_monitor.as_default():
                         tf.summary.scalar('ELBO', monitor_elbo, absolute_step_nb)
-                        tf.summary.scalar('ELBO w.r.t. nb observations processed', 
-                                        monitor_elbo, 
-                                        (epoch_nb*seq_length) + (step_nb+1)*self.online_batch_size)
-                    
+                        
+                absolute_step_nb += 1 
+
                 yield params, elbo
 
     def multi_fit(self, 
@@ -388,8 +395,7 @@ class SVITrainer:
         tensorboard_subdir = os.path.join(log_dir, 'tensorboard_logs')
         os.makedirs(tensorboard_subdir, exist_ok=True)
 
-
-
+        times = []
         def run_fit(fit_nb, fit_key):
 
             log_writer = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}'))
@@ -404,6 +410,7 @@ class SVITrainer:
             params, elbos = [], []
             # intermediate_params_dir = os.path.join(log_dir, f'fit_{fit_nb}_intermediate_params')
             # os.makedirs(intermediate_params_dir, exist_ok=True)
+            time0 = time()
             for global_step_nb, (params_at_step, elbo_at_step) in enumerate(self.fit(key_params, 
                                                                                     key_montecarlo, 
                                                                                     data, 
@@ -414,28 +421,36 @@ class SVITrainer:
                 #     save_params(params_at_step, f'phi_{global_step_nb}', intermediate_params_dir)
                 params.append(params_at_step)
                 elbos.append(elbo_at_step)
+                times.append(time() - time0)
+                time0 = time()
+                
 
 
             best_step_for_fit = jnp.nanargmax(jnp.array(elbos))
             best_elbo_for_fit = elbos[best_step_for_fit]
             best_params_for_fit = params[best_step_for_fit]
             print(f'Fit {fit_nb}: best ELBO {best_elbo_for_fit:.3f} at step {best_step_for_fit}')
-
-            return best_params_for_fit, best_elbo_for_fit
+            return best_params_for_fit, best_elbo_for_fit, jnp.array(times[20:])
         
         fit_nbs = range(args.num_fits)
         fit_keys = jax.random.split(key, args.num_fits)
         best_params_per_fit, best_elbos_per_fit = [], []
 
+        all_timings = []
         for fit_nb, fit_key in zip(fit_nbs, fit_keys): 
 
-            best_params_for_fit, best_elbo_for_fit = run_fit(fit_nb, fit_key)
+            best_params_for_fit, best_elbo_for_fit, timings = run_fit(fit_nb, fit_key)
             best_params_per_fit.append(best_params_for_fit)
             best_elbos_per_fit.append(best_elbo_for_fit)
-            
+            all_timings.append(timings)
+
 
         best_optim = jnp.argmax(jnp.array(best_elbos_per_fit))
         print(f'Best fit is {best_optim}.')
+        training_info = dict()
+        training_info['avg_time'] = jnp.mean(jnp.concatenate(all_timings)).tolist()
+        training_info['best_fit'] = best_optim.tolist()
+        save_dict(training_info, 'training_info', log_dir)
 
         return best_params_per_fit[best_optim], best_params_per_fit, 
 

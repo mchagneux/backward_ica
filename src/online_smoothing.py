@@ -359,11 +359,11 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                             ys_for_bptt, 
                             phi)
 
-    base_s_t = get_states(q.format_params(unformatted_phi_t))[0]
+    base_s_t, states = get_states(q.format_params(unformatted_phi_t))
 
     def _log_q_tm1_t(unformatted_phi, x_tm1, x_t):
         phi = q.format_params(unformatted_phi)
-        states = get_states(phi)[1]
+        # states = get_states(phi)[1]
         params_q_tm1_t = q.backwd_params_from_states(states, phi)
 
         log_q_tm1_t = q.backwd_kernel.logpdf(x_tm1, 

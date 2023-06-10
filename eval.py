@@ -10,7 +10,7 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model
 from src.utils.misc import *
 import os 
-path = 'experiments/p_chaotic_rnn/2023_06_10__10_33_36'
+path = 'experiments/p_chaotic_rnn/2023_06_10__12_31_12'
 num_smoothing_samples = 1000
 
 key = jax.random.PRNGKey(0)
@@ -26,7 +26,9 @@ y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
 seq_length = len(y)
 
 T = seq_length - 1 
-models = ['johnson_backward,200.2.adam,1e-2,cst.reset,500.autodiff_on_backward']
+models = ['data/crnn/2023-06-09_14-47-15_Train_run',
+          'johnson_backward,200.2.adam,1e-2,cst.reset,500.autodiff_on_backward',
+          'johnson_backward,200.2.adam,1e-2,cst.reset,500.score,variance_reduction,bptt_depth_2']
 
 def eval_model(model):
     
@@ -91,10 +93,8 @@ nb_sigma = 1.96
 filt = False
 timesteps = jnp.arange(seq_length)
 for model in models: 
-    fig, axes = plt.subplots(p_args.state_dim, 1, figsize=(15,1.5*p_args.state_dim))
+    print(f'Eval of {model}:')
 
-    plt.autoscale(True)
-    plt.tight_layout()
     smoothed_results, filt_results = eval_model(model)
 
 
@@ -104,27 +104,35 @@ for model in models:
         means, stds = smoothed_results
 
     rmse_avg_over_dims = jnp.mean(jnp.sqrt(jnp.mean((means - x)**2, axis=1)), axis=-1)
-    
+    # print('Per-fit RMSE:', rmse_avg_over_dims)
+
     mean_of_rmses = jnp.mean(rmse_avg_over_dims)
     std_of_rmse = jnp.std(rmse_avg_over_dims)
-    
-    for dim in range(p_args.state_dim):
-        ax = axes[dim]
-        means_d = means[:,dim]
-        stds_d = stds[:,dim]
+    print(f'RMSE summary: {mean_of_rmses:.3f} +- {std_of_rmse:.3f}')
+    print('-------')
 
-        ax.plot(means_d, label='Pred', color=color, **plot_params)
-        ax.fill_between(timesteps, 
-                        means_d - nb_sigma*stds_d, 
-                        means_d + nb_sigma*stds_d, 
-                        alpha=0.2,
-                        color=color)
+
+    # fig, axes = plt.subplots(p_args.state_dim, 1, figsize=(15,1.5*p_args.state_dim))
+
+    # plt.autoscale(True)
+    # plt.tight_layout()
+
+    # for dim in range(p_args.state_dim):
+    #     ax = axes[dim]
+    #     means_d = means[:,dim]
+    #     stds_d = stds[:,dim]
+
+    #     ax.plot(means_d, label='Pred', color=color, **plot_params)
+    #     ax.fill_between(timesteps, 
+    #                     means_d - nb_sigma*stds_d, 
+    #                     means_d + nb_sigma*stds_d, 
+    #                     alpha=0.2,
+    #                     color=color)
         
-        # ax.plot(filt_means[:,dim], label='Filt', **plot_params)
-        ax.plot(x[:,dim], label='True', color='black', **plot_params)
-        ax.legend()
-    plt.suptitle(f'model: {model}, rmse: {rmse_avg_over_dims:.3f}')
-
+    #     # ax.plot(filt_means[:,dim], label='Filt', **plot_params)
+    #     ax.plot(x[:,dim], label='True', color='black', **plot_params)
+    #     ax.legend()
+    # plt.suptitle(f'model: {model}, rmse: {rmse_avg_over_dims:.3f}')
 #%%
 
 
