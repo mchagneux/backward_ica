@@ -72,6 +72,7 @@ class SVITrainer:
 
         if 'true_online' in training_mode:
             self.online_difference = 'difference' in training_mode
+            self.num_grad_steps = int(training_mode.split(',')[1])
             true_online = True
             self.online_batch_size = 1
             self.reset = False
@@ -79,7 +80,7 @@ class SVITrainer:
 
         else: 
             true_online = False
-            self.online_batch_size = int(training_mode.split(',')[1])
+            self.online_batch_size, self.num_grad_steps = int(training_mode.split(',')[1]), int(training_mode.split(',')[2])
             self.reset = 'reset' in training_mode
         
         # if elbo_mode != 'autodiff_on_backward':
@@ -166,7 +167,7 @@ class SVITrainer:
                                             self.formatted_theta_star, 
                                             params)
                 
-                elbo, grad = self.elbo.postprocess(carry) 
+                elbo, grad = self.elbo.postprocess(carry)
                 T = len(ys) - 1 
                 elbo = elbo / (T+1)
                 neg_grad = tree_map(lambda x: -x / (T+1), grad)
@@ -306,7 +307,6 @@ class SVITrainer:
                         seq_length // self.online_batch_size, 
                         self.num_epochs)
         
-        num_grad_steps = 1
         @jax.jit
         def step(key, strided_data_on_timesteps, data_on_timesteps, elbo_carry, timesteps, params, opt_state):
                 
@@ -349,7 +349,7 @@ class SVITrainer:
             (_, params, opt_state), results = jax.lax.scan(inner_step, 
                                                         init=(elbo_carry, params, opt_state), 
                                                         xs=jax.random.split(key, 
-                                                                            num_grad_steps))
+                                                                            self.num_grad_steps))
 
 
             neg_grad, aux, elbo_carry = tree_get_idx(-1, results[1:])
@@ -380,7 +380,7 @@ class SVITrainer:
                         
                 with log_writer.as_default():
                     for inner_step_nb, elbo in enumerate(elbos): 
-                        tf.summary.scalar('ELBO', elbo, num_grad_steps*absolute_step_nb + inner_step_nb)
+                        tf.summary.scalar('ELBO', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)
 
                     
 

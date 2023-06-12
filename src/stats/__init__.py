@@ -90,9 +90,6 @@ class BackwardSmoother(metaclass=ABCMeta):
                   base_state, 
                   ys_for_bptt, 
                   formatted_params):
-        
-        # bptt_depth_truncation = 0
-        # t_stop_grad = t - bptt_truncation
 
         bptt_depth = len(ys_for_bptt)
 
