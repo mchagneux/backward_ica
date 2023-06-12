@@ -306,7 +306,7 @@ class SVITrainer:
                         seq_length // self.online_batch_size, 
                         self.num_epochs)
         
-        num_grad_steps = 5000
+        num_grad_steps = 1
         @jax.jit
         def step(key, strided_data_on_timesteps, data_on_timesteps, elbo_carry, timesteps, params, opt_state):
                 
@@ -320,12 +320,14 @@ class SVITrainer:
             else:
                 monitor_elbo_value = None
             
+
+
             def inner_step(carry, x):
-                params, opt_state = carry
+                inner_carry, params, opt_state = carry
                 key = x
                 elbo, neg_grad, new_carry, aux = self.update(
                                                             key, 
-                                                            elbo_carry, 
+                                                            inner_carry,
                                                             strided_data_on_timesteps, 
                                                             timesteps, 
                                                             params)
@@ -335,10 +337,17 @@ class SVITrainer:
                                                             params)
                 
                 params = self.optimizer_update_fn(params, updates)
-                return (params, opt_state), (elbo, neg_grad, aux, new_carry)
+                
+                return (lax.cond(timesteps[-1] == 0, 
+                                 lambda x:x, 
+                                 lambda x:elbo_carry, 
+                                 new_carry), 
+                        params, 
+                        opt_state), \
+                        (elbo, neg_grad, aux, new_carry)
             
-            (params, opt_state), results = jax.lax.scan(inner_step, 
-                                                        init=(params, opt_state), 
+            (_, params, opt_state), results = jax.lax.scan(inner_step, 
+                                                        init=(elbo_carry, params, opt_state), 
                                                         xs=jax.random.split(key, 
                                                                             num_grad_steps))
 
@@ -378,7 +387,7 @@ class SVITrainer:
                 if self.monitor: 
                     with log_writer_monitor.as_default():
                         tf.summary.scalar('ELBO', monitor_elbo, absolute_step_nb)
-                        
+
                 absolute_step_nb += 1 
 
                 yield params, elbo

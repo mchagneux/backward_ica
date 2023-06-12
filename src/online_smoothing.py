@@ -261,7 +261,7 @@ def preprocess_for_bptt(obs_seq, bptt_depth, **kwargs):
 
     return strided_ys 
     
-def init_carry_score_gradients(unformatted_params, **kwargs):
+def init_carry_elbo_score_gradients(unformatted_params, **kwargs):
 
     num_samples = kwargs['num_samples']
     state_dim = kwargs['p'].state_dim
@@ -282,7 +282,7 @@ def init_carry_score_gradients(unformatted_params, **kwargs):
 
     return carry
 
-def init_score_gradients(carry_m1, input_0, **kwargs):
+def init_elbo_score_gradients(carry_m1, input_0, **kwargs):
 
 
     y_0 = input_0['ys_bptt'][-1]
@@ -291,7 +291,6 @@ def init_score_gradients(carry_m1, input_0, **kwargs):
     p:HMM = kwargs['p']
     q:BackwardSmoother = kwargs['q']
     num_samples = kwargs['num_samples']
-    h_0 = kwargs['h']
 
     s_0 = q.init_state(y_0, 
                        q.format_params(unformatted_phi_0))
@@ -308,13 +307,15 @@ def init_score_gradients(carry_m1, input_0, **kwargs):
                             in_axes=(None,0))(unformatted_phi_0, 
                                                 jax.random.split(key_0, num_samples))
     
-    h = partial(h_0, models={'p':p, 'q':q})
 
+    theta:HMM.Params = carry_m1['theta']
 
-    data = {'tm1': carry_m1,
-            't':{'x':x_0, 'y':y_0, 'log_q_x':log_q_0}}
-
-    H_0 = named_vmap(h, axes_names={'t':{'x':0, 'log_q_x':0}}, input_dict=data)
+    def _h(x_0, log_q_0):
+        return p.prior_dist.logpdf(x_0, theta.prior) \
+            + p.emission_kernel.logpdf(y_0, x_0, theta.emission) \
+            - log_q_0
+    
+    H_0 = jax.vmap(_h)(x_0, log_q_0)
 
     F_0 = tree_map(lambda x: jnp.zeros_like(x), 
                    carry_m1['stats']['F'])
@@ -328,7 +329,7 @@ def init_score_gradients(carry_m1, input_0, **kwargs):
 
     return carry, 0.0
 
-def update_score_gradients(carry_tm1, input_t, **kwargs):
+def update_elbo_score_gradients(carry_tm1, input_t, **kwargs):
 
 
     p:HMM = kwargs['p']
@@ -345,10 +346,14 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
     x_tm1, base_s_tm1, stats_tm1, theta = carry_tm1['x'], carry_tm1['base_s'], carry_tm1['stats'], carry_tm1['theta']
     log_q_tm1 = carry_tm1['log_q']
-    H_tm1 = stats_tm1['H'] 
+
+    H_tm1 = lax.cond(t-1 == 0, 
+                     lambda x: jnp.zeros_like(x), 
+                     lambda x:x,
+                     stats_tm1['H'])
+    
     F_tm1 = stats_tm1['F']
 
-    
     def get_states(phi):
         if bptt_depth == 1:
             s_t = q.new_state(y_t, base_s_tm1, phi)
@@ -363,7 +368,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
     def _log_q_tm1_t(unformatted_phi, x_tm1, x_t):
         phi = q.format_params(unformatted_phi)
-        # states = get_states(phi)[1]
+        states = get_states(phi)[1]
         params_q_tm1_t = q.backwd_params_from_states(states, phi)
 
         log_q_tm1_t = q.backwd_kernel.logpdf(x_tm1, 
@@ -403,10 +408,9 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                                                     _log_q_t_and_dummy_grad, 
                                                     unformatted_phi_t, 
                                                     key_new_sample)
-        def _h(x_tm1, log_q_tm1_t, log_q_tm1):
-            log_m_t = log_q_tm1_t - log_q_tm1 + log_q_t
+        def _h(x_tm1, log_q_tm1_t):
             return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
-                + p.emission_kernel.logpdf(y_t, x_t, theta.emission) - log_m_t
+                + p.emission_kernel.logpdf(y_t, x_t, theta.emission) - log_q_tm1_t
             
         _vmaped_h = jax.vmap(_h, in_axes=(0,0,0))
         
@@ -418,7 +422,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                                                                         x_tm1, 
                                                                         x_t)
 
-            h_t = _vmaped_h(x_tm1, log_q_tm1_t, log_q_tm1)
+            h_t = _vmaped_h(x_tm1, log_q_tm1_t)
 
             log_w_t = log_q_tm1_t - log_q_tm1
             w_t = normalizer(log_w_t)
@@ -445,6 +449,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
                                                         grad_log_backwd), 
                                                         F_tm1, 
                                                         grad_log_q_tm1_t)
+            
             F_t = tree_map(lambda x: jnp.sum(x, axis=0), F_t)
 
  
@@ -497,8 +502,7 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
             sub_H_tm1 = H_tm1[backwd_indices]
 
             sub_h_t = _vmaped_h(sub_x_tm1, 
-                            log_q_tm1_t[backwd_indices],   
-                            log_q_tm1[backwd_indices])
+                            log_q_tm1_t[backwd_indices])
 
             H_t = jnp.mean(sub_H_tm1 + sub_h_t, axis=0)
 
@@ -538,25 +542,38 @@ def update_score_gradients(carry_tm1, input_t, **kwargs):
 
     return carry_t, 0.0
 
-def postprocess_score_gradients(carries, variance_reduction, **kwargs):
+def postprocess_elbo_score_gradients(carry, 
+                                     variance_reduction, 
+                                     t, 
+                                     **kwargs):
 
 
 
-        H_T = carries['stats']['H']
-        F_T = carries['stats']['F']
-        grad_log_q_T = carries['grad_log_q']
+        H_T = carry['stats']['H']
+        log_q_T = carry['log_q']
+        F_T = carry['stats']['F']
+        grad_log_q_T = carry['grad_log_q']
+        
 
-        elbo_T = jnp.mean(H_T, axis=0)
+        elbo = lax.cond(t == 0, 
+                        lambda H, log_q: jnp.mean(H, axis=0),
+                        lambda H, log_q: jnp.mean(H - log_q, axis=0),
+                        H_T, log_q_T)
+                        
 
         if variance_reduction:
-            moving_average_H = elbo_T
+            moving_average_H = elbo
         else: 
             moving_average_H = 0.0
-        grad_T = tree_map(lambda grad_log_q, F: \
+
+        
+        grad = tree_map(lambda grad_log_q, F: \
                         jnp.mean(jax.vmap(lambda a,b,c: (a-moving_average_H)*b + c)
                                 (H_T, grad_log_q, F), 
                                 axis=0), grad_log_q_T, F_T)
-        return elbo_T, grad_T
+            
+
+        return elbo, grad
  
 
 
@@ -578,11 +595,11 @@ OnlineELBOScoreGradients = lambda p, q, num_samples, **options: OnlineVariationa
                                                                 p, 
                                                                 q, 
                                                                 online_elbo_functional,
-                                                                init_carry_fn=init_carry_score_gradients, 
-                                                                init_fn=init_score_gradients,
-                                                                update_fn=update_score_gradients,
+                                                                init_carry_fn=init_carry_elbo_score_gradients, 
+                                                                init_fn=init_elbo_score_gradients,
+                                                                update_fn=update_elbo_score_gradients,
                                                                 preprocess_fn=preprocess_for_bptt,
-                                                                postprocess_fn=postprocess_score_gradients,
+                                                                postprocess_fn=postprocess_elbo_score_gradients,
                                                                 num_samples=num_samples, 
                                                                 **options)
 
