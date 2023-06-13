@@ -85,6 +85,8 @@ class BackwardSmoother(metaclass=ABCMeta):
 
         return tree_prepend(init_state, state_seq)
 
+
+
     def get_states(self, 
                   t, 
                   base_state, 
@@ -98,32 +100,30 @@ class BackwardSmoother(metaclass=ABCMeta):
         masks_compute = (timesteps + t >= 0)
         masks_init = (timesteps + t == 0)
 
-        def false_fun(mask_init, obs, prev_state, params):
+        def false_fun(mask_init, obs, prev_state):
             return prev_state
 
-        def true_fun(mask_init, obs, prev_state, params):
+        def true_fun(mask_init, obs, prev_state):
 
-            def init(prev_state, params):
-                return self.init_state(obs, params)
+            def init(prev_state):
+                return self.init_state(obs, formatted_params)
             
-            def update(prev_state, params):
-                return self.new_state(obs, prev_state, params)
+            def update(prev_state):
+                return self.new_state(obs, prev_state, formatted_params)
 
-            return lax.cond(mask_init, init, update, prev_state, params)
+            return lax.cond(mask_init, init, update, prev_state)
 
-        @jit
         def _step(carry, x):
-            prev_state, params = carry
+            prev_state = carry
             mask_compute, mask_init, obs = x
             state = lax.cond(mask_compute, 
                             true_fun, 
                             false_fun, 
-                            mask_init, obs, prev_state, params)
+                            mask_init, obs, prev_state)
             
-            return (state, params), state
+            return state, state
 
-        state_seq = lax.scan(_step, init=(base_state, 
-                                          formatted_params), 
+        state_seq = lax.scan(_step, init=base_state, 
                                           xs=(masks_compute, masks_init, ys_for_bptt))[1]
 
         return tree_get_idx(0, state_seq), (tree_get_idx(-2, state_seq), tree_get_idx(-1, state_seq))

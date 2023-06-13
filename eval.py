@@ -4,14 +4,16 @@ jax.config.update('jax_disable_jit', False)
 jax.config.update('jax_platform_name', 'cpu')
 jax.config.update('jax_enable_x64', True)
 
+
 import pandas
 import matplotlib.pyplot as plt
 from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model
 from src.utils.misc import *
 import os 
-path = 'experiments/p_chaotic_rnn/2023_06_10__12_31_12'
+path = 'experiments/p_chaotic_rnn/2023_06_13__11_04_56'
 num_smoothing_samples = 1000
+plot = True
 
 key = jax.random.PRNGKey(0)
 dummy_key = key
@@ -26,9 +28,8 @@ y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
 seq_length = len(y)
 
 T = seq_length - 1 
-models = ['data/crnn/2023-06-09_14-47-15_Train_run',
-          'johnson_backward,200.2.adam,1e-2,cst.reset,500.autodiff_on_backward',
-          'johnson_backward,200.2.adam,1e-2,cst.reset,500.score,variance_reduction,bptt_depth_2']
+models = ['johnson_backward,200.2.adam,1e-3,cst.reset,500,1.autodiff_on_backward',
+          'johnson_backward,200.10.adam,1e-3,cst.reset,500,1.score,paris,monitor,variance_reduction,bptt_depth_2']
 
 def eval_model(model):
     
@@ -110,29 +111,33 @@ for model in models:
     std_of_rmse = jnp.std(rmse_avg_over_dims)
     print(f'RMSE summary: {mean_of_rmses:.3f} +- {std_of_rmse:.3f}')
     print('-------')
+    if plot: 
+        with open(os.path.join(path, model, 'training_info.json'), 'r') as f:
+            training_info = json.load(f)
+            best_fit = training_info['best_fit']
+        means, stds = means[best_fit], stds[best_fit]
+        rmse_of_best = rmse_avg_over_dims[best_fit]
+        fig, axes = plt.subplots(p_args.state_dim, 1, figsize=(15,1.5*p_args.state_dim))
 
+        plt.autoscale(True)
+        plt.tight_layout()
 
-    # fig, axes = plt.subplots(p_args.state_dim, 1, figsize=(15,1.5*p_args.state_dim))
+        for dim in range(p_args.state_dim):
+            ax = axes[dim]
+            means_d = means[:,dim]
+            stds_d = stds[:,dim]
 
-    # plt.autoscale(True)
-    # plt.tight_layout()
-
-    # for dim in range(p_args.state_dim):
-    #     ax = axes[dim]
-    #     means_d = means[:,dim]
-    #     stds_d = stds[:,dim]
-
-    #     ax.plot(means_d, label='Pred', color=color, **plot_params)
-    #     ax.fill_between(timesteps, 
-    #                     means_d - nb_sigma*stds_d, 
-    #                     means_d + nb_sigma*stds_d, 
-    #                     alpha=0.2,
-    #                     color=color)
-        
-    #     # ax.plot(filt_means[:,dim], label='Filt', **plot_params)
-    #     ax.plot(x[:,dim], label='True', color='black', **plot_params)
-    #     ax.legend()
-    # plt.suptitle(f'model: {model}, rmse: {rmse_avg_over_dims:.3f}')
+            ax.plot(means_d, label='Pred', color=color, **plot_params)
+            ax.fill_between(timesteps, 
+                            means_d - nb_sigma*stds_d, 
+                            means_d + nb_sigma*stds_d, 
+                            alpha=0.2,
+                            color=color)
+            
+            # ax.plot(filt_means[:,dim], label='Filt', **plot_params)
+            ax.plot(x[:,dim], label='True', color='black', **plot_params)
+            ax.legend()
+        plt.suptitle(f'model: {model}, rmse: {rmse_of_best:.3f}')
 #%%
 
 

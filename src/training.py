@@ -310,6 +310,7 @@ class SVITrainer:
         @jax.jit
         def step(key, strided_data_on_timesteps, data_on_timesteps, elbo_carry, timesteps, params, opt_state):
                 
+            # opt_state = self.optimizer.init(params)
 
             if self.monitor:
                 monitor_elbo_value = self.monitor_elbo(key, 
