@@ -240,7 +240,7 @@ class SVITrainer:
                         grad_tm1 = self.elbo.postprocess(elbo_carry)[1]
                         neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
                     else: 
-                        neg_grad = tree_map(lambda x: -x / (t+1), grad_t)
+                        neg_grad = tree_map(lambda x: -x, grad_t)
 
                     elbo = elbo_t / (t+1)
                     elbo_carry = new_carry
@@ -311,7 +311,7 @@ class SVITrainer:
         def step(key, strided_data_on_timesteps, data_on_timesteps, elbo_carry, timesteps, params, opt_state):
                 
             # opt_state = self.optimizer.init(params)
-
+#
             if self.monitor:
                 monitor_elbo_value = self.monitor_elbo(key, 
                                                        data_on_timesteps, 
