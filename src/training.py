@@ -68,7 +68,16 @@ class SVITrainer:
 
         self.elbo_mode = elbo_mode
         self.training_mode = training_mode
-        self.monitor_elbo = GeneralBackwardELBO(p, q, num_samples)
+
+        if isinstance(p, LinearGaussianHMM) and isinstance(q, LinearGaussianHMM):
+            print('Monitor ELBO is analytical.')
+            monitor_elbo = LinearGaussianELBO(p, q)
+            self.monitor_elbo = lambda _ , obs_seq, compute_up_to, theta, phi: monitor_elbo(obs_seq, 
+                                                                                            compute_up_to,
+                                                                                            theta, 
+                                                                                            phi)
+        else: 
+            self.monitor_elbo = GeneralBackwardELBO(p, q, num_samples)
 
         if 'true_online' in training_mode:
             self.online_difference = 'difference' in training_mode
@@ -91,15 +100,17 @@ class SVITrainer:
 
         self.monitor = 'monitor' in elbo_mode
 
-        self.elbo_options = {}
-        if 'score' in elbo_mode: 
-            for option in ['paris', 'variance_reduction', 'mcmc']:
-                self.elbo_options[option] = True if option in elbo_mode else False
 
-            if 'bptt_depth' in elbo_mode: 
-                self.elbo_options['bptt_depth'] = int(elbo_mode.split('bptt_depth')[1].split('_')[1])
+        if not self.training_mode == 'closed_form':
+            self.elbo_options = {}
+            if 'score' in elbo_mode: 
+                for option in ['paris', 'variance_reduction', 'mcmc']:
+                    self.elbo_options[option] = True if option in elbo_mode else False
 
-            self.elbo_options['true_online'] = True if self.true_online else False
+                if 'bptt_depth' in elbo_mode: 
+                    self.elbo_options['bptt_depth'] = int(elbo_mode.split('bptt_depth')[1].split('_')[1])
+
+                self.elbo_options['true_online'] = True if self.true_online else False
         
         def optimizer_update_fn(params, updates):
             new_params = optax.apply_updates(params, updates)
@@ -148,10 +159,22 @@ class SVITrainer:
         else: 
             self.optimizer = base_optimizer
 
-        if self.monitor:
-            self.monitor_elbo = GeneralBackwardELBO(p, q, num_samples)
 
-        if 'score' in self.elbo_mode:
+        if 'closed_form' in self.elbo_mode: 
+            print('USING ANALYTICAL ELBO.')
+            self.elbo = LinearGaussianELBO(self.p, self.q)
+            def elbo_and_grads_batch(key, ys, params):
+                def f(params):
+                    elbo, aux = self.elbo(ys, 
+                                        len(ys)-1, 
+                                        self.formatted_theta_star, 
+                                        q.format_params(params))
+                    return -elbo / len(ys), aux 
+                (neg_elbo, aux), neg_grad = jax.value_and_grad(f, has_aux=True)(params)
+                return (-neg_elbo, neg_grad), aux
+            self.elbo_step = None
+            
+        elif 'score' in self.elbo_mode:
             print('USING SCORE ELBO.')
             self.elbo = OnlineELBOScoreGradients(
                                             self.p, 

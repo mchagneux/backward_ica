@@ -2,24 +2,43 @@
 import tensorboard as tb 
 import seaborn as sns 
 import matplotlib.pyplot as plt
-experiment_id = 'AMNPtyvpT42UnUwqwC85wQ'
+experiment_id = 'kVlp5uOASZqSEQOu255Kfg'
 experiment = tb.data.experimental.ExperimentFromDev(experiment_id)
 df = experiment.get_scalars()
 df = df[df.tag == 'ELBO']
-df['fit'] = df.run.str.split('fit_').str[1]
+df['fit'] = int(df.run.str.split('fit_').str[1][0])
+df = df[df.fit == 0]
 
+
+#%%
 def get_method_from_run_name(run_name):
-    if 'autodiff_on_backward' in run_name:
-        return 'Backward trajectory sampling'
+    if 'closed_form' in run_name:
+        return 'Pathwise, analytical recursions'
+    elif 'autodiff_on_backward' in run_name:
+        return 'Pathwise, backward trajectory sampling'
     elif 'score' in run_name:
-        return 'Recursive'
-df['method'] = df['run'].apply(get_method_from_run_name)
-# df = df[df.method == 'Backward trajectory sampling']
-df = df[df.step > 100]
+        return 'Score-based, approximate recursions'
+    
+def get_quantity_type(run_name):
+
+    if ('monitor' in run_name.split('fit_')[1]) or ('closed_form' in run_name):
+        return 'Analytical'
+    else:
+        return 'Approximate (same method than gradients)'
+    
+df['gradients'] = df['run'].apply(get_method_from_run_name)
+df['elbo'] = df['run'].apply(get_quantity_type)
+#%%
+df = df[df.step > 50]
 df = df.iloc[:,2:]
-df.columns = ['Epoch', 'ELBO', 'Fit', 'Method']
+df.columns = ['Epoch', 'ELBO value', 'Fit', 'Gradients', 'ELBO']
+# df = df[df.Method == 'Backward trajectory saquantitympling']
+#%%Fits
+fig, ax = plt.subplots(1,1, figsize=(15,8))
+plt.autoscale(True)
+# plt.tight_layout()
+sns.lineplot(df, ax=ax, x='Epoch', y='ELBO value', style='ELBO', hue='Gradients', errorbar=None)#, style='Monitor', hue='Method', estimatWO5hkgQVTMuJh28drMzEAgor=None) #, style='Analytical')
 #%%
-sns.lineplot(df, x='Epoch', y='ELBO', hue='Method')
-plt.savefig('training_curve_dim5_500obs.pdf', format='pdf')
+plt.savefig('training_curve_lgm_dim_10.pdf', format='pdf', dpi=500)
 #%%
-# sns.lineplot(df, x='step', y='value')
+# sns.lineplot(df, x='step', y='value'quantity)

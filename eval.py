@@ -8,10 +8,10 @@ jax.config.update('jax_enable_x64', True)
 import pandas
 import matplotlib.pyplot as plt
 from src.variational import get_variational_model, NeuralBackwardSmoother
-from src.stats.hmm import get_generative_model
+from src.stats.hmm import get_generative_model, LinearGaussianHMM
 from src.utils.misc import *
 import os 
-path = 'experiments/p_chaotic_rnn/2023_06_13__11_04_56'
+path = 'experiments/p_linear/2023_06_14__10_40_44'
 num_smoothing_samples = 1000
 plot = True
 
@@ -22,14 +22,25 @@ p_args = load_args('args', path)
 p = get_generative_model(p_args)
 theta_star = load_params('theta_star', path)
 
+filt = False
 
-x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
+
 y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
+
+if isinstance(p, LinearGaussianHMM):
+    if filt: 
+        x = p.filt_seq(y, theta_star)[0]
+    else: 
+        x = p.smooth_seq(y, theta_star)[0]
+else:
+    x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
+
 seq_length = len(y)
 
 T = seq_length - 1 
-models = ['johnson_backward,200.2.adam,1e-3,cst.reset,500,1.autodiff_on_backward',
-          'johnson_backward,200.10.adam,1e-3,cst.reset,500,1.score,paris,monitor,variance_reduction,bptt_depth_2']
+models = ['linear.0.adam,1e-2,cst.reset,500,1.closed_form',
+          'linear.2.adam,1e-2,cst.reset,500,1.monitor,autodiff_on_backward',
+          'linear.2.adam,1e-2,cst.reset,500,1.monitor,score,variance_reduction,bptt_depth_2']
 
 def eval_model(model):
     
@@ -91,8 +102,8 @@ plot_params = {'marker':'x',
 
 nb_sigma = 1.96
 
-filt = False
 timesteps = jnp.arange(seq_length)
+
 for model in models: 
     print(f'Eval of {model}:')
 
@@ -109,14 +120,18 @@ for model in models:
 
     mean_of_rmses = jnp.mean(rmse_avg_over_dims)
     std_of_rmse = jnp.std(rmse_avg_over_dims)
-    print(f'RMSE summary: {mean_of_rmses:.3f} +- {std_of_rmse:.3f}')
+    with open(os.path.join(path, model, 'training_info.json'), 'r') as f:
+        training_info = json.load(f)
+        best_fit = training_info['best_fit']
+        
+    means, stds = means[best_fit], stds[best_fit]
+    rmse_of_best = rmse_avg_over_dims[best_fit]
+    print(f'RMSE: {mean_of_rmses:.3f} +- {std_of_rmse:.3f} (best {rmse_of_best:.3f})')
     print('-------')
+    
     if plot: 
-        with open(os.path.join(path, model, 'training_info.json'), 'r') as f:
-            training_info = json.load(f)
-            best_fit = training_info['best_fit']
-        means, stds = means[best_fit], stds[best_fit]
-        rmse_of_best = rmse_avg_over_dims[best_fit]
+
+
         fig, axes = plt.subplots(p_args.state_dim, 1, figsize=(15,1.5*p_args.state_dim))
 
         plt.autoscale(True)
@@ -137,7 +152,8 @@ for model in models:
             # ax.plot(filt_means[:,dim], label='Filt', **plot_params)
             ax.plot(x[:,dim], label='True', color='black', **plot_params)
             ax.legend()
-        plt.suptitle(f'model: {model}, rmse: {rmse_of_best:.3f}')
+        # plt.suptitle(f'model: {model}, rmse: {rmse_of_best:.3f}')
+        plt.savefig(os.path.join(path, model, 'eval_best.pdf'), format='pdf')
 #%%
 
 

@@ -153,6 +153,9 @@ class LinearGaussianELBO:
         self.p = p
         self.q = q
 
+    def preprocess(self, data, **kwargs):
+        return data 
+    
     def __call__(self, obs_seq, compute_up_to, theta: HMM.Params, phi: HMM.Params):
 
         def step(carry, x):
@@ -165,7 +168,7 @@ class LinearGaussianELBO:
 
             def true_fun(state, kl_term, obs):
 
-                q_backwd_params = self.q.backwd_params_from_states((state,), phi)
+                q_backwd_params = self.q.backwd_params_from_states((state,None), phi)
 
                 kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_params) \
                     + transition_term_integrated_under_backward(q_backwd_params, theta.transition) \
@@ -192,7 +195,7 @@ class LinearGaussianELBO:
             - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_params.scale.log_det) \
             + 0.5*self.p.state_dim
 
-        return kl_term / len(obs_seq), 0
+        return kl_term, 0
 
 
 def check_linear_gaussian_elbo(p: LinearGaussianHMM, num_seqs, seq_length):
