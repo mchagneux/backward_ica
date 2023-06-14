@@ -156,6 +156,9 @@ class LinearGaussianELBO:
     def preprocess(self, data, **kwargs):
         return data 
     
+    def init_carry(self, **kwargs):
+        pass
+    
     def __call__(self, obs_seq, compute_up_to, theta: HMM.Params, phi: HMM.Params):
 
         def step(carry, x):

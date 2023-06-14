@@ -458,8 +458,12 @@ class SVITrainer:
                 time0 = time()
                 
 
-
-            best_step_for_fit = jnp.nanargmax(jnp.array(elbos))
+            burnin = 10000
+            if self.true_online: 
+                best_step_for_fit = burnin + jnp.nanargmax(jnp.array(elbos[burnin:]))
+            else: 
+                best_step_for_fit = jnp.nanargmax(jnp.array(elbos))
+                
             best_elbo_for_fit = elbos[best_step_for_fit]
             best_params_for_fit = params[best_step_for_fit]
             print(f'Fit {fit_nb}: best ELBO {best_elbo_for_fit:.3f} at step {best_step_for_fit}')

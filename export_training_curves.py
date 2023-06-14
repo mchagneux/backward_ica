@@ -2,7 +2,7 @@
 import tensorboard as tb 
 import seaborn as sns 
 import matplotlib.pyplot as plt
-experiment_id = 'kVlp5uOASZqSEQOu255Kfg'
+experiment_id = 'nVAqg6NnTey0tLPMFm3ivw'
 experiment = tb.data.experimental.ExperimentFromDev(experiment_id)
 df = experiment.get_scalars()
 df = df[df.tag == 'ELBO']
@@ -29,15 +29,15 @@ def get_quantity_type(run_name):
 df['gradients'] = df['run'].apply(get_method_from_run_name)
 df['elbo'] = df['run'].apply(get_quantity_type)
 #%%
-df = df[df.step > 50]
+df = df[df.step > 2000]
 df = df.iloc[:,2:]
-df.columns = ['Epoch', 'ELBO value', 'Fit', 'Gradients', 'ELBO']
+df.columns = ['Timestep', 'ELBO value', 'Fit', 'Gradients', 'ELBO']
 # df = df[df.Method == 'Backward trajectory saquantitympling']
 #%%Fits
 fig, ax = plt.subplots(1,1, figsize=(15,8))
 plt.autoscale(True)
 # plt.tight_layout()
-sns.lineplot(df, ax=ax, x='Epoch', y='ELBO value', style='ELBO', hue='Gradients', errorbar=None)#, style='Monitor', hue='Method', estimatWO5hkgQVTMuJh28drMzEAgor=None) #, style='Analytical')
+sns.lineplot(df, ax=ax, x='Timestep', y='ELBO value', style='ELBO', hue='Gradients', errorbar=None)#, style='Monitor', hue='Method', estimatWO5hkgQVTMuJh28drMzEAgor=None) #, style='Analytical')
 #%%
 plt.savefig('training_curve_lgm_dim_10.pdf', format='pdf', dpi=500)
 #%%

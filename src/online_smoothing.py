@@ -109,6 +109,8 @@ class OnlineVariationalAdditiveSmoothing:
         return self._postprocess_fn(carry, **kwargs, **self.options)
 
 
+
+
 def init_carry(unformatted_params, **kwargs):
 
 

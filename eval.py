@@ -11,7 +11,7 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model, LinearGaussianHMM
 from src.utils.misc import *
 import os 
-path = 'experiments/p_linear/2023_06_14__10_40_44'
+path = 'experiments/p_linear/2023_06_14__16_37_29'
 num_smoothing_samples = 1000
 plot = True
 
@@ -26,6 +26,8 @@ filt = False
 
 
 y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
+seq_length = 500
+T = seq_length - 1
 
 if isinstance(p, LinearGaussianHMM):
     if filt: 
@@ -35,12 +37,8 @@ if isinstance(p, LinearGaussianHMM):
 else:
     x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
 
-seq_length = len(y)
 
-T = seq_length - 1 
-models = ['linear.0.adam,1e-2,cst.reset,500,1.closed_form',
-          'linear.2.adam,1e-2,cst.reset,500,1.monitor,autodiff_on_backward',
-          'linear.2.adam,1e-2,cst.reset,500,1.monitor,score,variance_reduction,bptt_depth_2']
+models = ['linear.2.adam,1e-2,cst.true_online,1,difference.score,variance_reduction,bptt_depth_2']
 
 def eval_model(model):
     
