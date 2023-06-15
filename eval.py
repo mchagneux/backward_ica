@@ -11,9 +11,12 @@ from src.variational import get_variational_model, NeuralBackwardSmoother
 from src.stats.hmm import get_generative_model, LinearGaussianHMM
 from src.utils.misc import *
 import os 
-path = 'experiments/p_linear/2023_06_14__16_37_29'
+
+path = 'experiments/p_chaotic_rnn/2023_06_15__13_46_32'
+models = ['linear.2.adam,1e-2,cst.true_online,1,difference.score,variance_reduction,bptt_depth_2']
 num_smoothing_samples = 1000
-plot = True
+plot = False
+filt = False
 
 key = jax.random.PRNGKey(0)
 dummy_key = key
@@ -22,11 +25,10 @@ p_args = load_args('args', path)
 p = get_generative_model(p_args)
 theta_star = load_params('theta_star', path)
 
-filt = False
 
 
 y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
-seq_length = 500
+seq_length = len(y)
 T = seq_length - 1
 
 if isinstance(p, LinearGaussianHMM):
@@ -38,7 +40,6 @@ else:
     x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
 
 
-models = ['linear.2.adam,1e-2,cst.true_online,1,difference.score,variance_reduction,bptt_depth_2']
 
 def eval_model(model):
     
@@ -113,14 +114,16 @@ for model in models:
     else: 
         means, stds = smoothed_results
 
+
     rmse_avg_over_dims = jnp.mean(jnp.sqrt(jnp.mean((means - x)**2, axis=1)), axis=-1)
-    # print('Per-fit RMSE:', rmse_avg_over_dims)
+    print('Per-fit RMSE:', rmse_avg_over_dims)
+    best_fit = jnp.argmin(rmse_avg_over_dims)
 
     mean_of_rmses = jnp.mean(rmse_avg_over_dims)
     std_of_rmse = jnp.std(rmse_avg_over_dims)
-    with open(os.path.join(path, model, 'training_info.json'), 'r') as f:
-        training_info = json.load(f)
-        best_fit = training_info['best_fit']
+    # with open(os.path.join(path, model, 'training_info.json'), 'r') as f:
+    #     training_info = json.load(f)
+    #     best_fit = training_info['best_fit']
         
     means, stds = means[best_fit], stds[best_fit]
     rmse_of_best = rmse_avg_over_dims[best_fit]

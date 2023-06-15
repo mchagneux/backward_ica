@@ -1,21 +1,22 @@
 import subprocess
 import os
 from datetime import datetime 
-p_model = 'linear'
+p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['linear.2.adam,1e-2,cst.true_online,1,difference.score,variance_reduction,bptt_depth_2']
+settings_list = ['linear.10.adam,1e-3,cst.reset,500,1.score,paris,variance_reduction,bptt_depth_2',
+                 'linear.10.adam,1e-3,cst.reset,500,1.autodiff_on_backward']
 
 
 num_fits = 1
-num_epochs = 1
-dims = '10 10'
-load_from = '' #'data/crnn/2023-06-09_14-47-15_Train_run'
+num_epochs = 300
+dims = '20 20'
+load_from = '' # 'data/crnn/2023-06-09_14-47-15_Train_run'
 loaded_seq = False
 batch_size = 1
 num_seqs = 1
-seq_length = 100000
+seq_length = 500
 store_every = 0
  
 
