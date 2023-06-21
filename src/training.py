@@ -11,15 +11,6 @@ import multiprocessing
 import optax 
 from time import time
 
-# def winsorize_grads():
-#     def init_fn(_): 
-#         return ()
-#     def optimizer_update_fn(updates, state, params=None):
-#         flattened_updates = jnp.concatenate([arr.flatten() for arr in tree_flatten(updates)[0]])
-#         high_value = jnp.sort(jnp.abs(flattened_updates))[int(0.90*flattened_updates.shape[0])]
-#         return tree_map(lambda x: jnp.clip(x, -high_value, high_value), updates), ()
-#     return optax.GradientTransformation(init_fn, update_fn)
-
 def define_frozen_tree(key, frozen_params, q, theta_star):
 
     # key_theta, key_phi = random.split(key, 2)
@@ -69,6 +60,19 @@ class SVITrainer:
         self.elbo_mode = elbo_mode
         self.training_mode = training_mode
 
+        if 'share_params' in elbo_mode:
+            print('Using transition and prior from true model.')
+            def build_params(params):
+                return HMM.Params(
+                                prior=theta_star.prior,
+                                transition=theta_star.transition,
+                                emission=params) 
+        else:
+            def build_params(params):
+                return params 
+            
+        self._build_params = build_params
+
         if isinstance(p, LinearGaussianHMM) and isinstance(q, LinearGaussianHMM):
             print('Monitor ELBO is analytical.')
             monitor_elbo = LinearGaussianELBO(p, q)
@@ -76,6 +80,7 @@ class SVITrainer:
                                                                                             compute_up_to,
                                                                                             theta, 
                                                                                             phi)
+        
         else: 
             self.monitor_elbo = GeneralBackwardELBO(p, q, num_samples)
 
@@ -86,14 +91,12 @@ class SVITrainer:
             self.online_batch_size = 1
             self.reset = False
                 
-
         else: 
             true_online = False
-            self.online_batch_size, self.num_grad_steps = int(training_mode.split(',')[1]), int(training_mode.split(',')[2])
+            self.online_batch_size, self.num_grad_steps = int(training_mode.split(',')[1]), \
+                                                int(training_mode.split(',')[2])
             self.reset = 'reset' in training_mode
         
-        # if elbo_mode != 'autodiff_on_backward':
-        #     learning_rate *= self.online_batch_size / 100
 
         self.true_online = true_online
 
@@ -114,14 +117,12 @@ class SVITrainer:
         
         def optimizer_update_fn(params, updates):
             new_params = optax.apply_updates(params, updates)
-            # new_params = optax.incremental_update(new_params, params, step_size=0.8)
             return new_params
         
         self.optimizer_update_fn = optimizer_update_fn
 
 
         self.trainable_params = tree_map(lambda x: x == '', self.frozen_params)
-        # self.fixed_params = tree_map(lambda x: x != '', self.frozen_params)
 
         schedule = None
 
@@ -133,15 +134,16 @@ class SVITrainer:
                                                   transition_steps=num_epochs * (seq_length / self.online_batch_size))
         
         elif 'warmup_cosine' in optim_options:
-            print('Setting up warmup cosine schedule. Starting at {} and ending at {}.'.format(learning_rate / 10, learning_rate))
+            print('Setting up warmup cosine schedule. Starting at {} and ending at {}.'.format(learning_rate / 10, 
+                                                                                               learning_rate))
 
             learning_rate = optax.warmup_cosine_decay_schedule(
-                init_value=learning_rate / 10,
-                peak_value=learning_rate,
-                warmup_steps=10000,
-                decay_steps=seq_length,
-                end_value=learning_rate,
-                )
+                                    init_value=learning_rate / 10,
+                                    peak_value=learning_rate,
+                                    warmup_steps=10000,
+                                    decay_steps=seq_length,
+                                    end_value=learning_rate)
+            
         elif 'gamma' in optim_options:
             gamma = float(optim_options.split(',')[-1].split('_')[1])
             schedule = optax.scale_by_schedule(lambda t: (t+1)**(-gamma))
@@ -149,16 +151,18 @@ class SVITrainer:
         
         else:
             pass
-                
+
+        
         base_optimizer = optax.apply_if_finite(getattr(optax, optimizer)(learning_rate),
                                             max_consecutive_errors=10)
         
-
+        
         if schedule is not None:
-            self.optimizer = optax.chain(base_optimizer, schedule)
+            optimizer = optax.chain(base_optimizer, schedule)
         else: 
-            self.optimizer = base_optimizer
+            optimizer = base_optimizer
 
+        self.optimizer = optimizer
 
         if 'closed_form' in self.elbo_mode: 
             print('USING ANALYTICAL ELBO.')
@@ -224,7 +228,10 @@ class SVITrainer:
         if self.reset:
             init_carry = 0.0
         else: 
-            init_carry = self.elbo.init_carry(self.q.get_random_params(jax.random.PRNGKey(0)))
+            params = self.q.get_random_params(jax.random.PRNGKey(0))
+            if 'share_params' in self.elbo_mode:
+                params = params.emission
+            init_carry = self.elbo.init_carry(self._build_params(params))
 
         self.init_carry = init_carry
 
@@ -321,7 +328,9 @@ class SVITrainer:
             log_writer_monitor=None):
 
         params = self.q.get_random_params(key_params, args)
-
+        if 'share_params' in self.elbo_mode:
+            params = params.emission
+        
         opt_state = self.optimizer.init(params)
 
         data = data[0]
@@ -354,8 +363,10 @@ class SVITrainer:
                                                             inner_carry,
                                                             strided_data_on_timesteps, 
                                                             timesteps, 
-                                                            params)
-                
+                                                            self._build_params(params))
+                if 'share_params' in self.elbo_mode:
+                    neg_grad = neg_grad.emission
+
                 updates, opt_state = self.optimizer.update(neg_grad, 
                                                             opt_state, 
                                                             params)
@@ -458,7 +469,7 @@ class SVITrainer:
                 time0 = time()
                 
 
-            burnin = 10000
+            burnin = 100
             if self.true_online: 
                 best_step_for_fit = burnin + jnp.nanargmax(jnp.array(elbos[burnin:]))
             else: 

@@ -104,7 +104,7 @@ class OnlineVariationalAdditiveSmoothing:
         return lax.scan(_step, 
                         init=carry_m1,
                         xs=(timesteps, keys, strided_obs_seq))
-
+    
     def postprocess(self, carry, **kwargs):
         return self._postprocess_fn(carry, **kwargs, **self.options)
 
@@ -590,8 +590,6 @@ def postprocess_elbo_score_gradients(carry,
         return elbo, grad
  
 
-
-
 def init_carry_elbo_score_gradients_2(unformatted_params, **kwargs):
 
     num_samples = kwargs['num_samples']
@@ -606,9 +604,8 @@ def init_carry_elbo_score_gradients_2(unformatted_params, **kwargs):
     carry = {'base_s': dummy_state, 
             'x':dummy_x, 
             'log_q':jnp.zeros((num_samples,)),
-            'stats':{'H':dummy_H, 
-                    'grad_H':dummy_F},
-            'grad_log_q':dummy_F,
+            'stats':{'H':dummy_H, 'grad_H':dummy_F},
+            'grad_log_q_bar':dummy_F,
             'grad_H_bar':dummy_F}
     
     return carry
@@ -634,12 +631,12 @@ def init_elbo_score_gradients_2(carry_m1, input_0, **kwargs):
         return x_t, s_0, params_q_t
     
 
-    def _log_q_0(unformatted_phi, key):
+    def _log_q_0_bar(unformatted_phi, key):
         x_t, s_0, params_q_t = filt_params_state_and_sample(key, unformatted_phi)
         return q.filt_dist.logpdf(x_t, params_q_t), (x_t, s_0)
 
 
-    (log_q_0, (x_0, s_0)), grad_log_q_0 = jax.vmap(jax.value_and_grad(_log_q_0, argnums=0, has_aux=True),
+    (log_q_0, (x_0, s_0)), grad_log_q_0_bar = jax.vmap(jax.value_and_grad(_log_q_0_bar, argnums=0, has_aux=True),
                                     in_axes=(None,0))(unformatted_phi_0, keys)
     
     s_0 = tree_get_idx(0, s_0)
@@ -653,15 +650,13 @@ def init_elbo_score_gradients_2(carry_m1, input_0, **kwargs):
     
     H_0, grad_H_0_bar = jax.vmap(jax.value_and_grad(_h), in_axes=(None,0))(unformatted_phi_0, keys)
 
-    grad_H = tree_map(lambda x: jnp.zeros_like(x), 
-                   carry_m1['stats']['grad_H'])
 
-    carry = {'stats':{'H':H_0,
-                      'grad_H':grad_H},
+    carry = {'stats':{'H':H_0, 
+                      'grad_H':tree_map(lambda x: jnp.zeros_like(x), carry_m1['grad_log_q_bar'])},
             'base_s':s_0, 
             'x':x_0,
             'log_q':log_q_0,
-            'grad_log_q':grad_log_q_0,
+            'grad_log_q_bar':grad_log_q_0_bar,
             'grad_H_bar':grad_H_0_bar}
 
     return carry, 0.0
@@ -677,17 +672,18 @@ def update_elbo_score_gradients_2(carry_tm1, input_t, **kwargs):
     mcmc = kwargs['mcmc']
     normalizer, variance_reduction = kwargs['normalizer'], kwargs['variance_reduction']
 
-    t, T, key_t, unformatted_phi_t = input_t['t'], input_t['T'], input_t['key'], input_t['phi']
+    t, T, key_t, unformatted_phi_t = input_t['t'], input_t['T'], \
+                                    input_t['key'], input_t['phi']
     ys_for_bptt = input_t['ys_bptt']
     y_t = ys_for_bptt[-1]
 
-    x_tm1, base_s_tm1, stats_tm1, theta = carry_tm1['x'], carry_tm1['base_s'], carry_tm1['stats'], carry_tm1['theta']
+    x_tm1, base_s_tm1, stats_tm1, theta = carry_tm1['x'], carry_tm1['base_s'], \
+                                        carry_tm1['stats'], carry_tm1['theta']
     log_q_tm1 = carry_tm1['log_q']
 
     H_tm1 =  stats_tm1['H']
-    
     grad_H_tm1 = stats_tm1['grad_H']
-
+    
     
     def get_states(phi):
         if bptt_depth == 1:
@@ -699,20 +695,13 @@ def update_elbo_score_gradients_2(carry_tm1, input_t, **kwargs):
                             ys_for_bptt, 
                             phi)
     
-    def _x(unformatted_phi, key):
-        phi = q.format_params(unformatted_phi)
-        s_t = get_states(phi)[1][1]
-        params_q_t = q.filt_params_from_state(s_t, phi)
-        return q.filt_dist.sample(key, params_q_t)
-    
-    
     base_s_t = get_states(q.format_params(unformatted_phi_t))[0]
 
     def _log_q_tm1_t_bar(unformatted_phi, x_tm1, key_t):
         phi = q.format_params(unformatted_phi)
         states = get_states(phi)[1]
         params_q_tm1_t = q.backwd_params_from_states(states, phi)
-        x_t = _x(unformatted_phi, key_t)
+        x_t = q.filt_dist.sample(key_t, q.filt_params_from_state(states[1], phi))
         return q.backwd_kernel.logpdf(x_tm1, 
                                     x_t, 
                                     params_q_tm1_t)
@@ -724,20 +713,23 @@ def update_elbo_score_gradients_2(carry_tm1, input_t, **kwargs):
         return q.backwd_kernel.logpdf(x_tm1, 
                                     x_t, 
                                     params_q_tm1_t)
-    
-    def _log_q_t_bar(unformatted_phi, key):
+
+    def _log_q_t_bar(unformatted_phi, key_t):
         phi = q.format_params(unformatted_phi)
         s_t = get_states(phi)[1][1]
         params_q_t = q.filt_params_from_state(s_t, phi)
-        x_t = q.filt_dist.sample(key, params_q_t)
+        x_t = q.filt_dist.sample(key_t, params_q_t)
         return q.filt_dist.logpdf(x_t, params_q_t), x_t
 
 
-    def _h_bar(unformatted_phi, x_tm1, log_q_tm1_t, key_t):
-        x_t = _x(unformatted_phi, key_t)
+    def _l_theta_bar(unformatted_phi, x_tm1, key_t):
+        phi = q.format_params(unformatted_phi)
+        s_t = get_states(phi)[1][1]
+        params_q_t = q.filt_params_from_state(s_t, phi)
+        x_t = q.filt_dist.sample(key_t, params_q_t)
         l_theta = p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
             + p.emission_kernel.logpdf(y_t, x_t, theta.emission)
-        return l_theta, l_theta - log_q_tm1_t
+        return l_theta
             
 
 
@@ -748,30 +740,29 @@ def update_elbo_score_gradients_2(carry_tm1, input_t, **kwargs):
         else: 
             key_new_sample = key_t
 
+
+        (log_q_t, x_t), grad_log_q_t_bar = jax.value_and_grad(_log_q_t_bar, has_aux=True)(unformatted_phi_t, 
+                                                                            key_new_sample)
+            
         if not paris: 
 
-            
-            (log_q_t, x_t), grad_log_q_t_bar = jax.value_and_grad(_log_q_t_bar)(unformatted_phi_t, 
-                                                                                key_new_sample)
-
-            grad_log_q_tm1_t_bar = jax.vmap(jax.grad(_log_q_tm1_t_bar),
+        
+            log_q_tm1_t, grad_log_q_tm1_t_bar = jax.vmap(jax.value_and_grad(_log_q_tm1_t_bar),
                                                         in_axes=(None,0,None))(unformatted_phi_t, 
                                                                             x_tm1, 
                                                                             key_new_sample)
             
-            log_q_tm1_t, grad_log_q_tm1_t = jax.vmap(jax.value_and_grad(_log_q_tm1_t), in_axes=(None, 0, None))(unformatted_phi_t, 
-                                                                                                                x_tm1, 
-                                                                                                                x_t)
-            
 
-            (_, h_t), grad_h_t_bar = jax.vmap(jax.value_and_grad(_h_bar), in_axes=(None, 0, 0, None))(unformatted_phi_t, 
+            l_theta, grad_l_theta_bar = jax.vmap(jax.value_and_grad(_l_theta_bar), in_axes=(None, 0, None))(unformatted_phi_t, 
                                                                                                       x_tm1, 
-                                                                                                      log_q_tm1_t, 
                                                                                                       key_new_sample)
+
+            h_t = l_theta - log_q_tm1_t
 
             log_w_t = log_q_tm1_t - log_q_tm1
 
             w_t = normalizer(log_w_t)
+
             H_t = jax.vmap(lambda w, H, h: w * (H+h))(w_t, H_tm1, h_t)
             H_t = jnp.sum(H_t, axis=0)
 
@@ -786,68 +777,57 @@ def update_elbo_score_gradients_2(carry_tm1, input_t, **kwargs):
             #                                           x_t, 
             #                                           q.format_params(unformatted_phi_t))
 
+            grad_H_t_bar = tree_map(lambda grad_H, grad_l_theta_bar, grad_log_backwd: jax.vmap(lambda w, grad_H, grad_l_theta_bar, H, h, grad_log_backwd: w*(grad_H + grad_l_theta_bar + grad_log_backwd*(H+h-control_variate)))(
+                                                                                        w_t, 
+                                                                                        grad_H,
+                                                                                        grad_l_theta_bar, 
+                                                                                        H_tm1,
+                                                                                        h_t, 
+                                                                                        grad_log_backwd), 
+                                        grad_H_tm1,
+                                        grad_l_theta_bar, 
+                                        grad_log_q_tm1_t_bar)
 
-            grad_H_t = tree_map(lambda F, grad_log_backwd: jax.vmap(lambda w, F, H, h, grad_log_backwd: w*(F + grad_log_backwd*(H+h-control_variate)))(
-                                                        w_t, 
-                                                        F, 
-                                                        H_tm1,
-                                                        h_t, 
-                                                        grad_log_backwd), 
-                                                        grad_H_tm1, 
-                                                        grad_log_q_tm1_t)
+            grad_H_t_bar = tree_map(lambda x: jnp.sum(x, axis=0), grad_H_t_bar)
+
+            grad_log_q_tm1_t = jax.vmap(jax.grad(_log_q_tm1_t), in_axes=(None, 0, None))(unformatted_phi_t, x_tm1, x_t)
+            
+            grad_H_t  = tree_map(lambda grad_H, grad_log_backwd: jax.vmap(lambda w, grad_H, H, h, grad_log_backwd: w*(grad_H + grad_log_backwd*(H+h-control_variate)))(
+                                                                                        w_t, 
+                                                                                        grad_H,
+                                                                                        H_tm1,
+                                                                                        h_t, 
+                                                                                        grad_log_backwd), 
+                                                grad_H_tm1,
+                                                grad_log_q_tm1_t)
             
             grad_H_t = tree_map(lambda x: jnp.sum(x, axis=0), grad_H_t)
- 
-        else: 
 
-            log_q_tm1_t = jax.vmap(_log_q_tm1_t,
-                                in_axes=(None,0,None))(unformatted_phi_t, 
-                                                    x_tm1, 
-                                                    x_t)
-            
 
-            
-            # log_w_t = jax.vmap(q.log_fwd_potential, 
-            #                    in_axes=(0,None,None,None))(x_tm1, 
-            #                                                x_t, 
-            #                                                (base_s_tm1, base_s_t), 
-            #                                                q.format_params(unformatted_phi_t))
-
+        else:
+            log_q_tm1_t = jax.vmap(_log_q_tm1_t_bar, in_axes=(None,0,None))(unformatted_phi_t, 
+                                                        x_tm1, 
+                                                        key_new_sample)
             log_w_t = log_q_tm1_t - log_q_tm1
-            
-            if mcmc:
-                backwd_sampler = blackjax.irmh(logprob_fn=lambda i: log_w_t[i], 
-                                            proposal_distribution=lambda key: jax.random.choice(key, a=num_samples))
 
-
-                def _backwd_sample_step(state, x):
-                    step_nb, key = x
-
-                    def _init(state, key):
-                        return backwd_sampler.init(jax.random.choice(key, a=num_samples))
-                    def _step(state, key):
-                        return backwd_sampler.step(key, state)[0]
-                    
-                    new_state = jax.lax.cond(step_nb > 0, _step, _init, state, key)
-                    return new_state, new_state.position
-                    
-                backwd_indices = jax.lax.scan(_backwd_sample_step, 
-                                            init=backwd_sampler.init(0), 
-                                            xs=(jnp.arange(3), 
-                                                jax.random.split(key_paris, 3)))[1][1:]
-                
-            else:
-
-                backwd_indices = jax.random.choice(key_paris, 
-                                                   a=num_samples, 
-                                                   p=normalizer(log_w_t), 
-                                                   shape=(2,))
+            w_t = normalizer(log_w_t)
+            backwd_indices = jax.random.choice(key_paris, 
+                                    a=num_samples, 
+                                    p=normalizer(log_w_t), 
+                                    shape=(2,))
             
             sub_x_tm1 = x_tm1[backwd_indices]
             sub_H_tm1 = H_tm1[backwd_indices]
 
-            sub_h_t = _vmaped_h(sub_x_tm1, 
-                                log_q_tm1_t[backwd_indices])
+            sub_l_theta, sub_grad_l_theta_bar = jax.vmap(jax.value_and_grad(_l_theta_bar), in_axes=(None, 0, None))(unformatted_phi_t, 
+                                                                                                      sub_x_tm1, 
+                                                                                                      key_new_sample)
+
+
+            sub_h_t = sub_l_theta - log_q_tm1_t[backwd_indices]
+
+
+
 
             H_t = jnp.mean(sub_H_tm1 + sub_h_t, axis=0)
 
@@ -858,32 +838,48 @@ def update_elbo_score_gradients_2(carry_tm1, input_t, **kwargs):
                 control_variate = 0.0
 
 
-            sub_grad_log_q_tm1_t = jax.vmap(jax.grad(_log_q_tm1_t),
+            sub_grad_log_q_tm1_t = jax.vmap(jax.grad(_log_q_tm1_t_bar),
                                         in_axes=(None,0,None))(unformatted_phi_t, 
                                                             sub_x_tm1, 
-                                                            x_t)
+                                                            key_new_sample)
+            
 
 
-            F_t = tree_map(lambda F, sub_grad_log_backwd: jax.vmap(lambda F, H, h, grad_log_backwd: F + grad_log_backwd*(H+h-control_variate))(
-                                                                    F[backwd_indices], 
+            grad_H_t_bar = tree_map(lambda grad_H, sub_grad_l_theta_bar, sub_grad_log_backwd: jax.vmap(lambda grad_H, grad_l_theta_bar, H, h, grad_log_backwd: grad_H + grad_l_theta_bar + grad_log_backwd*(H+h-control_variate))(
+                                                                    grad_H[backwd_indices],
+                                                                    sub_grad_l_theta_bar, 
                                                                     sub_H_tm1,
                                                                     sub_h_t, 
                                                                     sub_grad_log_backwd), 
-                                                                    F_tm1, 
+                                                                    grad_H_tm1,
+                                                                    sub_grad_l_theta_bar, 
                                                                     sub_grad_log_q_tm1_t)
-            F_t = tree_map(lambda x: jnp.mean(x, axis=0), F_t)
+            
+            grad_H_t_bar = tree_map(lambda x: jnp.mean(x, axis=0), grad_H_t_bar)
 
-        return grad_H_t, H_t, x_t, log_q_t, grad_log_q_t
+            sub_grad_log_q_tm1_t = jax.vmap(jax.grad(_log_q_tm1_t), in_axes=(None, 0, None))(unformatted_phi_t, sub_x_tm1, x_t)
+            
+            grad_H_t = tree_map(lambda grad_H, sub_grad_log_backwd: jax.vmap(lambda grad_l_theta_bar, H, h, grad_log_backwd: grad_l_theta_bar + grad_log_backwd*(H+h-control_variate))(
+                                                                    grad_H[backwd_indices], 
+                                                                    sub_H_tm1,
+                                                                    sub_h_t, 
+                                                                    sub_grad_log_backwd), 
+                                                                    grad_H_tm1, 
+                                                                    sub_grad_log_q_tm1_t)
+            
+            grad_H_t = tree_map(lambda x: jnp.mean(x, axis=0), grad_H_t)
 
-    grad_H_t, H_t, x_t, log_q_t, grad_log_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
+        return grad_H_t_bar, grad_H_t, H_t, x_t, log_q_t, grad_log_q_t_bar
+
+    grad_H_t_bar, grad_H_t, H_t, x_t, log_q_t, grad_log_q_t_bar = jax.vmap(update)(jax.random.split(key_t, num_samples))
 
 
-    carry_t = {'stats':{'grad_H':grad_H_t, 'H':H_t},
+    carry_t = {'stats':{'H':H_t, 'grad_H':grad_H_t},
             'base_s':base_s_t, 
             'x':x_t,
             'log_q':log_q_t,
-            'grad_log_q':grad_log_q_t,
-            'grad_H_bar':carry_tm1['grad_H_bar']}
+            'grad_log_q_bar':grad_log_q_t_bar,
+            'grad_H_bar':grad_H_t_bar}
     
 
     return carry_t, 0.0
@@ -897,7 +893,7 @@ def postprocess_elbo_score_gradients_2(carry,
         H_T = carry['stats']['H']
         log_q_T = carry['log_q']
         grad_H_bar_T = carry['grad_H_bar']
-        grad_log_q_T = carry['grad_log_q']
+        grad_log_q_T = carry['grad_log_q_bar']
 
         
         elbo = jnp.mean(H_T - log_q_T, axis=0)
