@@ -406,6 +406,7 @@ class SVITrainer:
 
         absolute_step_nb = 0
         dummy_filt_mean_and_cov = jnp.empty((self.p.state_dim,)), jnp.empty((self.p.state_dim, self.p.state_dim))
+        zeros = jnp.zeros((self.p.state_dim, self.p.state_dim))
 
         for epoch_nb, keys_epoch in enumerate(keys):
             elbo_carry = self.init_carry
@@ -413,6 +414,13 @@ class SVITrainer:
 
             timesteps_lists = self.timesteps(seq_length, None)
             logl_carry = (*dummy_filt_mean_and_cov, 0.0)
+
+            filt_stats_true = [Gaussian.Params(mean=dummy_filt_mean_and_cov[0], 
+                                               scale=Scale(cov=dummy_filt_mean_and_cov[1])), None]
+            
+            filt_stats_var = [Gaussian.Params(mean=dummy_filt_mean_and_cov[0], 
+                                              scale=Scale(cov=dummy_filt_mean_and_cov[1])), None]
+            
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
                 
 
@@ -430,16 +438,55 @@ class SVITrainer:
                                                                   data[timesteps], 
                                                                   logl_carry, 
                                                                   self.formatted_theta_star)
+                    filt_stats_true[1] = Gaussian.Params(mean=logl_carry[0], scale=Scale(cov=logl_carry[1]))
 
+                    true_backwd_kernel_params = LinearBackwardSmoother.\
+                                    linear_gaussian_backwd_params_from_transition_and_filt(filt_stats_true[0].mean, filt_stats_true[0].scale.cov, 
+                                                                                        self.formatted_theta_star.transition)
+                    A_backwd_true, a_backwd_true, Sigma_backwd_true = \
+                        true_backwd_kernel_params.map.w, true_backwd_kernel_params.map.b, true_backwd_kernel_params.noise.scale.cov
+
+                            
+                    true_smoothing_dist = Gaussian.Params(
+                                                    mean=A_backwd_true @ filt_stats_true[1].mean + a_backwd_true, 
+                                                    scale=Scale(cov=Sigma_backwd_true + \
+                                                                A_backwd_true @ filt_stats_true[1].scale.cov @ A_backwd_true.T))
+                    
+                    true_joint = Gaussian.Params(mean=jnp.concatenate([filt_stats_true[1].mean, 
+                                                                        true_smoothing_dist.mean]),
+                                                scale=Scale(cov=jnp.block([[filt_stats_true[1].scale.cov, zeros],
+                                                                            [zeros, true_smoothing_dist.scale.cov]])))                    
                     with log_writer.as_default():
                         for inner_step_nb, elbo in enumerate(elbos): 
-                            tf.summary.scalar('true logl', logl / (timesteps[-1] + 1), self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                            tf.summary.scalar('true logl', logl / (timesteps[-1] + 1), 
+                                              self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                        
                         if isinstance(self.q, LinearBackwardSmoother) and self.true_online:
-                            true_filt_dist_params = Gaussian.Params(mean=logl_carry[0], scale=Scale(cov=logl_carry[1]))
+                            
                             for inner_step_nb in range(self.num_grad_steps):
-                                variational_filt_dist_params = tree_get_idx(inner_step_nb, aux)
-                                tf.summary.scalar('filt KL', Gaussian.KL(variational_filt_dist_params, true_filt_dist_params), self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
-                
+                                variational_filt_dist_params = tree_get_idx(inner_step_nb, aux[0])
+                                filt_stats_var[1] = variational_filt_dist_params
+                                A_backwd, a_backwd, Sigma_backwd = tree_get_idx(inner_step_nb, aux[1:])
+                                
+                                variational_smoothing_dist = Gaussian.Params(mean=A_backwd @ filt_stats_var[1].mean + a_backwd, 
+                                                                  scale=Scale(cov=Sigma_backwd + A_backwd @ filt_stats_var[1].scale.cov @ A_backwd.T))
+                                variational_joint = Gaussian.Params(mean=jnp.concatenate([filt_stats_var[1].mean, 
+                                                                                    variational_smoothing_dist.mean]),
+                                                                    scale=Scale(cov=jnp.block([[filt_stats_var[1].scale.cov, zeros],
+                                                                                               [zeros, variational_smoothing_dist.scale.cov]])))
+                                
+                                # tf.summary.scalar('filt KL', Gaussian.KL(filt_stats_var[1], filt_stats_true[1]), self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
+                                
+                                
+                                if timesteps[-1] > 0:
+                                    tf.summary.scalar('bivariate joint KL', 
+                                                      Gaussian.KL(variational_joint, true_joint), 
+                                                      self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
+                    filt_stats_true = [filt_stats_true[1], None]
+                    filt_stats_var = [filt_stats_var[1], None]
+        
+                           
+
                 with log_writer.as_default():
                     for inner_step_nb, elbo in enumerate(elbos): 
                         tf.summary.scalar('ELBO', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)

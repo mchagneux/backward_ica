@@ -976,7 +976,7 @@ def init_elbo_score_gradients_3(carry_m1, input_0, **kwargs):
             'grad_log_q_bar':grad_log_q_0_bar,
             'grad_H_bar':grad_H_0_bar}
 
-    return carry, params_q_0
+    return carry, (params_q_0, jnp.empty((p.state_dim, p.state_dim)), jnp.empty((p.state_dim,)), jnp.empty((p.state_dim, p.state_dim)))
 
 def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
 
@@ -1010,8 +1010,9 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
                             ys_for_bptt, 
                             phi)
     
-    base_s_t = get_states(q.format_params(unformatted_phi_t))[0]
-    # params_q_tm1_t = q.backwd_params_from_states(states, q.format_params(unformatted_phi_t))
+    base_s_t, states = get_states(q.format_params(unformatted_phi_t))
+    params_q_tm1_t = q.backwd_params_from_states(states, q.format_params(unformatted_phi_t))
+    A_backwd, a_backwd, Sigma_backwd = params_q_tm1_t.map.w, params_q_tm1_t.map.b, params_q_tm1_t.noise.scale.cov
 
     def _log_q_tm1_t_bar(unformatted_phi, x_tm1, key_t):
         phi = q.format_params(unformatted_phi)
@@ -1164,7 +1165,7 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
             'grad_H_bar':grad_H_t_bar}
     
 
-    return carry_t, tree_get_idx(0, params_q_t)
+    return carry_t, (tree_get_idx(0, params_q_t), A_backwd, a_backwd, Sigma_backwd)
 
 def postprocess_elbo_score_gradients_3(carry, 
                                      **kwargs):

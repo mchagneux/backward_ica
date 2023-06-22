@@ -5,11 +5,11 @@ p_model = 'linear'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['johnson_backward,100.100.adam,1e-3,cst.true_online,200.score,paris,variance_reduction,bptt_depth_1',
-                 'johnson_backward,100.100.adam,1e-3,cst.true_online,200.share_params,score,paris,variance_reduction,bptt_depth_1']
+settings_list = ['linear.100.adam,1e-3,cst.true_online,100.score,share_params,paris,variance_reduction,bptt_depth_1',
+                 'linear.100.adam,1e-3,cst.true_online,100.score,paris,variance_reduction,bptt_depth_1']
 num_fits = 1
 num_epochs = 1
-dims = '10 10'
+dims = '5 5'
 load_from = '' # 'data/crnn/2022-10-18_15-28-00_Train_run'
 loaded_seq = False
 batch_size = 1
