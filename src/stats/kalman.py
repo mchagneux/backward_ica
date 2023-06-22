@@ -26,16 +26,45 @@ class Kalman:
 
         return filt_mean, filt_cov
 
+
+
+    def pred_log_l_term(pred_mean, pred_cov, obs, emission_params):
+        B, b, R = emission_params.map.w, emission_params.map.b, emission_params.noise.scale.cov
+        return jax_gaussian_logpdf(x=obs, 
+                            mean=B @ pred_mean + b , 
+                            cov=B @ pred_cov @ B.T + R)
+        
+    def recursive_logl_step(timesteps, data_on_timesteps, carry, params):
+
+
+        def _step(carry, x):
+            t, obs = x
+            def _init(carry, obs):
+                init_filt_mean, init_filt_cov = Kalman.init(obs, params.prior, params.emission)
+                logl = Kalman.pred_log_l_term(params.prior.mean, params.prior.scale.cov, obs, params.emission)
+                return (init_filt_mean, init_filt_cov, logl), logl
+            
+            def _update(carry, obs):
+                filt_mean, filt_cov, prev_logl = carry
+                pred_mean, pred_cov = Kalman.predict(filt_mean, filt_cov, params.transition)
+                filt_mean, filt_cov = Kalman.update(pred_mean, pred_cov, obs, params.emission)
+
+                pred_loglikelihood = Kalman.pred_log_l_term(pred_mean, pred_cov, obs, params.emission)
+                logl = prev_logl + pred_loglikelihood
+                return (filt_mean, filt_cov, logl), logl
+            return jax.lax.cond(t > 0, _update, _init, carry, obs)
+
+        carry, logls = jax.lax.scan(_step, init=carry, xs=(timesteps, data_on_timesteps))
+        
+        return carry, logls[-1]
+        
+
     def filter_seq(obs_seq, hmm_params):
         
-        def pred_log_l_term(pred_mean, pred_cov, obs, emission_params):
-            B, b, R = emission_params.map.w, emission_params.map.b, emission_params.noise.scale.cov
-            return jax_gaussian_logpdf(x=obs, 
-                                mean=B @ pred_mean + b , 
-                                cov=B @ pred_cov @ B.T + R)
+
 
         init_filt_mean, init_filt_cov = Kalman.init(obs_seq[0], hmm_params.prior, hmm_params.emission)
-        init_pred_loglikelihood = pred_log_l_term(hmm_params.prior.mean, hmm_params.prior.scale.cov, obs_seq[0], hmm_params.emission)
+        init_pred_loglikelihood = Kalman.pred_log_l_term(hmm_params.prior.mean, hmm_params.prior.scale.cov, obs_seq[0], hmm_params.emission)
 
         @jit
         def _filter_step(carry, x):
@@ -43,7 +72,7 @@ class Kalman:
             pred_mean, pred_cov = Kalman.predict(filt_mean, filt_cov, hmm_params.transition)
             filt_mean, filt_cov = Kalman.update(pred_mean, pred_cov, x, hmm_params.emission)
 
-            pred_loglikelihood = pred_log_l_term(pred_mean, pred_cov, x, hmm_params.emission)
+            pred_loglikelihood = Kalman.pred_log_l_term(pred_mean, pred_cov, x, hmm_params.emission)
 
             return (filt_mean, filt_cov), (pred_mean, pred_cov, filt_mean, filt_cov, pred_loglikelihood)
 

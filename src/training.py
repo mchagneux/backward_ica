@@ -284,7 +284,7 @@ class SVITrainer:
                     else: 
                         neg_grad = tree_map(lambda x: -x, grad_t)
 
-                    elbo = elbo_t #/ (t+1)
+                    elbo = elbo_t / (t+1)
                     elbo_carry = new_carry
                 else: 
                     keys = jax.random.split(key, len(timesteps))
@@ -403,13 +403,14 @@ class SVITrainer:
         
 
         absolute_step_nb = 0
+        dummy_filt_mean_and_cov = jnp.empty((self.p.state_dim,)), jnp.empty((self.p.state_dim, self.p.state_dim))
 
         for epoch_nb, keys_epoch in enumerate(keys):
             elbo_carry = self.init_carry
             strided_data = self.elbo.preprocess(data)
 
             timesteps_lists = self.timesteps(seq_length, None)
-
+            logl_carry = (*dummy_filt_mean_and_cov, 0.0)
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
                 
 
@@ -423,10 +424,13 @@ class SVITrainer:
                                                                                 opt_state)
 
                 if isinstance(self.p, LinearGaussianHMM):
-                    log_l = self.p.likelihood_seq(data[timesteps], self.theta_star)
+                    logl_carry, logl = Kalman.recursive_logl_step(timesteps, 
+                                                                  data[timesteps], 
+                                                                  logl_carry, 
+                                                                  self.formatted_theta_star)
                     with log_writer.as_default():
                         for inner_step_nb, elbo in enumerate(elbos): 
-                            tf.summary.scalar('true logl', log_l, self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                            tf.summary.scalar('true logl', logl / (timesteps[-1] + 1), self.num_grad_steps*absolute_step_nb + inner_step_nb)
 
                 with log_writer.as_default():
                     for inner_step_nb, elbo in enumerate(elbos): 
