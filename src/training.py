@@ -434,7 +434,7 @@ class SVITrainer:
                     with log_writer.as_default():
                         for inner_step_nb, elbo in enumerate(elbos): 
                             tf.summary.scalar('true logl', logl / (timesteps[-1] + 1), self.num_grad_steps*absolute_step_nb + inner_step_nb)
-                        if isinstance(self.q, LinearBackwardSmoother) and self.online:
+                        if isinstance(self.q, LinearBackwardSmoother) and self.true_online:
                             true_filt_dist_params = Gaussian.Params(mean=logl_carry[0], scale=Scale(cov=logl_carry[1]))
                             for inner_step_nb in range(self.num_grad_steps):
                                 variational_filt_dist_params = tree_get_idx(inner_step_nb, aux)

@@ -5,7 +5,8 @@ p_model = 'linear'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['johnson_backward,100.100.adam,1e-2,cst.true_online,100.share_params,score,paris,variance_reduction,bptt_depth_1']
+settings_list = ['johnson_backward,100.100.adam,1e-3,cst.true_online,200.score,paris,variance_reduction,bptt_depth_1',
+                 'johnson_backward,100.100.adam,1e-3,cst.true_online,200.share_params,score,paris,variance_reduction,bptt_depth_1']
 num_fits = 1
 num_epochs = 1
 dims = '10 10'

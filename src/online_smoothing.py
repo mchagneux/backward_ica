@@ -1011,6 +1011,7 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
                             phi)
     
     base_s_t = get_states(q.format_params(unformatted_phi_t))[0]
+    # params_q_tm1_t = q.backwd_params_from_states(states, q.format_params(unformatted_phi_t))
 
     def _log_q_tm1_t_bar(unformatted_phi, x_tm1, key_t):
         phi = q.format_params(unformatted_phi)
