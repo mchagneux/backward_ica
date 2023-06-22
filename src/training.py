@@ -53,7 +53,7 @@ class SVITrainer:
         self.q = q 
         self.q.print_num_params()
         self.p = p
-        
+        self.theta_star = theta_star
         self.formatted_theta_star = self.p.format_params(theta_star)
         self.frozen_params = frozen_params
 
@@ -62,16 +62,29 @@ class SVITrainer:
 
         if 'share_params' in elbo_mode:
             print('Using transition and prior from true model.')
-            def build_params(params):
-                return HMM.Params(
-                                prior=theta_star.prior,
-                                transition=theta_star.transition,
-                                emission=params) 
+            if isinstance(q, LinearGaussianHMM):
+                def build_params(params):
+                    return HMM.Params(
+                                    prior=theta_star.prior,
+                                    transition=theta_star.transition,
+                                    emission=params) 
+                def extract_params(params):
+                    return params.emission
+            elif isinstance(q, JohnsonSmoother):
+                def build_params(params):
+                    return JohnsonParams(prior=theta_star.prior,
+                                         transition=theta_star.transition,
+                                         net=params)
+                def extract_params(params):
+                    return params.net
         else:
             def build_params(params):
                 return params 
+            def extract_params(params):
+                return params
             
         self._build_params = build_params
+        self._extract_params = extract_params
 
         if isinstance(p, LinearGaussianHMM) and isinstance(q, LinearGaussianHMM):
             print('Monitor ELBO is analytical.')
@@ -229,8 +242,7 @@ class SVITrainer:
             init_carry = 0.0
         else: 
             params = self.q.get_random_params(jax.random.PRNGKey(0))
-            if 'share_params' in self.elbo_mode:
-                params = params.emission
+            params = self._extract_params(params)
             init_carry = self.elbo.init_carry(self._build_params(params))
 
         self.init_carry = init_carry
@@ -272,7 +284,7 @@ class SVITrainer:
                     else: 
                         neg_grad = tree_map(lambda x: -x, grad_t)
 
-                    elbo = elbo_t / (t+1)
+                    elbo = elbo_t #/ (t+1)
                     elbo_carry = new_carry
                 else: 
                     keys = jax.random.split(key, len(timesteps))
@@ -328,8 +340,7 @@ class SVITrainer:
             log_writer_monitor=None):
 
         params = self.q.get_random_params(key_params, args)
-        if 'share_params' in self.elbo_mode:
-            params = params.emission
+        params = self._extract_params(params)
         
         opt_state = self.optimizer.init(params)
 
@@ -342,14 +353,14 @@ class SVITrainer:
         @jax.jit
         def step(key, strided_data_on_timesteps, data_on_timesteps, elbo_carry, timesteps, params, opt_state):
                 
-            # opt_state = self.optimizer.init(params)
+            opt_state = self.optimizer.init(params)
 #
             if self.monitor:
                 monitor_elbo_value = self.monitor_elbo(key, 
                                                        data_on_timesteps, 
                                                        len(data_on_timesteps)-1, 
                                                        self.formatted_theta_star, 
-                                                       self.q.format_params(params))[0] / len(data_on_timesteps)
+                                                       self.q.format_params(self._build_params(params)))[0] / len(data_on_timesteps)
             else:
                 monitor_elbo_value = None
             
@@ -364,8 +375,7 @@ class SVITrainer:
                                                             strided_data_on_timesteps, 
                                                             timesteps, 
                                                             self._build_params(params))
-                if 'share_params' in self.elbo_mode:
-                    neg_grad = neg_grad.emission
+                neg_grad = self._extract_params(neg_grad)
 
                 updates, opt_state = self.optimizer.update(neg_grad, 
                                                             opt_state, 
@@ -402,6 +412,7 @@ class SVITrainer:
 
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
                 
+
                 (params, opt_state, elbo_carry), (elbos, _ , _, monitor_elbo) = step(
                                                                                 key_step, 
                                                                                 strided_data[timesteps], 
@@ -411,8 +422,12 @@ class SVITrainer:
                                                                                 params, 
                                                                                 opt_state)
 
+                if isinstance(self.p, LinearGaussianHMM):
+                    log_l = self.p.likelihood_seq(data[timesteps], self.theta_star)
+                    with log_writer.as_default():
+                        for inner_step_nb, elbo in enumerate(elbos): 
+                            tf.summary.scalar('true logl', log_l, self.num_grad_steps*absolute_step_nb + inner_step_nb)
 
-                        
                 with log_writer.as_default():
                     for inner_step_nb, elbo in enumerate(elbos): 
                         tf.summary.scalar('ELBO', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)
