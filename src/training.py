@@ -389,7 +389,7 @@ class SVITrainer:
                                  new_carry), 
                         params, 
                         opt_state), \
-                        (elbo, neg_grad, aux, new_carry)
+                        (elbo, aux, new_carry)
             
             (_, params, opt_state), results = jax.lax.scan(inner_step, 
                                                         init=(elbo_carry, params, opt_state), 
@@ -397,9 +397,11 @@ class SVITrainer:
                                                                             self.num_grad_steps))
 
 
-            neg_grad, aux, elbo_carry = tree_get_idx(-1, results[1:])
+            elbo_carry = tree_get_idx(-1, results[-1])
+
             elbos = results[0]
-            return (params, opt_state, elbo_carry), (elbos, ravel_pytree(neg_grad)[0], aux, monitor_elbo_value)
+            aux = results[1]
+            return (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo_value)
         
 
         absolute_step_nb = 0
@@ -414,7 +416,7 @@ class SVITrainer:
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
                 
 
-                (params, opt_state, elbo_carry), (elbos, _ , _, monitor_elbo) = step(
+                (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo) = step(
                                                                                 key_step, 
                                                                                 strided_data[timesteps], 
                                                                                 data[timesteps],
@@ -428,10 +430,16 @@ class SVITrainer:
                                                                   data[timesteps], 
                                                                   logl_carry, 
                                                                   self.formatted_theta_star)
+
                     with log_writer.as_default():
                         for inner_step_nb, elbo in enumerate(elbos): 
                             tf.summary.scalar('true logl', logl / (timesteps[-1] + 1), self.num_grad_steps*absolute_step_nb + inner_step_nb)
-
+                        if isinstance(self.q, LinearBackwardSmoother) and self.online:
+                            true_filt_dist_params = Gaussian.Params(mean=logl_carry[0], scale=Scale(cov=logl_carry[1]))
+                            for inner_step_nb in range(self.num_grad_steps):
+                                variational_filt_dist_params = tree_get_idx(inner_step_nb, aux)
+                                tf.summary.scalar('filt KL', Gaussian.KL(variational_filt_dist_params, true_filt_dist_params), self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
+                
                 with log_writer.as_default():
                     for inner_step_nb, elbo in enumerate(elbos): 
                         tf.summary.scalar('ELBO', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)

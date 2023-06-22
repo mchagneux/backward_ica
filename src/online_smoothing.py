@@ -950,13 +950,14 @@ def init_elbo_score_gradients_3(carry_m1, input_0, **kwargs):
 
     def _log_q_0_bar(unformatted_phi, key):
         x_t, s_0, params_q_t = filt_params_state_and_sample(key, unformatted_phi)
-        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, s_0)
+        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, s_0, params_q_t)
 
 
-    (log_q_0, (x_0, s_0)), grad_log_q_0_bar = jax.vmap(jax.value_and_grad(_log_q_0_bar, argnums=0, has_aux=True),
+    (log_q_0, (x_0, s_0, params_q_0)), grad_log_q_0_bar = jax.vmap(jax.value_and_grad(_log_q_0_bar, argnums=0, has_aux=True),
                                     in_axes=(None,0))(unformatted_phi_0, keys)
     
     s_0 = tree_get_idx(0, s_0)
+    params_q_0 = tree_get_idx(0, params_q_0)
 
     theta:HMM.Params = carry_m1['theta']
 
@@ -975,7 +976,7 @@ def init_elbo_score_gradients_3(carry_m1, input_0, **kwargs):
             'grad_log_q_bar':grad_log_q_0_bar,
             'grad_H_bar':grad_H_0_bar}
 
-    return carry, 0.0
+    return carry, params_q_0
 
 def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
 
@@ -1026,7 +1027,7 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
         s_t = get_states(phi)[1][1]
         params_q_t = q.filt_params_from_state(s_t, phi)
         x_t = q.filt_dist.sample(key_t, params_q_t)
-        return q.filt_dist.logpdf(x_t, params_q_t), x_t
+        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, params_q_t)
 
 
     def _l_theta_bar(unformatted_phi, x_tm1, key_t):
@@ -1048,7 +1049,7 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
             key_new_sample = key_t
 
 
-        (log_q_t, x_t), grad_log_q_t_bar = jax.value_and_grad(_log_q_t_bar, has_aux=True)(unformatted_phi_t, 
+        (log_q_t, (x_t, params_q_t)), grad_log_q_t_bar = jax.value_and_grad(_log_q_t_bar, has_aux=True)(unformatted_phi_t, 
                                                                             key_new_sample)
             
         if not paris: 
@@ -1149,9 +1150,9 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
             
             grad_H_t_bar = tree_map(lambda x: jnp.mean(x, axis=0), grad_H_t_bar)
 
-        return grad_H_t_bar, H_t, x_t, log_q_t, grad_log_q_t_bar
+        return grad_H_t_bar, H_t, x_t, log_q_t, grad_log_q_t_bar, params_q_t
 
-    grad_H_t_bar, H_t, x_t, log_q_t, grad_log_q_t_bar = jax.vmap(update)(jax.random.split(key_t, num_samples))
+    grad_H_t_bar, H_t, x_t, log_q_t, grad_log_q_t_bar, params_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
 
 
     carry_t = {'stats':{'H':H_t},
@@ -1162,7 +1163,7 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
             'grad_H_bar':grad_H_t_bar}
     
 
-    return carry_t, 0.0
+    return carry_t, tree_get_idx(0, params_q_t)
 
 def postprocess_elbo_score_gradients_3(carry, 
                                      **kwargs):
