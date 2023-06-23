@@ -352,7 +352,7 @@ class SVITrainer:
         
         opt_state = self.optimizer.init(params)
         xs, ys = data
-
+        xs = xs[0]
         ys = ys[0]
         seq_length = ys.shape[0]
         keys = get_keys(key_montecarlo, 
@@ -450,7 +450,6 @@ class SVITrainer:
                                               scale=Scale(cov=dummy_filt_mean_and_cov[1])), None]
             
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
-                
 
                 (params, opt_state, elbo_carry), (elbos, aux, inner_steps_params, monitor_elbo) = step(
                                                                                             key_step, 
@@ -488,11 +487,10 @@ class SVITrainer:
                         variational_filt_dist_params = tree_get_idx(inner_step_nb, aux)
                         inner_step_params = self._build_params(tree_get_idx(inner_step_nb, inner_steps_params))
                         filt_stats_var[1] = variational_filt_dist_params
-                        smoothing_tm1 = get_bivariate_joint_for_linear_backwd_smoother(
+                        smoothing_tm1, bivariate_joint = get_bivariate_joint_for_linear_backwd_smoother(
                                                                                 self.q, 
                                                                                 filt_stats_var, 
-                                                                                inner_step_params)[0] 
-                        
+                                                                                inner_step_params)
                         with log_writer.as_default():
 
                             # tf.summary.scalar('Filtering RMSE', 
@@ -500,8 +498,12 @@ class SVITrainer:
                             #                     self.num_grad_steps*absolute_step_nb + inner_step_nb)
 
                             if t > 0:
-                                tf.summary.scalar('Smoothing RMSE', 
+                                tf.summary.scalar('1-step smoothing RMSE', 
                                                 jnp.sqrt(jnp.mean((x_tm1 - smoothing_tm1.mean)**2)),
+                                                self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                                
+                                tf.summary.scalar('Bivariate smoothing RMSE', 
+                                                jnp.sqrt(jnp.mean((jnp.concatenate([x_tm1, x_t]) - bivariate_joint.mean)**2)),
                                                 self.num_grad_steps*absolute_step_nb + inner_step_nb)
 
 
