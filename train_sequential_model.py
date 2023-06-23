@@ -22,7 +22,9 @@ def main(args):
 
     p = hmm.get_generative_model(misc.load_args('args', args.exp_dir))
     theta_star = misc.load_params('theta_star', args.exp_dir)
-    data = jnp.load(os.path.join(args.exp_dir, 'obs_seqs.npy'))
+    ys = jnp.load(os.path.join(args.exp_dir, 'obs_seqs.npy'))
+    xs = jnp.load(os.path.join(args.exp_dir, 'state_seqs.npy'))
+
 
 
     key_phi = jax.random.PRNGKey(args.seed)
@@ -51,7 +53,7 @@ def main(args):
                         num_samples=args.num_samples,
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
-                        seq_length=data.shape[1],
+                        seq_length=ys.shape[1],
                         training_mode=args.training_mode,
                         elbo_mode=args.elbo_mode)
 
@@ -60,7 +62,7 @@ def main(args):
     print('Elbo mode:', args.elbo_mode)
 
     best_params_across_all_fits, best_params_per_fit = trainer.multi_fit(key_phi,
-                                                            data=data, 
+                                                            data=(xs,ys), 
                                                             num_fits=args.num_fits,
                                                             log_dir=args.save_dir,
                                                             args=args) # returns the best fit (based on the last value of the elbo)

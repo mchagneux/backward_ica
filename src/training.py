@@ -349,25 +349,29 @@ class SVITrainer:
         params = self.q.get_random_params(key_params, args)
         params = self._extract_params(params)
         
+        
         opt_state = self.optimizer.init(params)
+        xs, ys = data
 
-        data = data[0]
-        seq_length = data.shape[0]
+        ys = ys[0]
+        seq_length = ys.shape[0]
         keys = get_keys(key_montecarlo, 
                         seq_length // self.online_batch_size, 
                         self.num_epochs)
         
         @jax.jit
-        def step(key, strided_data_on_timesteps, data_on_timesteps, elbo_carry, timesteps, params, opt_state):
+        def step(key, strided_ys_on_timesteps, ys_on_timesteps, elbo_carry, timesteps, params, opt_state):
                 
-            opt_state = self.optimizer.init(params)
+
+            if self.true_online:
+                opt_state = self.optimizer.init(params)
 #
             if self.monitor:
                 monitor_elbo_value = self.monitor_elbo(key, 
-                                                       data_on_timesteps, 
-                                                       len(data_on_timesteps)-1, 
+                                                       ys_on_timesteps, 
+                                                       len(ys_on_timesteps)-1, 
                                                        self.formatted_theta_star, 
-                                                       self.q.format_params(self._build_params(params)))[0] / len(data_on_timesteps)
+                                                       self.q.format_params(self._build_params(params)))[0] / len(ys_on_timesteps)
             else:
                 monitor_elbo_value = None
             
@@ -379,7 +383,7 @@ class SVITrainer:
                 elbo, neg_grad, new_carry, aux = self.update(
                                                             key, 
                                                             inner_carry,
-                                                            strided_data_on_timesteps, 
+                                                            strided_ys_on_timesteps, 
                                                             timesteps, 
                                                             self._build_params(params))
                 neg_grad = self._extract_params(neg_grad)
@@ -430,11 +434,11 @@ class SVITrainer:
                                             scale=Scale(cov=jnp.block([[filt_stats[1].scale.cov, zeros],
                                                                         [zeros, smoothing_dist.scale.cov]])))  
             
-            return bivariate_joint
+            return smoothing_dist, bivariate_joint
         
         for epoch_nb, keys_epoch in enumerate(keys):
             elbo_carry = self.init_carry
-            strided_data = self.elbo.preprocess(data)
+            strided_ys = self.elbo.preprocess(ys)
 
             timesteps_lists = self.timesteps(seq_length, None)
             logl_carry = (*dummy_filt_mean_and_cov, 0.0)
@@ -450,51 +454,80 @@ class SVITrainer:
 
                 (params, opt_state, elbo_carry), (elbos, aux, inner_steps_params, monitor_elbo) = step(
                                                                                             key_step, 
-                                                                                            strided_data[timesteps], 
-                                                                                            data[timesteps],
+                                                                                            strided_ys[timesteps], 
+                                                                                            ys[timesteps],
                                                                                             elbo_carry, 
                                                                                             timesteps, 
                                                                                             params, 
                                                                                             opt_state)
                     
+                # smoothing_tm1 = []
+                # true_joints = []
+                if self.true_online: 
+                    t = timesteps[-1]
+                    x_t = xs[t]
+                    if t > 0: 
+                        x_tm1 = xs[t-1]
 
                 if isinstance(self.p, LinearGaussianHMM) and self.true_online:
                     logl_carry, logl = Kalman.recursive_logl_step(timesteps, 
-                                                                  data[timesteps], 
+                                                                  ys[timesteps], 
                                                                   logl_carry, 
                                                                   self.formatted_theta_star)
-                    filt_stats_true[1] = Gaussian.Params(mean=logl_carry[0], scale=Scale(cov=logl_carry[1]))
+                    filt_stats_true[1] = Gaussian.Params(mean=logl_carry[0], 
+                                                         scale=Scale(cov=logl_carry[1]))
 
-                    true_joint = get_bivariate_joint_for_linear_backwd_smoother(self.p, 
-                                                                                filt_stats_true, 
-                                                                                self.theta_star)
-                
-                    with log_writer.as_default():
-                        for inner_step_nb, elbo in enumerate(elbos): 
-                            tf.summary.scalar('true logl', logl / (timesteps[-1] + 1), 
-                                              self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                    x_tm1 = get_bivariate_joint_for_linear_backwd_smoother(self.p, 
+                                                                            filt_stats_true, 
+                                                                            self.theta_star)[0].mean
+                    
+
+                if isinstance(self.q, LinearBackwardSmoother) and self.true_online:
+                    
+                    for inner_step_nb in range(self.num_grad_steps):
+                        variational_filt_dist_params = tree_get_idx(inner_step_nb, aux)
+                        inner_step_params = self._build_params(tree_get_idx(inner_step_nb, inner_steps_params))
+                        filt_stats_var[1] = variational_filt_dist_params
+                        smoothing_tm1 = get_bivariate_joint_for_linear_backwd_smoother(
+                                                                                self.q, 
+                                                                                filt_stats_var, 
+                                                                                inner_step_params)[0] 
                         
-                        if isinstance(self.q, LinearBackwardSmoother) and self.true_online:
-                            
-                            for inner_step_nb in range(self.num_grad_steps):
-                                variational_filt_dist_params = tree_get_idx(inner_step_nb, aux)
-                                inner_step_params = self._build_params(tree_get_idx(inner_step_nb, inner_steps_params))
-                                filt_stats_var[1] = variational_filt_dist_params
+                        with log_writer.as_default():
 
-                                variational_joint = get_bivariate_joint_for_linear_backwd_smoother(self.q, filt_stats_var, inner_step_params)
+                            # tf.summary.scalar('Filtering RMSE', 
+                            #                     jnp.sqrt(jnp.mean((x_t - filt_stats_var[1].mean)**2)),
+                            #                     self.num_grad_steps*absolute_step_nb + inner_step_nb)
+
+                            if t > 0:
+                                tf.summary.scalar('Smoothing RMSE', 
+                                                jnp.sqrt(jnp.mean((x_tm1 - smoothing_tm1.mean)**2)),
+                                                self.num_grad_steps*absolute_step_nb + inner_step_nb)
+
+
+                
+                #     with log_writer.as_default():
+                #         for inner_step_nb, elbo in enumerate(elbos): 
+                #             tf.summary.scalar('true logl', logl / (timesteps[-1] + 1), 
+                #                               self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                        
+
+
+                #                 tf.summary.scalar('filt KL', 
+                #                                   Gaussian.KL(filt_stats_var[1], filt_stats_true[1]), 
+                #                                   self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
                                 
-                                tf.summary.scalar('filt KL', Gaussian.KL(filt_stats_var[1], filt_stats_true[1]), self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
                                 
-                                
-                                if timesteps[-1] > 0:
-                                    tf.summary.scalar('bivariate joint KL', 
-                                                      Gaussian.KL(variational_joint, true_joint), 
-                                                      self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
+                #                 if timesteps[-1] > 0:
+                #                     tf.summary.scalar('bivariate joint KL', 
+                #                                       Gaussian.KL(variational_joints[-1], true_joint), 
+                #                                       self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
                     filt_stats_true = [filt_stats_true[1], None]
                     filt_stats_var = [filt_stats_var[1], None]
 
+
                 elif isinstance(self.p, LinearGaussianHMM) and (not self.true_online):
-                    logl = self.p.likelihood_seq(data[timesteps], self.theta_star)
+                    logl = self.p.likelihood_seq(ys[timesteps], self.theta_star)
                     with log_writer.as_default():
                         tf.summary.scalar('true logl', logl / (timesteps[-1] + 1), absolute_step_nb)
                         
@@ -523,7 +556,6 @@ class SVITrainer:
         
         tensorboard_subdir = os.path.join(log_dir, 'tensorboard_logs')
         os.makedirs(tensorboard_subdir, exist_ok=True)
-
         times = []
         def run_fit(fit_nb, fit_key):
 

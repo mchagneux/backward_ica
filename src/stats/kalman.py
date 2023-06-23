@@ -34,6 +34,8 @@ class Kalman:
                             mean=B @ pred_mean + b , 
                             cov=B @ pred_cov @ B.T + R)
         
+
+    @jax.jit
     def recursive_logl_step(timesteps, data_on_timesteps, carry, params):
 
 
