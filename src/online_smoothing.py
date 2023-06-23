@@ -318,14 +318,14 @@ def init_elbo_score_gradients(carry_m1, input_0, **kwargs):
         params_q_t = q.filt_params_from_state(s_0, phi)
         x_t = q.filt_dist.sample(key, params_q_t)
         x_t = jax.lax.stop_gradient(x_t)
-        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, base_s, s_0)
+        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, base_s, s_0, params_q_t)
 
 
-    (log_q_0, (x_0, base_s, s_0)), grad_log_q_0 = jax.vmap(jax.value_and_grad(_log_q_0, argnums=0, has_aux=True), 
+    (log_q_0, (x_0, base_s, s_0, params_q_0)), grad_log_q_0 = jax.vmap(jax.value_and_grad(_log_q_0, argnums=0, has_aux=True), 
                             in_axes=(None,0))(unformatted_phi_0, 
                                                 jax.random.split(key_0, num_samples))
     
-    base_s, s_0 = tree_get_idx(0, (base_s, s_0))
+    base_s, s_0, params_q_0 = tree_get_idx(0, (base_s, s_0, params_q_0))
     theta:HMM.Params = carry_m1['theta']
 
     def _h(x_0):
@@ -345,7 +345,7 @@ def init_elbo_score_gradients(carry_m1, input_0, **kwargs):
             'log_q':log_q_0,
             'grad_log_q':grad_log_q_0}
 
-    return carry, 0.0
+    return carry, params_q_0
 
 def update_elbo_score_gradients(carry_tm1, input_t, **kwargs):
 
@@ -399,12 +399,12 @@ def update_elbo_score_gradients(carry_tm1, input_t, **kwargs):
         params_q_t = q.filt_params_from_state(s_t, phi)
         x_t = q.filt_dist.sample(key, params_q_t)
         x_t = jax.lax.stop_gradient(x_t)
-        return q.filt_dist.logpdf(x_t, params_q_t), x_t
+        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, params_q_t)
     
     def _log_q_t_and_dummy_grad(unformatted_phi, key):
-        log_q_t, x_t = _log_q_t(unformatted_phi, key)
+        log_q_t, (x_t, params_q_t) = _log_q_t(unformatted_phi, key)
         dummy_grad = tree_map(lambda x: jnp.zeros_like(x[0]), carry_tm1['grad_log_q'])
-        return (log_q_t, x_t), dummy_grad
+        return (log_q_t, (x_t, params_q_t)), dummy_grad
     
     def _log_q_t_and_grad(unformatted_phi, key):
         return jax.value_and_grad(_log_q_t, has_aux=True)(
@@ -419,7 +419,7 @@ def update_elbo_score_gradients(carry_tm1, input_t, **kwargs):
             key_new_sample = key_t
         
 
-        (log_q_t, x_t), grad_log_q_t = lax.cond(t == T, 
+        (log_q_t, (x_t, params_q_t)), grad_log_q_t = lax.cond(t == T, 
                                                 _log_q_t_and_grad,
                                                 _log_q_t_and_dummy_grad, 
                                                 unformatted_phi_t, 
@@ -547,9 +547,9 @@ def update_elbo_score_gradients(carry_tm1, input_t, **kwargs):
                                                                     sub_grad_log_q_tm1_t)
             F_t = tree_map(lambda x: jnp.mean(x, axis=0), F_t)
 
-        return F_t, H_t, x_t, log_q_t, grad_log_q_t
+        return F_t, H_t, x_t, log_q_t, grad_log_q_t, params_q_t
 
-    F_t, H_t, x_t, log_q_t, grad_log_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
+    F_t, H_t, x_t, log_q_t, grad_log_q_t, params_q_t = jax.vmap(update)(jax.random.split(key_t, num_samples))
 
     base_s_t, (_, s_t) = get_states(q.format_params(unformatted_phi_t))
 
@@ -561,7 +561,7 @@ def update_elbo_score_gradients(carry_tm1, input_t, **kwargs):
             'grad_log_q':grad_log_q_t}
     
 
-    return carry_t, 0.0
+    return carry_t, tree_get_idx(0,params_q_t)
 
 def postprocess_elbo_score_gradients(carry, 
                                      variance_reduction, 
@@ -976,7 +976,7 @@ def init_elbo_score_gradients_3(carry_m1, input_0, **kwargs):
             'grad_log_q_bar':grad_log_q_0_bar,
             'grad_H_bar':grad_H_0_bar}
 
-    return carry, (params_q_0, jnp.empty((p.state_dim, p.state_dim)), jnp.empty((p.state_dim,)), jnp.empty((p.state_dim, p.state_dim)))
+    return carry, params_q_0#, jnp.empty((p.state_dim, p.state_dim)), jnp.empty((p.state_dim,)), jnp.empty((p.state_dim, p.state_dim)))
 
 def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
 
@@ -1010,9 +1010,8 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
                             ys_for_bptt, 
                             phi)
     
-    base_s_t, states = get_states(q.format_params(unformatted_phi_t))
-    params_q_tm1_t = q.backwd_params_from_states(states, q.format_params(unformatted_phi_t))
-    A_backwd, a_backwd, Sigma_backwd = params_q_tm1_t.map.w, params_q_tm1_t.map.b, params_q_tm1_t.noise.scale.cov
+    base_s_t = get_states(q.format_params(unformatted_phi_t))[0]
+
 
     def _log_q_tm1_t_bar(unformatted_phi, x_tm1, key_t):
         phi = q.format_params(unformatted_phi)
@@ -1165,7 +1164,7 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
             'grad_H_bar':grad_H_t_bar}
     
 
-    return carry_t, (tree_get_idx(0, params_q_t), A_backwd, a_backwd, Sigma_backwd)
+    return carry_t, tree_get_idx(0, params_q_t)#, A_backwd, a_backwd, Sigma_backwd)
 
 def postprocess_elbo_score_gradients_3(carry, 
                                      **kwargs):
@@ -1204,19 +1203,19 @@ OnlineELBO = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoot
 
 
 
-# OnlineELBOScoreGradients = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoothing(
-#                                                                 p, 
-#                                                                 q, 
-#                                                                 online_elbo_functional,
-#                                                                 init_carry_fn=init_carry_elbo_score_gradients, 
-#                                                                 init_fn=init_elbo_score_gradients,
-#                                                                 update_fn=update_elbo_score_gradients,
-#                                                                 preprocess_fn=preprocess_for_bptt,
-#                                                                 postprocess_fn=postprocess_elbo_score_gradients,
-#                                                                 num_samples=num_samples, 
-#                                                                 **options)
-
 OnlineELBOScoreGradients = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoothing(
+                                                                p, 
+                                                                q, 
+                                                                online_elbo_functional,
+                                                                init_carry_fn=init_carry_elbo_score_gradients, 
+                                                                init_fn=init_elbo_score_gradients,
+                                                                update_fn=update_elbo_score_gradients,
+                                                                preprocess_fn=preprocess_for_bptt,
+                                                                postprocess_fn=postprocess_elbo_score_gradients,
+                                                                num_samples=num_samples, 
+                                                                **options)
+
+OnlineELBOScoreTruncatedGradients = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoothing(
                                                                 p, 
                                                                 q, 
                                                                 online_elbo_functional,

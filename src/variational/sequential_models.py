@@ -410,12 +410,13 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
         
         LinearBackwardSmoother.__init__(self, 
                                         state_dim)
-
+        
+    
     def init_state(self, obs, params):
         out = self._net.apply(params.net, obs)
         return Gaussian.Params(eta1=out[0] + params.prior.eta1, eta2=out[1] + params.prior.eta2)
 
-    def new_state(self, obs, prev_state, params):
+    def new_state(self, obs, prev_state, params, **kwargs):
 
         pred_mean, pred_cov = Kalman.predict(prev_state.mean, prev_state.scale.cov, params.transition)  
 

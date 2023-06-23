@@ -193,12 +193,19 @@ class SVITrainer:
             
         elif 'score' in self.elbo_mode:
             print('USING SCORE ELBO.')
-            self.elbo = OnlineELBOScoreGradients(
-                                            self.p, 
-                                            self.q, 
-                                            num_samples=num_samples, 
-                                            **self.elbo_options)
-            
+            if 'truncated' in self.elbo_mode: 
+                self.elbo = OnlineELBOScoreTruncatedGradients(
+                                                self.p, 
+                                                self.q, 
+                                                num_samples=num_samples, 
+                                                **self.elbo_options)
+            else: 
+                self.elbo = OnlineELBOScoreGradients(
+                                                self.p, 
+                                                self.q, 
+                                                num_samples=num_samples, 
+                                                **self.elbo_options)
+                
                     
             def elbo_and_grads_batch(key, ys, params):
                 carry, aux = self.elbo.batch_compute(
@@ -381,33 +388,50 @@ class SVITrainer:
                                                             opt_state, 
                                                             params)
                 
-                params = self.optimizer_update_fn(params, updates)
+                new_params = self.optimizer_update_fn(params, updates)
                 
                 return (lax.cond(timesteps[-1] == 0, 
                                  lambda x:x, 
                                  lambda x:elbo_carry, 
                                  new_carry), 
-                        params, 
+                        new_params, 
                         opt_state), \
-                        (elbo, aux, new_carry)
+                        (elbo, aux, params, new_carry)
             
-            (_, params, opt_state), results = jax.lax.scan(inner_step, 
+            (_, params, opt_state), (elbos, aux, inner_steps_params, inner_steps_carries) = jax.lax.scan(inner_step, 
                                                         init=(elbo_carry, params, opt_state), 
                                                         xs=jax.random.split(key, 
                                                                             self.num_grad_steps))
 
 
-            elbo_carry = tree_get_idx(-1, results[-1])
-
-            elbos = results[0]
-            aux = results[1]
-            return (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo_value)
+            elbo_carry = tree_get_idx(-1, inner_steps_carries)
+            return (params, opt_state, elbo_carry), (elbos, aux, inner_steps_params, monitor_elbo_value)
         
 
         absolute_step_nb = 0
         dummy_filt_mean_and_cov = jnp.empty((self.p.state_dim,)), jnp.empty((self.p.state_dim, self.p.state_dim))
         zeros = jnp.zeros((self.p.state_dim, self.p.state_dim))
 
+
+        @partial(jax.jit, static_argnums=(0,))
+        def get_bivariate_joint_for_linear_backwd_smoother(model:BackwardSmoother, filt_stats, params):
+            params = model.format_params(params)
+            backwd_params = LinearBackwardSmoother.\
+                                linear_gaussian_backwd_params_from_transition_and_filt(filt_stats[0].mean, filt_stats[0].scale.cov, 
+                                                                                    params.transition)
+            A_backwd, a_backwd, Sigma_backwd = \
+                    backwd_params.map.w, backwd_params.map.b, backwd_params.noise.scale.cov
+            smoothing_dist = Gaussian.Params(
+                                            mean=A_backwd @ filt_stats[1].mean + a_backwd, 
+                                            scale=Scale(cov=Sigma_backwd + \
+                                                        A_backwd @ filt_stats[1].scale.cov @ A_backwd.T))
+            bivariate_joint = Gaussian.Params(mean=jnp.concatenate([filt_stats[1].mean, 
+                                                                    smoothing_dist.mean]),
+                                            scale=Scale(cov=jnp.block([[filt_stats[1].scale.cov, zeros],
+                                                                        [zeros, smoothing_dist.scale.cov]])))  
+            
+            return bivariate_joint
+        
         for epoch_nb, keys_epoch in enumerate(keys):
             elbo_carry = self.init_carry
             strided_data = self.elbo.preprocess(data)
@@ -424,38 +448,27 @@ class SVITrainer:
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
                 
 
-                (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo) = step(
-                                                                                key_step, 
-                                                                                strided_data[timesteps], 
-                                                                                data[timesteps],
-                                                                                elbo_carry, 
-                                                                                timesteps, 
-                                                                                params, 
-                                                                                opt_state)
+                (params, opt_state, elbo_carry), (elbos, aux, inner_steps_params, monitor_elbo) = step(
+                                                                                            key_step, 
+                                                                                            strided_data[timesteps], 
+                                                                                            data[timesteps],
+                                                                                            elbo_carry, 
+                                                                                            timesteps, 
+                                                                                            params, 
+                                                                                            opt_state)
+                    
 
-                if isinstance(self.p, LinearGaussianHMM):
+                if isinstance(self.p, LinearGaussianHMM) and self.true_online:
                     logl_carry, logl = Kalman.recursive_logl_step(timesteps, 
                                                                   data[timesteps], 
                                                                   logl_carry, 
                                                                   self.formatted_theta_star)
                     filt_stats_true[1] = Gaussian.Params(mean=logl_carry[0], scale=Scale(cov=logl_carry[1]))
 
-                    true_backwd_kernel_params = LinearBackwardSmoother.\
-                                    linear_gaussian_backwd_params_from_transition_and_filt(filt_stats_true[0].mean, filt_stats_true[0].scale.cov, 
-                                                                                        self.formatted_theta_star.transition)
-                    A_backwd_true, a_backwd_true, Sigma_backwd_true = \
-                        true_backwd_kernel_params.map.w, true_backwd_kernel_params.map.b, true_backwd_kernel_params.noise.scale.cov
-
-                            
-                    true_smoothing_dist = Gaussian.Params(
-                                                    mean=A_backwd_true @ filt_stats_true[1].mean + a_backwd_true, 
-                                                    scale=Scale(cov=Sigma_backwd_true + \
-                                                                A_backwd_true @ filt_stats_true[1].scale.cov @ A_backwd_true.T))
-                    
-                    true_joint = Gaussian.Params(mean=jnp.concatenate([filt_stats_true[1].mean, 
-                                                                        true_smoothing_dist.mean]),
-                                                scale=Scale(cov=jnp.block([[filt_stats_true[1].scale.cov, zeros],
-                                                                            [zeros, true_smoothing_dist.scale.cov]])))                    
+                    true_joint = get_bivariate_joint_for_linear_backwd_smoother(self.p, 
+                                                                                filt_stats_true, 
+                                                                                self.theta_star)
+                
                     with log_writer.as_default():
                         for inner_step_nb, elbo in enumerate(elbos): 
                             tf.summary.scalar('true logl', logl / (timesteps[-1] + 1), 
@@ -464,18 +477,13 @@ class SVITrainer:
                         if isinstance(self.q, LinearBackwardSmoother) and self.true_online:
                             
                             for inner_step_nb in range(self.num_grad_steps):
-                                variational_filt_dist_params = tree_get_idx(inner_step_nb, aux[0])
+                                variational_filt_dist_params = tree_get_idx(inner_step_nb, aux)
+                                inner_step_params = self._build_params(tree_get_idx(inner_step_nb, inner_steps_params))
                                 filt_stats_var[1] = variational_filt_dist_params
-                                A_backwd, a_backwd, Sigma_backwd = tree_get_idx(inner_step_nb, aux[1:])
+
+                                variational_joint = get_bivariate_joint_for_linear_backwd_smoother(self.q, filt_stats_var, inner_step_params)
                                 
-                                variational_smoothing_dist = Gaussian.Params(mean=A_backwd @ filt_stats_var[1].mean + a_backwd, 
-                                                                  scale=Scale(cov=Sigma_backwd + A_backwd @ filt_stats_var[1].scale.cov @ A_backwd.T))
-                                variational_joint = Gaussian.Params(mean=jnp.concatenate([filt_stats_var[1].mean, 
-                                                                                    variational_smoothing_dist.mean]),
-                                                                    scale=Scale(cov=jnp.block([[filt_stats_var[1].scale.cov, zeros],
-                                                                                               [zeros, variational_smoothing_dist.scale.cov]])))
-                                
-                                # tf.summary.scalar('filt KL', Gaussian.KL(filt_stats_var[1], filt_stats_true[1]), self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
+                                tf.summary.scalar('filt KL', Gaussian.KL(filt_stats_var[1], filt_stats_true[1]), self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
                                 
                                 
                                 if timesteps[-1] > 0:
@@ -484,9 +492,12 @@ class SVITrainer:
                                                       self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
                     filt_stats_true = [filt_stats_true[1], None]
                     filt_stats_var = [filt_stats_var[1], None]
-        
-                           
 
+                elif isinstance(self.p, LinearGaussianHMM) and (not self.true_online):
+                    logl = self.p.likelihood_seq(data[timesteps], self.theta_star)
+                    with log_writer.as_default():
+                        tf.summary.scalar('true logl', logl / (timesteps[-1] + 1), absolute_step_nb)
+                        
                 with log_writer.as_default():
                     for inner_step_nb, elbo in enumerate(elbos): 
                         tf.summary.scalar('ELBO', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)
