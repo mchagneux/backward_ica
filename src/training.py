@@ -362,7 +362,6 @@ class SVITrainer:
         @jax.jit
         def step(key, strided_ys_on_timesteps, ys_on_timesteps, elbo_carry, timesteps, params, opt_state):
                 
-
             if self.true_online:
                 opt_state = self.optimizer.init(params)
 #
@@ -436,6 +435,8 @@ class SVITrainer:
             
             return smoothing_dist, bivariate_joint
         
+
+        # init_params = params
         for epoch_nb, keys_epoch in enumerate(keys):
             elbo_carry = self.init_carry
             strided_ys = self.elbo.preprocess(ys)
@@ -451,7 +452,7 @@ class SVITrainer:
             
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
 
-                (params, opt_state, elbo_carry), (elbos, aux, inner_steps_params, monitor_elbo) = step(
+                (new_params, opt_state, elbo_carry), (elbos, aux, inner_steps_params, monitor_elbo) = step(
                                                                                             key_step, 
                                                                                             strided_ys[timesteps], 
                                                                                             ys[timesteps],
@@ -459,9 +460,9 @@ class SVITrainer:
                                                                                             timesteps, 
                                                                                             params, 
                                                                                             opt_state)
-                    
-                # smoothing_tm1 = []
-                # true_joints = []
+                if not 'nonamortized' in self.elbo_mode:
+                    params = new_params
+                
                 if self.true_online: 
                     t = timesteps[-1]
                     x_t = xs[t]
@@ -475,6 +476,8 @@ class SVITrainer:
                                                                   self.formatted_theta_star)
                     filt_stats_true[1] = Gaussian.Params(mean=logl_carry[0], 
                                                          scale=Scale(cov=logl_carry[1]))
+                    
+                    x_t = filt_stats_true[1].mean
 
                     x_tm1 = get_bivariate_joint_for_linear_backwd_smoother(self.p, 
                                                                             filt_stats_true, 
