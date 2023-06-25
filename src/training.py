@@ -399,16 +399,18 @@ class SVITrainer:
                                  new_carry), 
                         new_params, 
                         opt_state), \
-                        (elbo, aux, params, new_carry)
+                        (elbo, aux, new_carry)
             
-            (_, params, opt_state), (elbos, aux, inner_steps_params, inner_steps_carries) = jax.lax.scan(inner_step, 
+            (_, params, opt_state), (elbos, aux, inner_steps_carries) = jax.lax.scan(inner_step, 
                                                         init=(elbo_carry, params, opt_state), 
                                                         xs=jax.random.split(key, 
                                                                             self.num_grad_steps))
 
 
             elbo_carry = tree_get_idx(-1, inner_steps_carries)
-            return (params, opt_state, elbo_carry), (elbos, aux, inner_steps_params, monitor_elbo_value)
+            params_q_t, params_q_tm1_t = tree_get_idx(-1, aux)
+            means_tm1, means_t = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
+            return (params, opt_state, elbo_carry), (elbos, (means_tm1, means_t), monitor_elbo_value)
         
 
         absolute_step_nb = 0
@@ -442,17 +444,17 @@ class SVITrainer:
             strided_ys = self.elbo.preprocess(ys)
 
             timesteps_lists = self.timesteps(seq_length, None)
-            logl_carry = (*dummy_filt_mean_and_cov, 0.0)
+            # logl_carry = (*dummy_filt_mean_and_cov, 0.0)
 
-            filt_stats_true = [Gaussian.Params(mean=dummy_filt_mean_and_cov[0], 
-                                               scale=Scale(cov=dummy_filt_mean_and_cov[1])), None]
+            # filt_stats_true = [Gaussian.Params(mean=dummy_filt_mean_and_cov[0], 
+            #                                    scale=Scale(cov=dummy_filt_mean_and_cov[1])), None]
             
-            filt_stats_var = [Gaussian.Params(mean=dummy_filt_mean_and_cov[0], 
-                                              scale=Scale(cov=dummy_filt_mean_and_cov[1])), None]
+            # filt_stats_var = [Gaussian.Params(mean=dummy_filt_mean_and_cov[0], 
+            #                                   scale=Scale(cov=dummy_filt_mean_and_cov[1])), None]
             
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
 
-                (new_params, opt_state, elbo_carry), (elbos, aux, inner_steps_params, monitor_elbo) = step(
+                (new_params, opt_state, elbo_carry), (elbos, (means_tm1, means_t), monitor_elbo) = step(
                                                                                             key_step, 
                                                                                             strided_ys[timesteps], 
                                                                                             ys[timesteps],
@@ -460,7 +462,7 @@ class SVITrainer:
                                                                                             timesteps, 
                                                                                             params, 
                                                                                             opt_state)
-                if not 'nonamortized' in self.elbo_mode:
+                if not ('nonamortized' in self.elbo_mode):
                     params = new_params
                 
                 if self.true_online: 
@@ -469,45 +471,44 @@ class SVITrainer:
                     if t > 0: 
                         x_tm1 = xs[t-1]
 
-                if isinstance(self.p, LinearGaussianHMM) and self.true_online:
-                    logl_carry, logl = Kalman.recursive_logl_step(timesteps, 
-                                                                  ys[timesteps], 
-                                                                  logl_carry, 
-                                                                  self.formatted_theta_star)
-                    filt_stats_true[1] = Gaussian.Params(mean=logl_carry[0], 
-                                                         scale=Scale(cov=logl_carry[1]))
+                # if isinstance(self.p, LinearGaussianHMM) and self.true_online:
+                #     logl_carry, logl = Kalman.recursive_logl_step(timesteps, 
+                #                                                   ys[timesteps], 
+                #                                                   logl_carry, 
+                #                                                   self.formatted_theta_star)
+                #     filt_stats_true[1] = Gaussian.Params(mean=logl_carry[0], 
+                #                                          scale=Scale(cov=logl_carry[1]))
                     
-                    x_t = filt_stats_true[1].mean
+                #     x_t = filt_stats_true[1].mean
 
-                    x_tm1 = get_bivariate_joint_for_linear_backwd_smoother(self.p, 
-                                                                            filt_stats_true, 
-                                                                            self.theta_star)[0].mean
+                #     x_tm1 = get_bivariate_joint_for_linear_backwd_smoother(self.p, 
+                #                                                             filt_stats_true, 
+                #                                                             self.theta_star)[0].mean
                     
 
-                if isinstance(self.q, LinearBackwardSmoother) and self.true_online:
+                if self.true_online:
                     
-                    for inner_step_nb in range(self.num_grad_steps):
-                        variational_filt_dist_params = tree_get_idx(inner_step_nb, aux)
-                        inner_step_params = self._build_params(tree_get_idx(inner_step_nb, inner_steps_params))
-                        filt_stats_var[1] = variational_filt_dist_params
-                        smoothing_tm1, bivariate_joint = get_bivariate_joint_for_linear_backwd_smoother(
-                                                                                self.q, 
-                                                                                filt_stats_var, 
-                                                                                inner_step_params)
-                        with log_writer.as_default():
+                        # variational_filt_dist_params = tree_get_idx(inner_step_nb, aux)
+                        # inner_step_params = self._build_params(tree_get_idx(inner_step_nb, inner_steps_params))
+                        # filt_stats_var[1] = variational_filt_dist_params
+                        # smoothing_tm1, bivariate_joint = get_bivariate_joint_for_linear_backwd_smoother(
+                        #                                                         self.q, 
+                        #                                                         filt_stats_var, 
+                        #                                                         inner_step_params)
+                    with log_writer.as_default():
 
-                            # tf.summary.scalar('Filtering RMSE', 
-                            #                     jnp.sqrt(jnp.mean((x_t - filt_stats_var[1].mean)**2)),
-                            #                     self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                        tf.summary.scalar('Filtering RMSE', 
+                                            jnp.sqrt(jnp.mean((x_t - means_t)**2)),
+                                            absolute_step_nb)
 
-                            if t > 0:
-                                tf.summary.scalar('1-step smoothing RMSE', 
-                                                jnp.sqrt(jnp.mean((x_tm1 - smoothing_tm1.mean)**2)),
-                                                self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                        if t > 0:
+                            tf.summary.scalar('1-step smoothing RMSE', 
+                                            jnp.sqrt(jnp.mean((x_tm1 - means_tm1)**2)),
+                                            absolute_step_nb)
                                 
-                                tf.summary.scalar('Bivariate smoothing RMSE', 
-                                                jnp.sqrt(jnp.mean((jnp.concatenate([x_tm1, x_t]) - bivariate_joint.mean)**2)),
-                                                self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                                # tf.summary.scalar('Bivariate smoothing RMSE', 
+                                #                 jnp.sqrt(jnp.mean((jnp.concatenate([x_tm1, x_t]) - bivariate_joint.mean)**2)),
+                                #                 self.num_grad_steps*absolute_step_nb + inner_step_nb)
 
 
                 
@@ -527,8 +528,8 @@ class SVITrainer:
                 #                     tf.summary.scalar('bivariate joint KL', 
                 #                                       Gaussian.KL(variational_joints[-1], true_joint), 
                 #                                       self.num_grad_steps*absolute_step_nb + inner_step_nb)                            
-                    filt_stats_true = [filt_stats_true[1], None]
-                    filt_stats_var = [filt_stats_var[1], None]
+                    # filt_stats_true = [filt_stats_true[1], None]
+                    # filt_stats_var = [filt_stats_var[1], None]
 
 
                 elif isinstance(self.p, LinearGaussianHMM) and (not self.true_online):

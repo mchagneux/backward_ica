@@ -18,6 +18,11 @@ class BackwardSmoother(metaclass=ABCMeta):
         self.filt_dist:Gaussian = filt_dist
         self.backwd_kernel:ParametricKernel = backwd_kernel
 
+
+    @abstractmethod
+    def smoothing_means_tm1_t(self, filt_params, backwd_params, *args):
+        raise NotImplementedError
+    
     @abstractmethod
     def get_random_params(self, key):
         raise NotImplementedError
@@ -46,6 +51,10 @@ class BackwardSmoother(metaclass=ABCMeta):
     def backwd_params_from_states(self, state, params):
         raise NotImplementedError
 
+    @abstractmethod
+    def backwd_step(self, *args):
+        raise NotImplementedError
+    
     @abstractmethod
     def compute_marginals(self, *args):
         raise NotImplementedError
@@ -84,8 +93,6 @@ class BackwardSmoother(metaclass=ABCMeta):
         state_seq = lax.scan(_step, init=init_state, xs=(obs_seq[1:], mask_seq[1:]))[1]
 
         return tree_prepend(init_state, state_seq)
-
-
 
     def get_states(self, 
                   t, 
@@ -138,7 +145,6 @@ class BackwardSmoother(metaclass=ABCMeta):
     def new_proposal_params(self, transition_params, filt_params):
         raise NotImplementedError
 
-    
 
 class TwoFilterSmoother(metaclass=ABCMeta):
         
@@ -259,6 +265,14 @@ class LinearBackwardSmoother(BackwardSmoother):
 
         return marginals
 
+    def backwd_step(self, current_marginal, backwd_params):
+        A_back, a_back, cov_back = backwd_params.map.w, backwd_params.map.b, backwd_params.noise.scale.cov
+        smoothed_mean, smoothed_cov = current_marginal
+        mean = A_back @ smoothed_mean + a_back
+        cov = A_back @ smoothed_cov @ A_back.T + cov_back
+        return (mean, cov), Gaussian.Params(mean=mean, 
+                                            scale=Scale(cov=cov))
+
     def compute_joint_marginals(self, filt_params_seq, backwd_params_seq, lag):
         
         def _compute_joint_marginal(filt_params, backward_params_subseq):
@@ -334,3 +348,6 @@ class LinearBackwardSmoother(BackwardSmoother):
     def log_fwd_potential(self, x_0, x_1, params):
         return self.transition_kernel.logpdf(x_1, x_0, params.transition)
     
+    def smoothing_means_tm1_t(self, filt_params, backwd_params, *args):
+        mean, cov = filt_params.mean, filt_params.scale.cov
+        return self.backwd_step((mean,cov), backwd_params)[0][0], filt_params.mean

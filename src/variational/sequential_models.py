@@ -158,7 +158,9 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                                 partial(inference_nets.gaussian_proj, 
                                                         d=d)))
 
-
+    def backwd_step(self, key, current_sample, backwd_params):
+        return self.backwd_kernel.sample(key, current_sample, backwd_params)
+    
     def log_fwd_potential(self, x_0, x_1, backwd_params):
         return self._log_fwd_potential(x_0, x_1, backwd_params)
             
@@ -199,7 +201,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
         return jnp.mean(samples, axis=0), jnp.var(samples, axis=0)
     
-        
     def get_random_params(self, key, params_to_set=None):
 
         key_prior, key_state, key_filt, key_backwd = random.split(key, 4)
@@ -236,7 +237,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
             params = self.set_params(params, params_to_set)
         return params  
         
-
     def frozen_prior(self):
         return tuple([jnp.zeros(shape=[size]) for size in self.update_layers])
 
@@ -264,7 +264,17 @@ class NeuralBackwardSmoother(BackwardSmoother):
                                 formatted_transition, 
                                 params.filt)
         
-
+    def smoothing_means_tm1_t(self, filt_params, backwd_params, num_samples, key):
+        key_t, key_tm1 = jax.random.split(key, 2)
+        samples_t = jax.vmap(self.filt_dist.sample, in_axes=(0,None))(jax.random.split(key_t, 
+                                                                                       num_samples), 
+                                                                    filt_params)
+        samples_tm1 = jax.vmap(self.backwd_kernel.sample, in_axes=(0,0,None))(jax.random.split(key_tm1, num_samples), 
+                                                                              samples_t, 
+                                                                              backwd_params)
+        
+        return jnp.mean(samples_tm1, axis=0), filt_params.mean
+    
     def init_state(self, obs, params):
         out, init_state = self._state_net.apply(params.state, obs, params.prior)
         return State(out=out, hidden=init_state)
@@ -275,7 +285,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
 
     def filt_params_from_state(self, state, params):
         return self._filt_net.apply(params.filt, state)
-
 
     def backwd_params_from_states(self, states, params):
         filt_params_0 = self.filt_params_from_state(states[0], params)
@@ -380,7 +389,6 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
             args.update_layers, 
             args.anisotropic)
     
-
     @classmethod
     def from_p(cls, p:HMM, args):
         obj = cls.from_args(args)
@@ -411,7 +419,6 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
         LinearBackwardSmoother.__init__(self, 
                                         state_dim)
         
-    
     def init_state(self, obs, params):
         out = self._net.apply(params.net, obs)
         return Gaussian.Params(eta1=out[0] + params.prior.eta1, eta2=out[1] + params.prior.eta2)
