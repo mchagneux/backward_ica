@@ -294,7 +294,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
     def print_num_params(self):
         params = self.get_random_params(random.PRNGKey(0))
         print('Num params:', len(ravel_pytree(params)[0]))
-    
         
     def empty_state(self):
         params = self.format_params(self.get_random_params(jax.random.PRNGKey(0)))
