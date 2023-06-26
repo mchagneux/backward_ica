@@ -411,18 +411,23 @@ class SVITrainer:
                         opt_state), \
                         (elbo, aux, new_carry)
             
-            (_, params, opt_state), (elbos, aux, inner_steps_carries) = jax.lax.scan(inner_step, 
+            (_, new_params, opt_state), (elbos, aux, inner_steps_carries) = jax.lax.scan(inner_step, 
                                                         init=(elbo_carry, params, opt_state), 
                                                         xs=jax.random.split(key, 
                                                                             self.num_grad_steps))
 
 
             elbo_carry = tree_get_idx(-1, inner_steps_carries)
+            
             if self.true_online:
                 params_q_t, params_q_tm1_t = tree_get_idx(-1, aux)
                 aux = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
             else: 
                 aux = None
+
+            if not isinstance(self.q, NonAmortizedBackwardSmoother):
+                params = new_params
+            
             return (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo_value)
         
 
@@ -440,7 +445,7 @@ class SVITrainer:
             
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
 
-                (new_params, opt_state, elbo_carry), (elbos, aux, monitor_elbo) = step(
+                (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo) = step(
                                                                                 key_step, 
                                                                                 strided_ys[timesteps], 
                                                                                 ys[timesteps],
@@ -448,8 +453,7 @@ class SVITrainer:
                                                                                 timesteps, 
                                                                                 params, 
                                                                                 opt_state)
-                # if not ('nonamortized' in self.elbo_mode):
-                params = new_params
+
                 if self.true_online: 
                     t = timesteps[-1]
                     x_t = xs[t]

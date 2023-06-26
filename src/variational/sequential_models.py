@@ -35,7 +35,6 @@ class NeuralBackwardSmoother(BackwardSmoother):
         def tree_unflatten(cls, aux_data, children):
             return cls(*children)
 
-    
     @classmethod
     def with_linear_gaussian_transition_kernel(cls, args):
 
@@ -298,6 +297,138 @@ class NeuralBackwardSmoother(BackwardSmoother):
     def empty_state(self):
         params = self.format_params(self.get_random_params(jax.random.PRNGKey(0)))
         return self.init_state(jnp.empty((self.obs_dim,)), params)
+
+class NonAmortizedBackwardSmoother(BackwardSmoother):
+
+    @register_pytree_node_class
+    @dataclass(init=True)
+    class Params:
+        backwd:Any
+        filt:Any
+
+        def tree_flatten(self):
+            return ((self.backwd, self.filt), None)
+
+        @classmethod
+        def tree_unflatten(cls, aux_data, children):
+            return cls(*children)
+        
+
+    def __init__(self, state_dim, obs_dim, backwd_layers):
+        
+        self.state_dim = state_dim
+        self.obs_dim = obs_dim
+
+        def _backwd_map(aux, x_1, state_dim):
+            filt_params_0 = aux[0]
+            filt_params_1 = aux[1]
+            eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
+            eta1_potential, eta2_potential = inference_nets.backwd_net(filt_params_0.vec, x_1, backwd_layers, state_dim)
+            eta1_backwd, eta2_backwd = eta1_filt + eta1_potential, eta2_filt + eta2_potential 
+            out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
+
+
+            # eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
+            # mu_0 = aux[0].mean
+            # mu_1 = aux[1].mean
+            # eta1_potential, eta2_potential = inference_nets.backwd_net(aux[0].vec, x_1-mu_1, backwd_layers, state_dim)
+            # # eta1_backwd, eta2_backwd = eta1_potential + eta1_filt, eta2_potential + eta2_filt
+            # eta1_backwd, eta2_backwd = eta1_filt + eta1_potential - 2 * eta2_potential.T @ mu_0, eta2_filt + eta2_potential 
+            # out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
+
+            return (out_params.mean, out_params.scale), (eta1_potential, eta2_potential)
+                        
+
+        dummy_gaussian_params = Gaussian.Params(eta1=jnp.empty((self.state_dim,)),
+                                                eta2=jnp.eye(self.state_dim))
+        backwd_kernel_def = {
+                        'map_type':'nonlinear',
+                        'map_info' : {
+                                    'homogeneous': False, 
+                                    'dummy_varying_params':
+                                            (dummy_gaussian_params, dummy_gaussian_params)
+                                            },
+                        'map': _backwd_map}
+        
+
+        def _log_fwd_potential(x_0, x_1, backwd_params):
+
+            params, aux = backwd_params
+
+            _ , (eta1, eta2) = self.backwd_kernel.nonlinear_map_apply(params, aux, x_1)
+            
+            return x_0.T @ eta2 @ x_0 + eta1.T @ x_0
+        
+        def backwd_params_from_filt_params(filt_params_0, filt_params_1, params):
+            return params.backwd, (filt_params_0, filt_params_1)
+
+        super().__init__(
+                filt_dist=Gaussian,
+                backwd_kernel=ParametricKernel(state_dim, state_dim, backwd_kernel_def))
+            
+        self._log_fwd_potential =  _log_fwd_potential
+            
+        self._backwd_params_from_filt_params = backwd_params_from_filt_params
+
+    def backwd_params_from_states(self, states, params):
+        filt_params_0 = self.filt_params_from_state(states[0], params)
+        filt_params_1 = self.filt_params_from_state(states[1], params)
+        return self._backwd_params_from_filt_params(filt_params_0, filt_params_1, params)
+    
+    def backwd_step(self, key, current_sample, backwd_params):
+        return self.backwd_kernel.sample(key, current_sample, backwd_params)
+    
+    def log_fwd_potential(self, x_0, x_1, backwd_params):
+        return self._log_fwd_potential(x_0, x_1, backwd_params)
+    
+    def filt_params_from_state(self, state, params):
+        return state
+    
+    def init_state(self, obs, params):
+        return params.filt
+    
+    def new_state(self, obs, prev_state, params):
+        return params.filt
+    
+    def empty_state(self):
+        mu = jnp.empty((self.state_dim,))
+        Sigma = jnp.empty((self.state_dim, self.state_dim))
+                    
+        return Gaussian.Params(mean=mu, scale=Scale(cov=Sigma))
+    
+    def smoothing_means_tm1_t(self, filt_params, backwd_params, num_samples, key):
+        key_t, key_tm1 = jax.random.split(key, 2)
+        samples_t = jax.vmap(self.filt_dist.sample, in_axes=(0,None))(jax.random.split(key_t, 
+                                                                                        num_samples), 
+                                                                    filt_params)
+        samples_tm1 = jax.vmap(self.backwd_kernel.sample, in_axes=(0,0,None))(jax.random.split(key_tm1, num_samples), 
+                                                                                samples_t, 
+                                                                                backwd_params)
+        
+        return jnp.mean(samples_tm1, axis=0), filt_params.mean
+    
+    def get_random_params(self, key, params_to_set=None):
+        key_filt, key_backwd = jax.random.split(key, 2)
+        backwd_params = self.backwd_kernel.get_random_params(key_backwd)
+        filt_params = self.filt_dist.get_random_params(key_filt, self.state_dim)
+        return NonAmortizedBackwardSmoother.Params(backwd=backwd_params, filt=filt_params)
+    
+    def format_params(self, params):
+        return NonAmortizedBackwardSmoother.Params(backwd=params.backwd, 
+                                                   filt=self.filt_dist.format_params(params.filt))
+
+    def smooth_seq(self, *args):
+        pass 
+
+    def compute_marginals(self, *args):
+        pass 
+
+    def get_states(self, t, base_state, ys_for_bptt, formatted_params):
+        return base_state, (base_state, formatted_params.filt)
+    
+    def print_num_params(self):
+        return print('Num params:', len(ravel_pytree(self.get_random_params(jax.random.PRNGKey(0)))[0]))
+
 
 @register_pytree_node_class
 @dataclass(init=True)

@@ -110,7 +110,6 @@ class OnlineVariationalAdditiveSmoothing:
 
 
 
-
 def init_carry(unformatted_params, **kwargs):
 
 

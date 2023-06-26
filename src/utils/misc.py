@@ -332,6 +332,10 @@ def get_defaults(args):
         else: 
             args.backwd_layers = 0
 
+    if 'nonamortized' in args.model:
+        args.backwd_layers = (int(args.model.split(',')[-1]),)
+        
+
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
 
 

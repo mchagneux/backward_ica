@@ -1,5 +1,5 @@
 from src.stats.hmm import LinearGaussianHMM
-from src.variational.sequential_models import NeuralBackwardSmoother, JohnsonBackward
+from src.variational.sequential_models import NeuralBackwardSmoother, JohnsonBackward, NonAmortizedBackwardSmoother
 
 def get_variational_model(args, p=None, key_for_random_params=None):
 
@@ -25,7 +25,10 @@ def get_variational_model(args, p=None, key_for_random_params=None):
                 update_layers=args.update_layers)
 
     elif 'johnson_backward' in args.model:
-            q = JohnsonBackward.from_args(args)
+        q = JohnsonBackward.from_args(args)
+
+    elif 'nonamortized' in args.model:
+        q = NonAmortizedBackwardSmoother(args.state_dim, args.obs_dim, args.backwd_layers)
 
 
     if key_for_random_params is not None:
