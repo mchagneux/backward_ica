@@ -77,6 +77,14 @@ class SVITrainer:
                                          net=params)
                 def extract_params(params):
                     return params.net
+            elif isinstance(q, NeuralBackwardSmoother):
+                def build_params(params):
+                    return NeuralBackwardSmoother.Params(prior=params[0], 
+                                                         backwd=theta_star.transition,
+                                                         state=params[1],
+                                                         filt=params[2])
+                def extract_params(params):
+                    return params.prior, params.state, params.filt
         else:
             def build_params(params):
                 return params 
@@ -432,7 +440,7 @@ class SVITrainer:
             
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
 
-                (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo) = step(
+                (new_params, opt_state, elbo_carry), (elbos, aux, monitor_elbo) = step(
                                                                                 key_step, 
                                                                                 strided_ys[timesteps], 
                                                                                 ys[timesteps],
@@ -441,7 +449,7 @@ class SVITrainer:
                                                                                 params, 
                                                                                 opt_state)
                 # if not ('nonamortized' in self.elbo_mode):
-                # params = new_params
+                params = new_params
                 if self.true_online: 
                     t = timesteps[-1]
                     x_t = xs[t]

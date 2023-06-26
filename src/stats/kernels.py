@@ -226,9 +226,11 @@ class ParametricKernel:
 class NonParametricKernel:
     
     Params = namedtuple('NonParametricKernelParams', ['prior', 'potential'])
+
     def __init__(self, prior_dist, potential_fn):
         self.prior_dist:Gaussian = prior_dist 
         self.potential_init, self.potential_apply = hk.without_apply_rng(hk.transform(potential_fn))
+
         def _unnorm_logpdf(x, state, params:NonParametricKernel.Params):
             return self.prior_dist.logpdf(x, params.prior) + self.potential_apply(params.potential, state, x)
         
@@ -237,14 +239,12 @@ class NonParametricKernel:
     def sample(self, x, params):
         raise NotImplementedError 
     
-    def logpdf(self, y, x, params, samples=None):
-        if samples is not None: 
-            log_cst = jax.scipy.special.logsumexp(jax.vmap(lambda x, y:
-                            self.potential_apply(params.potential, x, y), 
-                                                in_axes=(0, None))(samples, x))
-            return self.potential_apply(params.potential, x, y) - log_cst 
-        else: 
-            raise NotImplementedError
+    def log_norm_cst(self, x, params, samples=None):
+        log_cst = jax.scipy.special.logsumexp(jax.vmap(lambda x, y:
+                        self.potential_apply(params.potential, x, y), 
+                                            in_axes=(0, None))(samples, x))
+        return log_cst
+
 
     def pdf(self, y, x, params, samples=None):
         return jnp.exp(self.logpdf(y, x, params, samples))
