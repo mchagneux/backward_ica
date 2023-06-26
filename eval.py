@@ -12,8 +12,8 @@ from src.stats.hmm import get_generative_model, LinearGaussianHMM
 from src.utils.misc import *
 import os 
 
-path = 'experiments/p_linear/2023_06_22__09_43_08'
-models = ['linear.10.sgd,1e-3,cst.true_online,100.score,paris,variance_reduction,bptt_depth_1']
+path = 'experiments/p_chaotic_rnn/2023_06_26__12_23_27'
+models = ['johnson_backward,200.5.adam,1e-2,cst.reset,500,1.score,paris,variance_reduction,bptt_depth_2']
 num_smoothing_samples = 1000
 plot = True
 filt = False

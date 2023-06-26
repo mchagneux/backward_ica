@@ -410,10 +410,12 @@ class SVITrainer:
 
 
             elbo_carry = tree_get_idx(-1, inner_steps_carries)
-            params_q_t, params_q_tm1_t = tree_get_idx(-1, aux)
-            means_tm1, means_t = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
-
-            return (params, opt_state, elbo_carry), (elbos, (means_tm1, means_t), monitor_elbo_value)
+            if self.true_online:
+                params_q_t, params_q_tm1_t = tree_get_idx(-1, aux)
+                aux = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
+            else: 
+                aux = None
+            return (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo_value)
         
 
         absolute_step_nb = 0
@@ -510,17 +512,11 @@ class SVITrainer:
                 time0 = time()
                 
 
-            burnin = 0
-            if self.true_online: 
-                best_step_for_fit = burnin + jnp.nanargmax(jnp.array(elbos[burnin:]))
-            else: 
-                best_step_for_fit = jnp.nanargmax(jnp.array(elbos))
+            burnin = int(0.75*self.num_epochs)
+            best_step_for_fit = burnin + jnp.nanargmax(jnp.array(elbos[burnin:]))
+
 
             if self.true_online:
-                # for t, (filt_params, backwd_params) in zip(params_q_t, params_q_tm1_t):
-                #     means_t_list.append(means_t)
-                #     if t > 0:
-                #         means_tm1_list.append(means_tm1)
                 jnp.save(os.path.join(log_dir, 'x_tm1.npy'), jnp.array(means_tm1)[1:])
                 jnp.save(os.path.join(log_dir, 'x_t.npy'), jnp.array(means_t))
 

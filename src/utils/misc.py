@@ -303,7 +303,7 @@ def get_defaults(args):
         args.emission_bias = False
     else:
         args.transition_matrix_conditionning = 'diagonal'
-        args.range_transition_map_params = [0.5, 0.6]
+        args.range_transition_map_params = [0.98, 0.99]
         args.transition_bias = False
         args.emission_bias = False
 
