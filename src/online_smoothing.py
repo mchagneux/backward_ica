@@ -587,7 +587,6 @@ def postprocess_elbo_score_gradients(carry,
 
         return elbo, grad
  
-
 def init_carry_elbo_score_gradients_2(unformatted_params, **kwargs):
 
     num_samples = kwargs['num_samples']
@@ -808,11 +807,36 @@ def update_elbo_score_gradients_2(carry_tm1, input_t, **kwargs):
                                                         key_new_sample)
             log_w_t = log_q_tm1_t - log_q_tm1
 
-            w_t = normalizer(log_w_t)
-            backwd_indices = jax.random.choice(key_paris, 
-                                    a=num_samples, 
-                                    p=normalizer(log_w_t), 
-                                    shape=(2,))
+
+            if mcmc:
+                backwd_sampler = blackjax.irmh(logprob_fn=lambda i: log_w_t[i], 
+                                            proposal_distribution=lambda key: jax.random.choice(key, a=num_samples))
+
+
+                def _backwd_sample_step(state, x):
+                    step_nb, key = x
+
+                    def _init(state, key):
+                        return backwd_sampler.init(jax.random.choice(key, a=num_samples))
+                    def _step(state, key):
+                        return backwd_sampler.step(key, state)[0]
+                    
+                    new_state = jax.lax.cond(step_nb > 0, _step, _init, state, key)
+                    return new_state, new_state.position
+                    
+                backwd_indices = jax.lax.scan(_backwd_sample_step, 
+                                            init=backwd_sampler.init(0), 
+                                            xs=(jnp.arange(3), 
+                                                jax.random.split(key_paris, 3)))[1][1:]
+                
+            else:
+                w_t = normalizer(log_w_t)
+
+                backwd_indices = jax.random.choice(key_paris, 
+                                                   a=num_samples, 
+                                                   p=normalizer(log_w_t), 
+                                                   shape=(2,))
+                
             
             sub_x_tm1 = x_tm1[backwd_indices]
             sub_H_tm1 = H_tm1[backwd_indices]
