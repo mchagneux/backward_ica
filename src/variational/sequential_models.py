@@ -16,6 +16,7 @@ import src.variational.inference_nets as inference_nets
 from collections import namedtuple
 from jax.flatten_util import ravel_pytree
 
+
 class NeuralBackwardSmoother(BackwardSmoother):
 
     @register_pytree_node_class
@@ -319,6 +320,7 @@ class NonAmortizedBackwardSmoother(BackwardSmoother):
         self.state_dim = state_dim
         self.obs_dim = obs_dim
 
+        
         def _backwd_map(aux, x_1, state_dim):
             filt_params_0 = aux[0]
             filt_params_1 = aux[1]
@@ -338,7 +340,39 @@ class NonAmortizedBackwardSmoother(BackwardSmoother):
 
             return (out_params.mean, out_params.scale), (eta1_potential, eta2_potential)
                         
+        # class BackwdMap(hk.Module):
+        #     def __init__(self, state_dim, backwd_layers):
+        #         super().__init__()
+        #         self.state_dim = state_dim
+        #         self.backwd_layers = backwd_layers 
+        #     def __call__(self, x_1):
+        #         mean = inference_nets.nonamortized_backwd_net_for_mean(x_1, self.backwd_layers, self.state_dim)
+        #         cov_chol_diag = hk.get_parameter('cov_chol', shape=(self.state_dim,), init=jnp.ones)
+        #         mean, scale = mean, Scale.format({'cov_chol':cov_chol_diag})
+        #         return (mean, scale), (mean, scale)
 
+        # def _backwd_map(aux, x_1, state_dim):
+        #     net = BackwdMap(state_dim, backwd_layers)
+        #     return net(x_1)
+
+        # def _backwd_map(aux, x_1, state_dim):
+
+        #     mean = inference_nets.nonamortized_backwd_net_for_mean(x_1, backwd_layers, state_dim)
+        #     cov_chol_diag = hk.get_parameter('cov_chol', shape=(self.state_dim,), init=jnp.ones)
+
+        #     out_params = Gaussian.Params(mean=mean, scale=Scale.format({'cov_chol':cov_chol_diag}))
+
+
+        #     # eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
+        #     # mu_0 = aux[0].mean
+        #     # mu_1 = aux[1].mean
+        #     # eta1_potential, eta2_potential = inference_nets.backwd_net(aux[0].vec, x_1-mu_1, backwd_layers, state_dim)
+        #     # # eta1_backwd, eta2_backwd = eta1_potential + eta1_filt, eta2_potential + eta2_filt
+        #     # eta1_backwd, eta2_backwd = eta1_filt + eta1_potential - 2 * eta2_potential.T @ mu_0, eta2_filt + eta2_potential 
+        #     # out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
+
+        #     return (out_params.mean, out_params.scale), (out_params.mean, out_params.scale)
+        
         dummy_gaussian_params = Gaussian.Params(eta1=jnp.empty((self.state_dim,)),
                                                 eta2=jnp.eye(self.state_dim))
         backwd_kernel_def = {

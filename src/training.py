@@ -371,7 +371,7 @@ class SVITrainer:
         
         @jax.jit
         def step(key, strided_ys_on_timesteps, ys_on_timesteps, elbo_carry, timesteps, params, opt_state):
-                
+            
             if self.true_online:
                 opt_state = self.optimizer.init(params)
 #
@@ -418,7 +418,7 @@ class SVITrainer:
 
 
             elbo_carry = tree_get_idx(-1, inner_steps_carries)
-            
+
             if self.true_online:
                 params_q_t, params_q_tm1_t = tree_get_idx(-1, aux)
                 aux = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
@@ -427,6 +427,8 @@ class SVITrainer:
 
             if not isinstance(self.q, NonAmortizedBackwardSmoother):
                 params = new_params
+            else: 
+                params = self.q.get_random_params(key)
             
             return (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo_value)
         

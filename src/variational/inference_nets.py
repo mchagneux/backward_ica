@@ -55,6 +55,25 @@ def backwd_net(aux, obs, layers, state_dim):
 
     return eta1, eta2
 
+def nonamortized_backwd_net_for_mean(obs, layers, state_dim):
+    d = state_dim
+
+    
+    net = hk.nets.MLP((*layers, d),
+        w_init=hk.initializers.VarianceScaling(1.0, 'fan_avg', 'uniform'),
+        b_init=hk.initializers.RandomNormal(),
+        activate_final=True)
+    
+
+
+    # eta_2_chol = jnp.diagonal(nn.softplus(out2))
+    # eta2 = -(eta_2_chol @ eta_2_chol.T + jnp.eye(d))
+    # eta2 = -jnp.diag(nn.softplus(out2))
+
+    return net(obs)
+
+
+
 def johnson_anisotropic(obs, layers, state_dim):
 
 
