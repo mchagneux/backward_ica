@@ -8,7 +8,7 @@ import src.variational as variational
 import src.stats as stats
 from src.training import SVITrainer, define_frozen_tree
 jax.config.update('jax_disable_jit', False)
-jax.config.update('jax_platform_name', 'cpu')
+# jax.config.update('jax_platform_name', 'cpu')
 import tensorflow as tf
 # tf.config.set_visible_devices([], 'GPU')
 

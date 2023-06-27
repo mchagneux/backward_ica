@@ -425,11 +425,11 @@ class SVITrainer:
             else: 
                 aux = None
 
-            if not isinstance(self.q, NonAmortizedBackwardSmoother):
-                params = new_params
-            else: 
-                params = self.q.get_random_params(key)
-            
+            # if not isinstance(self.q, NonAmortizedBackwardSmoother):
+            #     params = new_params
+            # else: 
+            #     params = self.q.get_random_params(key)
+            params = new_params
             return (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo_value)
         
 
