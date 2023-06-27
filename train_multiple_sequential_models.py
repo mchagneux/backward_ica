@@ -5,7 +5,7 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['nonamortized,100.100.adam,1e-2,cst.true_online,500.score,truncated,mcmc,variance_reduction,paris,bptt_depth_1']
+settings_list = ['nonamortized,100.100.adam,1e-2,cst.true_online,500.score,truncated,paris,variance_reduction,bptt_depth_1.gpu']
 num_fits = 1
 num_epochs = 1
 dims = '5 5'

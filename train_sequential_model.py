@@ -8,7 +8,6 @@ import src.variational as variational
 import src.stats as stats
 from src.training import SVITrainer, define_frozen_tree
 jax.config.update('jax_disable_jit', False)
-# jax.config.update('jax_platform_name', 'cpu')
 import tensorflow as tf
 # tf.config.set_visible_devices([], 'GPU')
 
@@ -88,7 +87,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=1)
     parser.add_argument('--store_every', type=int, default=0)
-    parser.add_argument('--seed', type=int, default=1)
+    parser.add_argument('--seed', type=int, default=0)
 
     args = parser.parse_args()
 
@@ -98,7 +97,11 @@ if __name__ == '__main__':
     args.save_dir = os.path.join(args.exp_dir, args.settings)
     os.makedirs(args.save_dir, exist_ok=True)
     
-    args.model, num_samples, optim, args.training_mode, args.elbo_mode = args.settings.split('.')
+    args.model, num_samples, optim, args.training_mode, args.elbo_mode, args.device = args.settings.split('.')
+
+    if not args.device == 'gpu': 
+        jax.config.update('jax_platform_name', 'cpu')
+        
     args.num_samples = int(num_samples)
     args.optimizer, learning_rate, args.optim_options = optim.split(',')
     args.learning_rate = float(learning_rate)
