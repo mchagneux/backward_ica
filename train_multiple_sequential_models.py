@@ -5,8 +5,8 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['johnson_backward,200.20.adam,1e-5,cst.true_online,1.monitor,score,paris,variance_reduction,bptt_depth_2.cpu',
-                 'johnson_backward,200.20.adam,1e-3,cst.reset,500,1.monitor,autodiff_on_backward.cpu']
+settings_list = ['johnson_backward,200.100.adam,1e-4,cst.accumulate,50,1.monitor,score,paris,variance_reduction,bptt_depth_2.cpu',
+                 'johnson_backward,200.100.adam,1e-3,cst.reset,500,1.monitor,autodiff_on_backward.cpu']
 num_fits = 1
 num_epochs = 100
 dims = '5 5'
