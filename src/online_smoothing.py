@@ -961,8 +961,18 @@ def update_elbo_score_gradients_4(carry_tm1, input_t, **kwargs):
     H_tm1 =  stats_tm1['H']
 
 
-
     formatted_phi, formatting_vjp = jax.vjp(q.format_params, unformatted_phi_t)
+
+    s_t, state_vjp = jax.vjp(lambda formatted_phi:q.new_state(y_t, base_s_tm1, formatted_phi), formatted_phi)
+
+    def _filt_params(formatted_phi):
+        return q.filt_params_from_state(s_t, formatted_phi)
+    
+    params_q_t, params_q_t_vjp = jax.vjp(_filt_params, formatted_phi)
+    
+    def _x(params_q_t, key_t):
+        return q.filt_dist.sample(key_t, params_q_t)
+    
     
 
 
