@@ -1147,7 +1147,6 @@ def postprocess_elbo_score_gradients_4(carry,
         return elbo, grad
 
 
-
 OnlineELBO = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoothing(          
                                                     p, 
                                                     q,

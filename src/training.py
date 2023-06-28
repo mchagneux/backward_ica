@@ -299,7 +299,7 @@ class SVITrainer:
                         grad_tm1 = self.elbo.postprocess(elbo_carry)[1]
                         neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
                     else: 
-                        neg_grad = tree_map(lambda x: -x / (t+1), grad_t)
+                        neg_grad = tree_map(lambda x: -x, grad_t)
 
                     elbo = elbo_t / (t+1)
                     elbo_carry = new_carry
@@ -538,7 +538,7 @@ class SVITrainer:
                                                                                     log_writer_monitor)):
                 params.append(params_at_step)
                 elbos.append(elbo_at_step)
-                if 'true_online' in self.elbo_mode:
+                if 'truncated' in self.elbo_mode:
                     means_tm1.append(aux_at_step[0])
                     means_t.append(aux_at_step[1])
                 times.append(time() - time0)
