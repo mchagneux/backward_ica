@@ -12,9 +12,9 @@ from src.stats.hmm import get_generative_model, LinearGaussianHMM
 from src.utils.misc import *
 import os 
 
-path = 'experiments/p_chaotic_rnn/2023_06_27__10_29_35'
-models = ['data/crnn/2023-06-26_19-45-59_Train_run',
-          'johnson_backward,100.100.adam,1e-3,cst.true_online,50.score,truncated,variance_reduction,paris,bptt_depth_1']
+path = 'experiments/p_chaotic_rnn/2023_06_28__13_59_01'
+models = ['data/crnn/2023-06-28_12-39-46_Train_run',
+          'nonamortized,100.100.adam,1e-2,cst.true_online,500.score,truncated,paris,variance_reduction,bptt_depth_1.gpu']
 num_smoothing_samples = 1000
 plot = True
 filt = False

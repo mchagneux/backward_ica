@@ -299,7 +299,7 @@ class SVITrainer:
                         grad_tm1 = self.elbo.postprocess(elbo_carry)[1]
                         neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
                     else: 
-                        neg_grad = tree_map(lambda x: -x, grad_t)
+                        neg_grad = tree_map(lambda x: -x / (t+1), grad_t)
 
                     elbo = elbo_t / (t+1)
                     elbo_carry = new_carry
@@ -370,22 +370,13 @@ class SVITrainer:
                         self.num_epochs)
         
         @jax.jit
-        def step(key, strided_ys_on_timesteps, ys_on_timesteps, elbo_carry, timesteps, params, opt_state):
+        def step(key, strided_ys_on_timesteps, elbo_carry, timesteps, params, opt_state):
             
-            if self.true_online:
+            if self.num_grad_steps > 1:
                 opt_state = self.optimizer.init(params)
 #
-            if self.monitor:
-                monitor_elbo_value = self.monitor_elbo(key, 
-                                                       ys_on_timesteps, 
-                                                       len(ys_on_timesteps)-1, 
-                                                       self.formatted_theta_star, 
-                                                       self.q.format_params(self._build_params(params)))[0] / len(ys_on_timesteps)
-            else:
-                monitor_elbo_value = None
-            
 
-
+    
             def inner_step(carry, x):
                 inner_carry, params, opt_state = carry
                 key = x
@@ -419,20 +410,29 @@ class SVITrainer:
 
             elbo_carry = tree_get_idx(-1, inner_steps_carries)
 
-            if self.true_online:
+            if self.num_grad_steps > 1:
                 params_q_t, params_q_tm1_t = tree_get_idx(-1, aux)
                 aux = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
             else: 
                 aux = None
 
-            if not isinstance(self.q, NonAmortizedBackwardSmoother):
-                params = new_params
-            return (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo_value)
+            # if not isinstance(self.q, NonAmortizedBackwardSmoother):
+            params = new_params
+            return (params, opt_state, elbo_carry), (elbos, aux)
         
 
         absolute_step_nb = 0
 
         # jitted_step = jax.jit(step)
+
+        if self.monitor: 
+            monitor_elbo = jax.jit(lambda key, ys, T, formatted_theta_star, phi:self.monitor_elbo(key, 
+                                                                                                  ys, 
+                                                                                                  T, 
+                                                                                                  formatted_theta_star, 
+                                                                                                  self.q.format_params(phi))[0] / len(ys))
+        else: 
+            monitor_elbo = lambda *args: 0.0
 
         for epoch_nb, keys_epoch in enumerate(keys):
             elbo_carry = self.init_carry
@@ -452,21 +452,20 @@ class SVITrainer:
                 #                         params, 
                 #                         opt_state).compile().as_text())
                     
-                (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo) = step(
-                                                                                key_step, 
-                                                                                strided_ys[timesteps], 
-                                                                                ys[timesteps],
-                                                                                elbo_carry, 
-                                                                                timesteps, 
-                                                                                params, 
-                                                                                opt_state)
-                
+                (params, opt_state, elbo_carry), (elbos, aux) = step(
+                                                                    key_step, 
+                                                                    strided_ys[timesteps], 
+                                                                    elbo_carry, 
+                                                                    timesteps, 
+                                                                    params, 
+                                                                    opt_state)
+    
 
 
                 
 
 
-                if self.true_online: 
+                if self.num_grad_steps > 1: 
                     t = timesteps[-1]
                     x_t = xs[t]
                     if t > 0: 
@@ -481,19 +480,29 @@ class SVITrainer:
                                             jnp.sqrt(jnp.mean((x_tm1 - aux[0])**2)),
                                             absolute_step_nb)
 
-                with log_writer.as_default():
-                    for inner_step_nb, elbo in enumerate(elbos): 
-                        tf.summary.scalar('ELBO', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                if self.online_batch_size != seq_length:
+                    with log_writer.as_default():
+                        for inner_step_nb, elbo in enumerate(elbos): 
+                            tf.summary.scalar('ELBO at inner step', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)
 
-                    
 
-                if self.monitor: 
-                    with log_writer_monitor.as_default():
-                        tf.summary.scalar('ELBO', monitor_elbo, absolute_step_nb)
+
 
                 absolute_step_nb += 1 
 
-                yield params, elbo, aux
+                yield params, elbos[-1], aux
+
+
+
+
+            if self.monitor: 
+                monitor_elbo_value = monitor_elbo(key_step, ys, len(ys)-1, self.formatted_theta_star, params)
+
+                with log_writer.as_default():
+                    tf.summary.scalar('Unbiased ELBO at epoch', monitor_elbo_value, epoch_nb)
+
+            with log_writer.as_default():
+                tf.summary.scalar('ELBO at epoch', elbos[-1], epoch_nb)
 
     def multi_fit(self, 
                   key, 
@@ -529,7 +538,7 @@ class SVITrainer:
                                                                                     log_writer_monitor)):
                 params.append(params_at_step)
                 elbos.append(elbo_at_step)
-                if self.true_online:
+                if 'true_online' in self.elbo_mode:
                     means_tm1.append(aux_at_step[0])
                     means_t.append(aux_at_step[1])
                 times.append(time() - time0)
