@@ -432,9 +432,8 @@ class SVITrainer:
 
         absolute_step_nb = 0
 
-        
+        # jitted_step = jax.jit(step)
 
-        # init_params = params
         for epoch_nb, keys_epoch in enumerate(keys):
             elbo_carry = self.init_carry
             strided_ys = self.elbo.preprocess(ys)
@@ -443,7 +442,16 @@ class SVITrainer:
 
             
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
-
+                # if step_nb > 1: 
+                #     with open('jitted_step.txt', 'w') as f: 
+                #         f.write(jitted_step.lower(key_step, 
+                #                         strided_ys[timesteps], 
+                #                         ys[timesteps],
+                #                         elbo_carry, 
+                #                         timesteps, 
+                #                         params, 
+                #                         opt_state).compile().as_text())
+                    
                 (params, opt_state, elbo_carry), (elbos, aux, monitor_elbo) = step(
                                                                                 key_step, 
                                                                                 strided_ys[timesteps], 
@@ -452,6 +460,11 @@ class SVITrainer:
                                                                                 timesteps, 
                                                                                 params, 
                                                                                 opt_state)
+                
+
+
+                
+
 
                 if self.true_online: 
                     t = timesteps[-1]
