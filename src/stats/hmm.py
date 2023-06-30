@@ -157,7 +157,7 @@ class HMM:
             elif k == 'default_emission_matrix' and hasattr(new_params.emission.map, 'w'):
                 new_params.emission.map.w = v * jnp.ones_like(params.emission.map.w)
             elif (k == 'default_transition_matrix') and (self.transition_kernel.map_type != 'linear'):
-                if (type(v) == str): new_params.transition.map['linear']['w'] = jnp.load(v).astype(jnp.float64)
+                if (type(v) == str): new_params.transition.map['linear']['w'] = jnp.load(v).astype(jnp.float64).T
         return new_params
 
 class LinearGaussianHMM(HMM, LinearBackwardSmoother):

@@ -109,7 +109,10 @@ class SVITrainer:
             self.online_difference = 'difference' in training_mode
             self.num_grad_steps = int(training_mode.split(',')[1])
             true_online = True
-            self.online_batch_size = 1
+            if 'recompute' in training_mode:
+                self.online_batch_size = 2
+            else: 
+                self.online_batch_size = 1
             self.reset = False
                 
         else: 
@@ -128,11 +131,16 @@ class SVITrainer:
         if not self.training_mode == 'closed_form':
             self.elbo_options = {}
             if 'score' in elbo_mode: 
-                for option in ['paris', 'variance_reduction', 'mcmc']:
+                for option in ['paris', 'mcmc']:
                     self.elbo_options[option] = True if option in elbo_mode else False
 
                 if 'bptt_depth' in elbo_mode: 
                     self.elbo_options['bptt_depth'] = int(elbo_mode.split('bptt_depth')[1].split('_')[1])
+                
+                if 'unnormalized' in elbo_mode:
+                    self.elbo_options['normalizer'] = lambda x: jnp.exp(x) / x
+                else:
+                    self.elbo_options['normalizer'] = exp_and_normalize
 
                 self.elbo_options['true_online'] = True if self.true_online else False
         
@@ -277,8 +285,6 @@ class SVITrainer:
             else: 
 
                 if self.true_online: 
-                    t = timesteps[0]
-                    strided_ys = strided_ys[0]
                     def _step(carry, x):
                         key, t, strided_y = x
 
@@ -291,21 +297,31 @@ class SVITrainer:
                         carry['theta'] = self.formatted_theta_star
                         new_carry, aux = self.elbo.step(carry, 
                                                     input_t)
-                        return new_carry, aux
+                        return new_carry, (new_carry, aux)
+                    
+                    if 'recompute' in self.training_mode:
+                        keys = jax.random.split(key, len(timesteps))
 
-                    new_carry, aux = _step(elbo_carry, (key, t, strided_ys))
+                        _ , (carries, aux) = jax.lax.scan(_step, 
+                                                          init=elbo_carry, 
+                                                          xs=(keys, timesteps, strided_ys),
+                                                          unroll=len(timesteps))
+                        elbo_carry = tree_get_idx(0, carries)
+                        new_carry = tree_get_idx(-1, carries)
+                    else: 
+                        new_carry, (_, aux) = _step(elbo_carry, (key, timesteps[-1], strided_ys[-1]))
+                        
                     elbo_t, grad_t = self.elbo.postprocess(new_carry)
                     if self.online_difference:
                         grad_tm1 = self.elbo.postprocess(elbo_carry)[1]
                         neg_grad = tree_map(lambda x,y: -(x-y), grad_t, grad_tm1)
                     else: 
-                        neg_grad = tree_map(lambda x: -x, grad_t)
+                        neg_grad = tree_map(lambda x: -x / (timesteps[-1] + 1), grad_t)
 
-                    elbo = elbo_t / (t+1)
-                    elbo_carry = new_carry
+                    elbo = elbo_t / (timesteps[-1]+1)
+                    if not 'recompute' in self.training_mode:
+                        elbo_carry = new_carry
                 else: 
-                    keys = jax.random.split(key, len(timesteps))
-
                     def _step(carry, x):
                         key, t, ys_bptt = x
                         input_t = {'t':t, 
@@ -339,9 +355,14 @@ class SVITrainer:
         self.update = update
 
     def timesteps(self, seq_length, key):
+
         all_timesteps = jnp.arange(0, seq_length)
         if key is None: 
-            cnts = range(0, seq_length, self.online_batch_size)
+            if self.true_online:
+                cnts = range(0, seq_length, 1)
+            else:
+                cnts = range(0, seq_length, self.online_batch_size)
+
         else: 
             cnts = jax.random.permutation(key, jnp.arange(0, seq_length, self.online_batch_size))
         
@@ -372,7 +393,7 @@ class SVITrainer:
         @jax.jit
         def step(key, strided_ys_on_timesteps, elbo_carry, timesteps, params, opt_state):
             
-            if self.num_grad_steps > 1:
+            if self.true_online and (not self.online_difference):
                 opt_state = self.optimizer.init(params)
 #
 

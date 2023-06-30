@@ -5,12 +5,12 @@ import matplotlib.pyplot as plt
 from packaging import version
 
 #%%
-experiment_id = 'Nnexk7KVSJKXU6T3G7ce5g'
+experiment_id = 'D5XcWvlfRW2WzpAlMTvuyQ'
 experiment = tb.data.experimental.ExperimentFromDev(experiment_id)
 #%%
 df = experiment.get_scalars()
 #%%
-# df = df[df.tag == 'ELBO']
+df = df[df.tag == 'ELBO at epoch']
 df['fit'] = int(df.run.str.split('fit_').str[1][0])
 # df = df[df.fit != 7]
 #%%
@@ -42,6 +42,6 @@ plt.autoscale(True)
 # plt.tight_layout()
 sns.lineplot(df, ax=ax, x='Timestep', y='ELBO value', style='ELBO', hue='Gradients')#, style='Monitor', hue='Method', estimatWO5hkgQVTMuJh28drMzEAgor=None) #, style='Analytical')
 #%%
-plt.savefig('training_curve_chaotic_rnn_dim_5.pdf', format='pdf', dpi=500)
+plt.savefig('comparing_online_offline_same_number_epochs.pdf', format='pdf', dpi=500)
 #%%
 # sns.lineplot(df, x='step', y='value'quantity)

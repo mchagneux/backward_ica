@@ -314,50 +314,64 @@ class NonAmortizedBackwardSmoother(BackwardSmoother):
         def tree_unflatten(cls, aux_data, children):
             return cls(*children)
         
-
     def __init__(self, state_dim, obs_dim, backwd_layers):
         
         self.state_dim = state_dim
         self.obs_dim = obs_dim
 
         
-        def _backwd_map(aux, x_1, state_dim):
-            filt_params_0 = aux[0]
-            filt_params_1 = aux[1]
-            eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
-            eta1_potential, eta2_potential = inference_nets.backwd_net(filt_params_0.vec, x_1, backwd_layers, state_dim)
-            eta1_backwd, eta2_backwd = eta1_filt + eta1_potential, eta2_filt + eta2_potential 
-            out_params = Gaussian.Params(eta1=eta1_backwd, 
-                                         eta2=eta2_backwd)
-
-
-            # eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
-            # mu_0 = aux[0].mean
-            # mu_1 = aux[1].mean
-            # eta1_potential, eta2_potential = inference_nets.backwd_net(aux[0].vec, x_1-mu_1, backwd_layers, state_dim)
-            # # eta1_backwd, eta2_backwd = eta1_potential + eta1_filt, eta2_potential + eta2_filt
-            # eta1_backwd, eta2_backwd = eta1_filt + eta1_potential - 2 * eta2_potential.T @ mu_0, eta2_filt + eta2_potential 
-            # out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
-
-            return (out_params.mean, out_params.scale), (eta1_potential, eta2_potential)
-        
         # def _backwd_map(aux, x_1, state_dim):
+        #     filt_params_0 = aux[0]
+        #     filt_params_1 = aux[1]
         #     eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
-            # eta1_potential = inference_nets.nonamortized_backwd_net_for_mean(x_1, backwd_layers, state_dim)
-
-        #     initializer = lambda shape, dtype: jnp.sqrt(0.1)*jnp.ones(shape, dtype)
-        #     eta_2_param = hk.get_parameter('backwd_sigma_diag', 
-        #                                        shape=(state_dim,), 
-        #                                        dtype=jnp.float64, 
-        #                                        init=initializer)
-        #     eta2_potential = -jnp.diag(eta_2_param**2)
-        #     eta1_backwd, eta2_backwd = eta1_filt + eta1_potential, eta2_filt + eta2_potential
-        #     out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
+        #     eta1_potential, eta2_potential = inference_nets.backwd_net(filt_params_0.vec, x_1, backwd_layers, state_dim)
+        #     eta1_backwd, eta2_backwd = eta1_filt + eta1_potential, eta2_filt + eta2_potential 
+        #     out_params = Gaussian.Params(eta1=eta1_backwd, 
+        #                                  eta2=eta2_backwd)
 
 
+        #     # eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
+        #     # mu_0 = aux[0].mean
+        #     # mu_1 = aux[1].mean
+        #     # eta1_potential, eta2_potential = inference_nets.backwd_net(aux[0].vec, x_1-mu_1, backwd_layers, state_dim)
+        #     # # eta1_backwd, eta2_backwd = eta1_potential + eta1_filt, eta2_potential + eta2_filt
+        #     # eta1_backwd, eta2_backwd = eta1_filt + eta1_potential - 2 * eta2_potential.T @ mu_0, eta2_filt + eta2_potential 
+        #     # out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
 
         #     return (out_params.mean, out_params.scale), (eta1_potential, eta2_potential)
+        
+        def _backwd_map(aux, x_1, state_dim):
+            eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
+            eta1_potential = inference_nets.nonamortized_backwd_net_for_mean(x_1, backwd_layers, state_dim)
+
+            log_eta_2_param = hk.get_parameter('backwd_sigma_diag', 
+                                               shape=(state_dim,), 
+                                               init=jnp.zeros)
+            
+            eta2_potential = -jnp.diag(jnp.exp(log_eta_2_param)**2)
+            eta1_backwd, eta2_backwd = eta1_filt + eta1_potential, eta2_filt + eta2_potential
+            out_params = Gaussian.Params(eta1=eta1_backwd, eta2=eta2_backwd)
+
+            return (out_params.mean, out_params.scale), (eta1_potential, eta2_potential)
                         
+
+        # def _backwd_map(aux, x_1, state_dim):
+        #     # eta1_filt, eta2_filt = aux[0].eta1, aux[0].eta2
+        #     mu = inference_nets.nonamortized_backwd_net_for_mean(x_1, backwd_layers, state_dim)
+
+        #     initializer = lambda shape, dtype: jnp.zeros(shape, dtype)
+        #     log_std_backwd = hk.get_parameter('backwd_sigma_diag', 
+        #                                        shape=(state_dim,), 
+        #                                        init=initializer)
+            
+        #     cov_chol = jnp.diag(jnp.exp(log_std_backwd)**2)
+
+        #     out_params = Gaussian.Params(mean=mu, scale=Scale(cov_chol=cov_chol))
+
+
+
+        #     return (out_params.mean, out_params.scale), (None, None)
+        
         
         dummy_gaussian_params = Gaussian.Params(eta1=jnp.empty((self.state_dim,)),
                                                 eta2=jnp.eye(self.state_dim))

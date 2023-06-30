@@ -13,38 +13,41 @@ from src.utils.misc import *
 import os 
 
 num_smoothing_samples = 1000
-plot = False
-filt = True
+plot = True
+filt = False 
 online_fit = True
 
 key = jax.random.PRNGKey(0)
 dummy_key = key
 
 
-paths = ['experiments/p_chaotic_rnn/2023_06_28__21_46_58',
-         'experiments/p_chaotic_rnn/2023_06_28__21_52_39',
-         'experiments/p_chaotic_rnn/2023_06_28__21_58_14',
-         'experiments/p_chaotic_rnn/2023_06_28__22_03_52', 
-         'experiments/p_chaotic_rnn/2023_06_28__22_09_29',
-         'experiments/p_chaotic_rnn/2023_06_28__22_15_06',
-         'experiments/p_chaotic_rnn/2023_06_28__22_20_45',
-         'experiments/p_chaotic_rnn/2023_06_28__22_26_22']
+paths = ['experiments/p_chaotic_rnn/2023_06_30__16_02_11']
 
 from collections import defaultdict
 
 rmses = defaultdict(list)
+
 for path in paths: 
     print('---')
     p_args = load_args('args', path)
-    models = ['nonamortized,100.200.adam,1e-2,cst.true_online,500.score,truncated,mcmc,paris,variance_reduction,bptt_depth_1.gpu']
+    models = ['johnson_backward,100.100.adam,1e-3,cst.true_online,50.score,paris,truncated.gpu']
     models.append(p_args.load_from)
 
     p = get_generative_model(p_args)
     theta_star = load_params('theta_star', path)
 
-
+    
 
     y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
+
+    x = jnp.ones((p.state_dim,))
+    theta_star.transition.map['linear']['w'] = theta_star.transition.map['linear']['w'].T
+    formatted_theta_star = p.format_params(theta_star)
+
+    x_test = p.transition_kernel.map(x, formatted_theta_star.transition).mean
+    from src.stats.distributions import Student, Gaussian
+    y_test = p.emission_kernel.map(x_test, formatted_theta_star.emission)
+    a = 0
     seq_length = len(y)
     T = seq_length - 1
 
@@ -143,7 +146,10 @@ for path in paths:
                 
             rmse_avg_over_dims = jnp.mean(jnp.sqrt(jnp.mean((means - x)**2, axis=1)), axis=-1)
             print(f'RMSE: {rmse_avg_over_dims:.3f}')
-
+            if 'crnn' in model:
+                rmses['crnn'].append(rmse_avg_over_dims)
+            else: 
+                rmses[model].append(rmse_avg_over_dims)
             if plot: 
 
                 fig, axes = plt.subplots(p_args.state_dim, 1, figsize=(15,1.5*p_args.state_dim))
@@ -215,7 +221,10 @@ for path in paths:
                 # plt.suptitle(f'model: {model}, rmse: {rmse_of_best:.3f}')
                 plt.savefig(os.path.join(path, model, 'eval_best.pdf'), format='pdf')
 
-
-#%%
+for k,v in rmses.items():
+    mean_of_rmse = jnp.mean(jnp.array(v))
+    std_of_rmse = jnp.std(jnp.array(v))
+    print(k,f'{mean_of_rmse:.3f}+-{std_of_rmse:.3f}')
+    #%%
 
 

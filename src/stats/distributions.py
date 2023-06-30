@@ -90,6 +90,9 @@ class Scale:
 
     @staticmethod
     def set_default(previous_value, default_value, parametrization):
+        if isinstance(previous_value, jax.Array):
+            return default_value*jnp.ones_like(previous_value)
+        
         scale = default_value * jnp.ones_like(previous_value[parametrization])
 
         if parametrization == 'prec_chol':scale=1/scale
@@ -288,11 +291,21 @@ class Student:
 
 
     def sample(key, params):
-        return params.mean + params.scale.cov_chol @ random.t(key, params.df, shape=(params.mean.shape[0],))
+        return params.mean + jnp.diag(params.scale) @ random.t(key, params.df, shape=(params.mean.shape[0],))
 
     @staticmethod
     def logpdf(x, params):
 
+        mean = params.mean 
+        df = params.df
+        scale = params.scale
+        return jnp.sum(jax.vmap(jax.scipy.stats.t.logpdf, 
+                                in_axes=(0, None, 0, 0))(
+                                                    x, 
+                                                    df, 
+                                                    mean, 
+                                                    scale))
+    
         dim = params.mean.shape[0]
         df = params.df  
         loc = params.mean 
@@ -314,7 +327,6 @@ class Student:
     def pdf(x, params):
         return jnp.exp(Student.logpdf(x, params))
 
-
     @classmethod
     def get_random_params(cls, key, dim):
         
@@ -323,22 +335,22 @@ class Student:
 
         mean = random.uniform(subkeys[0], shape=(dim,), minval=-1, maxval=1)
         df = random.randint(subkeys[1], shape=(1,), minval=1, maxval=10)
-        scale = Scale.get_random(subkeys[3], dim, Scale.parametrization)
+        scale = Scale.get_random(subkeys[3], dim, Scale.parametrization)[Scale.parametrization]
         return cls.Params(mean=mean, 
                             df=df, 
                             scale=scale)
 
     @classmethod
     def format_params(cls, params):
-        return cls.Params(mean=params.mean, df=params.df, scale=Scale.format(params.scale))
+        return params
 
     @classmethod
     def get_random_noise_params(cls, key, dim):
         subkeys = random.split(key, 2)
         df = random.randint(subkeys[1], shape=(1,), minval=1, maxval=10)
-        scale = Scale.get_random(subkeys[1], dim, Scale.parametrization)
+        scale = Scale.get_random(subkeys[1], dim, Scale.parametrization)[Scale.parametrization]
         return cls.NoiseParams(df, scale)
 
     @classmethod 
     def format_noise_params(cls, noise_params):
-        return cls.NoiseParams(noise_params.df, Scale.format(noise_params.scale))
+        return noise_params #cls.NoiseParams(noise_params.df, Scale.format(noise_params.scale))

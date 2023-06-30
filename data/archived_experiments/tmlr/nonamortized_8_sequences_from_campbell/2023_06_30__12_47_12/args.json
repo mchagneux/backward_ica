@@ -1,0 +1,40 @@
+{
+    "model": "chaotic_rnn",
+    "num_seqs": 1,
+    "seq_length": 500,
+    "single_split_seq": false,
+    "load_from": "data/crnn/dim_5_500_obs/2023-06-06_10-34-04_Train_run",
+    "compute_oracle_evidence": false,
+    "exp_dir": "experiments/p_chaotic_rnn/2023_06_30__12_47_12",
+    "seed": 0,
+    "loaded_seq": true,
+    "state_dim": 5,
+    "obs_dim": 5,
+    "transition_matrix_conditionning": "init_scale_by_dim",
+    "range_transition_map_params": [
+        -1,
+        1
+    ],
+    "transition_bias": true,
+    "emission_bias": false,
+    "float64": false,
+    "default_prior_mean": 0.0,
+    "default_prior_base_scale": 0.1,
+    "default_transition_base_scale": 0.1,
+    "default_transition_bias": 0.0,
+    "default_emission_base_scale": 0.1,
+    "default_transition_matrix": "data/crnn/dim_5_500_obs/2023-06-06_10-34-04_Train_run/W.npy",
+    "grid_size": 0.001,
+    "gamma": 2.5,
+    "tau": 0.025,
+    "emission_matrix_conditionning": "diagonal",
+    "range_emission_map_params": [
+        0.99,
+        1
+    ],
+    "default_emission_df": 2,
+    "default_emission_matrix": 1.0,
+    "parametrization": "cov_chol",
+    "num_particles": 10000,
+    "num_smooth_particles": 1000
+}
