@@ -115,6 +115,26 @@ class HMM:
                         self.transition_kernel.format_params(params.transition),
                         self.emission_kernel.format_params(params.emission))
                         
+
+    def sample_prior(self, key, params, seq_length):
+
+        params = self.format_params(params)
+
+        keys = random.split(key, seq_length)
+        state_keys = keys[:seq_length]
+
+        prior_sample = self.prior_dist.sample(state_keys[0], params.prior)
+
+        def _state_sample(carry, x):
+            prev_sample = carry
+            key = x
+            sample = self.transition_kernel.sample(key, prev_sample, params.transition)
+            return sample, sample
+        _, state_seq = lax.scan(_state_sample, init=prior_sample, xs=state_keys[1:])
+
+        return tree_prepend(prior_sample, state_seq)
+
+
     def sample_seq(self, key, params, seq_length):
 
         params = self.format_params(params)
