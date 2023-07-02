@@ -47,7 +47,6 @@ class SMC:
                                                                         emission_params)
         return exp_and_normalize(log_probs), logsumexp(log_probs)
 
-
     def compute_filt_params_seq(self, key, obs_seq, params):
 
 
@@ -73,11 +72,12 @@ class SMC:
 
         return (tree_prepend(init_probs, probs), tree_prepend(init_particles, particles)), jnp.sum(likel) + init_likel - len(obs_seq)*jnp.log(self.num_filt_particles)
 
+
     def smooth_from_filt_seq(self, key, filt_seq, params):
 
         probs_seq, particles_seq = filt_seq
 
-        @jit
+        @jax.jit
         def _sample_path(key, probs_seq, particles_seq):
 
             path_keys = random.split(key, len(particles_seq))

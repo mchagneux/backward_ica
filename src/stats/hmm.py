@@ -398,8 +398,9 @@ class NonLinearHMM(HMM):
                 transition_kernel_def,
                 emission_kernel_def,
                 prior_dist = Gaussian,
-                num_particles=100, 
+                num_particles=None, 
                 num_smooth_particles=None):
+                
                                                 
         HMM.__init__(self, 
                     state_dim, 
@@ -434,6 +435,7 @@ class NonLinearHMM(HMM):
 
         return self.smc.smooth_from_filt_seq(key, filt_seq, formatted_params)
     
+    # @partial(jax.jit, static_argnums=0)
     def smooth_seq(self, key, obs_seq, params):
 
         key, subkey = random.split(key, 2)

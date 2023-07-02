@@ -3,57 +3,131 @@
 import jax, jax.numpy as jnp
 jax.config.update('jax_enable_x64', False)
 jax.config.update('jax_disable_jit', False)
-jax.config.update('jax_platform_name', 'cpu')
+jax.config.update('jax_platform_name', 'gpu')
+
+# jax.config.update('jax_platform_name', 'gpu')
 from jax.flatten_util import ravel_pytree
 import haiku as hk
 from src.online_smoothing import OnlineELBOScoreTruncatedGradients
-from src.stats.hmm import LinearGaussianHMM, NonLinearHMM
+from src.stats.hmm import LinearGaussianHMM, NonLinearHMM, get_generative_model
 from src.variational.sequential_models import JohnsonBackward
 from src.utils.misc import exp_and_normalize, get_defaults, tree_get_strides
+from src.training import SVITrainer
 import matplotlib.pyplot as plt 
 import blackjax
 from argparse import Namespace
-
+from src.utils.misc import load_params
 
 
 key = jax.random.PRNGKey(0)
 args = Namespace()
 
 args.model = 'chaotic_rnn'
-args.load_from = ''
-args.loaded_seq = False 
-args.state_dim, args.obs_dim = 5,5
-args.seq_length = 500
-num_particles = 10
-h = 1e-4 
-num_steps = 100_000
+args.load_from = '' #data/crnn/2022-10-18_15-28-00_Train_run'
+args.loaded_seq = False
+args.state_dim, args.obs_dim = 20,20
+args.seq_length = 10_000
+args.num_particles = 100
+args.num_smooth_particles = 2
+args.num_seqs = 1
+
+num_ula_particles = 50
+h = 8e-4 
+num_ula_steps = 10_000
+
 
 args = get_defaults(args)
-
-p = NonLinearHMM.chaotic_rnn(args)
-
-
 key, key_theta, key_sampling = jax.random.split(key, 3)
-unformatted_theta = p.get_random_params(key_theta)
+
+# p = NonLinearHMM.chaotic_rnn(args)
+
+p, unformatted_theta = get_generative_model(args, key_theta)
+
+# unformatted_theta = p.get_random_params(key_theta)
 theta = p.format_params(unformatted_theta)
-x_true, y = p.sample_seq(key_sampling, 
-                         unformatted_theta, 
-                         args.seq_length)
+x_true, y = p.sample_multiple_sequences(key_sampling, 
+                                        unformatted_theta, 
+                                        args.num_seqs, 
+                                        args.seq_length,
+                                        False,
+                                        args.load_from,
+                                        args.loaded_seq)
+
+
+def plot_x_true_against_x_pred(x_pred):
+  dims = args.state_dim
+  fig, axes = plt.subplots(dims, 1, figsize=(10, 20))
+  for dim in range(dims):
+    axes[dim].plot(x_true[0][:,dim], c='red', label='True')
+    axes[dim].plot(x_pred[:,dim], c='green', label='Pred')
+  plt.legend()
+  print('RMSE:',jnp.mean(jnp.sqrt(jnp.mean((x_pred-x_true[0])**2, axis=-1)), axis=0))
+
+
+
+training_mode = f'reset,{args.seq_length},1'
+learning_rate = 1e-2
+elbo_mode = 'autodiff_on_backward'
+optim_options = 'cst'
+num_epochs = 2000
+batch_size = 1
+num_samples = 2
+optimizer = 'adam'
+q = JohnsonBackward(args.state_dim, 
+                    args.obs_dim, 
+                    'diagonal', 
+                    (0.9,0.99), 
+                    False, 
+                    (100,), 
+                    False)
+
+q_trainer = SVITrainer(p, 
+                       unformatted_theta,
+                       q, 
+                       optimizer,
+                       learning_rate,
+                       optim_options,
+                       num_epochs,
+                       batch_size,
+                       args.seq_length,
+                       num_samples,
+                       False,
+                       '',
+                       training_mode,
+                       elbo_mode)
+from tqdm import tqdm
+progress_bar = tqdm(total=num_epochs,
+                    desc='ELBO')
+data = (x_true, y)
+key = jax.random.PRNGKey(0)
+key_params, key_montecarlo = jax.random.split(key, 2)
+for params, elbo, _ in q_trainer.fit(key_params, key_montecarlo, data, None, args):
+  progress_bar.update(1)
+  progress_bar.set_postfix({'ELBO':elbo})
+progress_bar.close()
+
+x_pred = q.smooth_seq(y[0], params)[0]
+
+plot_x_true_against_x_pred(x_pred)
+
 
 
 def l_theta(x):
   init_term = p.prior_dist.logpdf(x[0], theta.prior)
-  emission_terms = jax.vmap(p.emission_kernel.logpdf, in_axes=(0,0,None))(y, 
-                                                                          x,
-                                                                          theta.emission)
+  emission_terms = jax.vmap(p.emission_kernel.logpdf, 
+                            in_axes=(0,0,None))(
+                                              y[0], 
+                                              x,
+                                              theta.emission)
   
-  transition_terms = jax.vmap(p.transition_kernel.logpdf, in_axes=(0,0,None))(x[1:], 
-                                                                              x[:-1], 
-                                                                              theta.transition)
+  transition_terms = jax.vmap(p.transition_kernel.logpdf, 
+                              in_axes=(0,0,None))(x[1:], 
+                                                  x[:-1], 
+                                                  theta.transition)
   return init_term + jnp.sum(emission_terms) + jnp.sum(transition_terms)
 
 
-noise = lambda key:jax.random.normal(key, shape=(num_particles, 
+noise = lambda key:jax.random.normal(key, shape=(num_ula_particles, 
                                                  args.seq_length, 
                                                  args.state_dim))
 
@@ -61,25 +135,40 @@ noise = lambda key:jax.random.normal(key, shape=(num_particles,
 key, key_init = jax.random.split(key, 2)
 
 
-x_init = jax.vmap(p.sample_seq, in_axes=(0,None,None))(jax.random.split(key_init, 
-                                                                        num_particles), 
-                                                      unformatted_theta, 
-                                                      args.seq_length)[0]
+
+x_init = jax.vmap(p.sample_seq, in_axes=(0,None,None))(
+                                      jax.random.split(key_init, num_ula_particles), 
+                                      unformatted_theta, 
+                                      args.seq_length)[0]
 
 def _step(x, key):
   grad_log_l = jax.vmap(jax.grad(l_theta))(x)
   x += h*grad_log_l + jnp.sqrt(2*h)*noise(key)
   return x, None
 
+print('Pre-compiling ULA loop...')
 x_end = jax.lax.scan(
                     _step, 
                     init=x_init, 
-                    xs=jax.random.split(key, num_steps))[0]
+                    xs=jax.random.split(key, 2))[0]
+
+from time import time 
+print('Running ULA...')
+time0 = time()
+
+x_end = jax.lax.scan(
+                    _step, 
+                    init=x_init, 
+                    xs=jax.random.split(key, num_ula_steps))[0]
 
 
 x_pred = jnp.mean(x_end, 
                   axis=0)
+x_pred.block_until_ready()
+print('ULA time:', time() - time0)
 
+plot_x_true_against_x_pred(x_pred)
+#%%
 # mala = blackjax.mala(l_theta, h)
 
 # def _step_mala(prev_state, key):
@@ -91,17 +180,19 @@ x_pred = jnp.mean(x_end,
 #                                           xs=jax.random.split(key, num_steps))[0],)(jax.random.split(key, num_particles), 
 #                                                                                    x_end_ula).position
 
-# #%%
-# x_pred = jnp.mean(x_end, axis=0)
+#%%
+
+
+#%% 
+
+
 
 #%%
-dims = args.state_dim
-fig, axes = plt.subplots(dims, 1, figsize=(10, 20))
-for dim in range(dims):
-  axes[dim].plot(x_true[:,dim], c='red', label='True')
-  axes[dim].plot(x_pred[:,dim], c='green', label='Pred')
-plt.legend()
-print('RMSE:',jnp.mean(jnp.sqrt(jnp.mean((x_pred-x_true)**2, axis=-1)), axis=0))
+# x_pred = p.smooth_seq(key, y[0], unformatted_theta)
+#%%
+
+
+
 #%%
 # fig, axes = plt.subplots(dims, 1)
 # for dim in range(dims):

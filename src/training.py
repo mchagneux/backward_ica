@@ -485,26 +485,26 @@ class SVITrainer:
 
                 
 
+                if log_writer is not None:
+                    if self.num_grad_steps > 1: 
+                        t = timesteps[-1]
+                        x_t = xs[t]
+                        if t > 0: 
+                            x_tm1 = xs[t-1]
+                        with log_writer.as_default():
+                            tf.summary.scalar('Filtering RMSE', 
+                                                jnp.sqrt(jnp.mean((x_t - aux[1])**2)),
+                                                absolute_step_nb)
 
-                if self.num_grad_steps > 1: 
-                    t = timesteps[-1]
-                    x_t = xs[t]
-                    if t > 0: 
-                        x_tm1 = xs[t-1]
-                    with log_writer.as_default():
-                        tf.summary.scalar('Filtering RMSE', 
-                                            jnp.sqrt(jnp.mean((x_t - aux[1])**2)),
-                                            absolute_step_nb)
+                            if t > 0:
+                                tf.summary.scalar('1-step smoothing RMSE', 
+                                                jnp.sqrt(jnp.mean((x_tm1 - aux[0])**2)),
+                                                absolute_step_nb)
 
-                        if t > 0:
-                            tf.summary.scalar('1-step smoothing RMSE', 
-                                            jnp.sqrt(jnp.mean((x_tm1 - aux[0])**2)),
-                                            absolute_step_nb)
-
-                if self.online_batch_size != seq_length:
-                    with log_writer.as_default():
-                        for inner_step_nb, elbo in enumerate(elbos): 
-                            tf.summary.scalar('ELBO at inner step', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                    if self.online_batch_size != seq_length:
+                        with log_writer.as_default():
+                            for inner_step_nb, elbo in enumerate(elbos): 
+                                tf.summary.scalar('ELBO at inner step', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)
 
 
 
@@ -521,9 +521,12 @@ class SVITrainer:
 
                 with log_writer.as_default():
                     tf.summary.scalar('Unbiased ELBO at epoch', monitor_elbo_value, epoch_nb)
+            if log_writer is not None:
+                with log_writer.as_default():
+                    tf.summary.scalar('ELBO at epoch', elbos[-1], epoch_nb)
+            
 
-            with log_writer.as_default():
-                tf.summary.scalar('ELBO at epoch', elbos[-1], epoch_nb)
+            
 
     def multi_fit(self, 
                   key, 
