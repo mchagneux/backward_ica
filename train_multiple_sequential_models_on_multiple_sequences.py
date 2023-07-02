@@ -5,9 +5,10 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['johnson_backward,100.100.adam,1e-3,cst.true_online,50.score,paris,truncated.gpu']
+settings_list = ['johnson_backward,100.100.adam,1e-3,cst.reset,500,1.score,paris,bptt_depth_2.gpu',
+                 'johnson_backward,100.100.adam,1e-3,cst.reset,500,1.autodiff_on_backward.cpu']
 num_fits = 1
-num_epochs = 1
+num_epochs = 500
 dims = '5 5'
 load_from_base_dir = 'data/crnn/dim_5_500_obs'
 load_from_list = os.listdir(load_from_base_dir)

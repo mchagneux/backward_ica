@@ -14,14 +14,14 @@ import os
 
 num_smoothing_samples = 1000
 plot = True
-filt = False 
-online_fit = True
+filt = True 
+online_fit = False
 
 key = jax.random.PRNGKey(0)
 dummy_key = key
 
 
-paths = ['experiments/p_chaotic_rnn/2023_06_30__16_02_11']
+paths = ['data/archived_experiments/tmlr/2023_06_30__15_24_17']
 
 from collections import defaultdict
 
@@ -30,8 +30,8 @@ rmses = defaultdict(list)
 for path in paths: 
     print('---')
     p_args = load_args('args', path)
-    models = ['johnson_backward,100.100.adam,1e-3,cst.true_online,50.score,paris,truncated.gpu']
-    models.append(p_args.load_from)
+    models = ['johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu']
+    # models.append(p_args.load_from)
 
     p = get_generative_model(p_args)
     theta_star = load_params('theta_star', path)
@@ -44,10 +44,10 @@ for path in paths:
     theta_star.transition.map['linear']['w'] = theta_star.transition.map['linear']['w'].T
     formatted_theta_star = p.format_params(theta_star)
 
-    x_test = p.transition_kernel.map(x, formatted_theta_star.transition).mean
-    from src.stats.distributions import Student, Gaussian
-    y_test = p.emission_kernel.map(x_test, formatted_theta_star.emission)
-    a = 0
+    # x_test = p.transition_kernel.map(x, formatted_theta_star.transition).mean
+    # from src.stats.distributions import Student, Gaussian
+    # y_test = p.emission_kernel.map(x_test, formatted_theta_star.emission)
+    # a = 0
     seq_length = len(y)
     T = seq_length - 1
 
