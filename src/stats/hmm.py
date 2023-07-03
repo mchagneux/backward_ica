@@ -385,24 +385,21 @@ class NonLinearHMM(HMM):
         
     @staticmethod
     def chaotic_rnn_with_nonlinear_emission(args):
-        nonlinear_transition_map_forward = partial(Maps.chaotic_map, 
+        nonlinear_map_forward = partial(Maps.chaotic_map, 
                                         grid_size=args.grid_size, 
                                         gamma=args.gamma,
                                         tau=args.tau)
-        if args.injective:
-            nonlinear_map_forward = partial(Maps.neural_map, layers=args.emission_map_layers, slope=args.slope)
-        else: 
-            nonlinear_map_forward = partial(Maps.neural_map_noninjective, layers=args.emission_map_layers, slope=args.slope)
 
         transition_kernel_def = {'map':{'map_type':'nonlinear',
                                         'map_info' : {'homogeneous': True},
-                                        'map': nonlinear_transition_map_forward},
+                                        'map': nonlinear_map_forward},
                                 'noise_dist':Gaussian}
         
-        emission_kernel_def = {'map':{'map_type':'nonlinear',
-                                    'map_info' : {'homogeneous': True},
-                                    'map': nonlinear_map_forward},
-                            'noise_dist':Gaussian}
+        emission_kernel_def = {'map':{'map_type':'nonlinear_analytical',
+                                    'map_info' : {'conditionning': args.emission_matrix_conditionning, 
+                                    'bias': args.emission_bias,
+                                    'range_params':args.range_emission_map_params}}, 
+                                'noise_dist':Student}
 
         return NonLinearHMM(args.state_dim, 
                             args.obs_dim, 

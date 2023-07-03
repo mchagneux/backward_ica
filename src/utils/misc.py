@@ -285,7 +285,7 @@ def get_defaults(args):
         args.emission_bias = False
         
     if 'chaotic_rnn' in args.model:
-        args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
+        args.range_transition_map_params = [-10,10] # range of the components of the transition matrix
         args.transition_matrix_conditionning = 'init_scale_by_dim' # constraint
         if args.load_from != '':
             args.default_transition_matrix = os.path.join(args.load_from, 'W.npy')

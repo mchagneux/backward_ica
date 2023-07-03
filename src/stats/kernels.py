@@ -67,6 +67,10 @@ class Maps:
     def linear_map_apply(map_params, input):
         out =  jnp.dot(map_params.w, input)
         return out + jnp.broadcast_to(map_params.b, out.shape)
+    
+    @staticmethod
+    def nonlinear_map_apply(map_params, input):
+        return jax.nn.sigmoid(Maps.linear_map_apply(map_params, input))
 
     @classmethod
     def linear_map_init_params(cls, key, dummy_in, out_dim, conditionning, bias, range_params):
@@ -159,6 +163,20 @@ class ParametricKernel:
                                         conditionning_func=_conditionnings[map_def['map_info']['conditionning']],
                                         d=self.out_dim)
 
+        elif self.map_type == 'nonlinear_analytical':
+            apply_map = lambda params, input: (Maps.nonlinear_map_apply(params.map, input), params.noise)
+
+            init_map_params = partial(Maps.linear_map_init_params, out_dim=out_dim, 
+                                    conditionning=map_def['map_info']['conditionning'], 
+                                    bias=map_def['map_info']['bias'], 
+                                    range_params=map_def['map_info']['range_params'])
+
+            get_random_map_params = lambda key: init_map_params(key, jnp.empty((self.in_dim,)))
+
+            format_map_params = partial(Maps.linear_map_format_params, 
+                                        conditionning_func=_conditionnings[map_def['map_info']['conditionning']],
+                                        d=self.out_dim)
+            
         elif self.map_type == 'nonlinear':
             if map_def['map_info']['homogeneous']: 
                 
