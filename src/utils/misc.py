@@ -296,7 +296,7 @@ def get_defaults(args):
         args.tau = 0.025 # tau for the chaotic rnn
 
         args.emission_matrix_conditionning = None
-        args.range_emission_map_params = (-10,10)
+        args.range_emission_map_params = (-1,1)
         args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
         args.transition_bias = True 
