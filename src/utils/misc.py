@@ -285,7 +285,7 @@ def get_defaults(args):
         args.emission_bias = False
         
     if 'chaotic_rnn' in args.model:
-        args.range_transition_map_params = [-10,10] # range of the components of the transition matrix
+        args.range_transition_map_params = [-1,1] # range of the components of the transition matrix
         args.transition_matrix_conditionning = 'init_scale_by_dim' # constraint
         if args.load_from != '':
             args.default_transition_matrix = os.path.join(args.load_from, 'W.npy')
@@ -296,7 +296,7 @@ def get_defaults(args):
         args.tau = 0.025 # tau for the chaotic rnn
 
         args.emission_matrix_conditionning = None
-        args.range_emission_map_params = (-1,1)
+        args.range_emission_map_params = (-10,10)
         args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
         args.transition_bias = True 
@@ -339,8 +339,8 @@ def get_defaults(args):
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
 
 
-    args.num_particles = 10000 # number of particles for bootstrap filtering step
-    args.num_smooth_particles = 1000 # number of particles for the FFBSi ancestral sampling step
+    # args.num_particles = 10000 # number of particles for bootstrap filtering step
+    # args.num_smooth_particles = 1000 # number of particles for the FFBSi ancestral sampling step
 
     return args
 

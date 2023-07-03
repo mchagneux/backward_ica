@@ -70,7 +70,7 @@ class Maps:
     
     @staticmethod
     def nonlinear_map_apply(map_params, input):
-        return jax.nn.sigmoid(Maps.linear_map_apply(map_params, input))
+        return jnp.sin(Maps.linear_map_apply(map_params, input)**2)
 
     @classmethod
     def linear_map_init_params(cls, key, dummy_in, out_dim, conditionning, bias, range_params):

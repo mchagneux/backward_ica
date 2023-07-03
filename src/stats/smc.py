@@ -15,9 +15,7 @@ class SMC:
         self.emission_kernel = emission_kernel
         self.prior_sampler = prior_dist.sample 
         self.num_filt_particles = num_particles
-        if num_smooth_particles is None:
-            self.num_smooth_particles = num_particles
-        else: self.num_smooth_particles = num_smooth_particles
+        self.num_smooth_particles = num_smooth_particles
     
     
     def init(self, prior_key, obs, prior_params, emission_params):
@@ -99,7 +97,7 @@ class SMC:
 
         paths = vmap(_sample_path, in_axes=(0,None,None))(keys, probs_seq, particles_seq)
 
-        return jnp.transpose(paths, axes=(1,0,2))
+        return jnp.mean(paths, axis=0), jnp.std(paths, axis=0)
         
 
     # def smooth_from_filt_seq(self, key, filt_seq, params):
