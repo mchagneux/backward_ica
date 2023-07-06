@@ -18,7 +18,6 @@ def main(args):
     p, theta_star = hmm.get_generative_model(
                                             args, 
                                             key_for_random_params=key_params)
-
     misc.save_params(theta_star, 'theta_star', args.exp_dir)
 
     state_seqs, obs_seqs = p.sample_multiple_sequences(key_gen, 

@@ -401,9 +401,13 @@ class SVITrainer:
             def inner_step(carry, x):
                 inner_carry, params, opt_state = carry
                 key = x
+                
                 elbo, neg_grad, new_carry, aux = self.update(
                                                             key, 
-                                                            inner_carry,
+                                                            lax.cond(timesteps[-1] > 0, 
+                                                                     lambda x:x, 
+                                                                     lambda x:elbo_carry,
+                                                                     inner_carry),
                                                             strided_ys_on_timesteps, 
                                                             timesteps, 
                                                             self._build_params(params))
@@ -415,21 +419,17 @@ class SVITrainer:
                 
                 new_params = self.optimizer_update_fn(params, updates)
                 
-                return (lax.cond(timesteps[-1] == 0, 
-                                 lambda x:x, 
-                                 lambda x:elbo_carry, 
-                                 new_carry), 
+                return (new_carry, 
                         new_params, 
                         opt_state), \
-                        (elbo, aux, new_carry)
+                        (elbo, aux)
             
-            (_, new_params, opt_state), (elbos, aux, inner_steps_carries) = jax.lax.scan(inner_step, 
+            (elbo_carry, params, opt_state), (elbos, aux) = jax.lax.scan(inner_step, 
                                                         init=(elbo_carry, params, opt_state), 
                                                         xs=jax.random.split(key, 
                                                                             self.num_grad_steps))
 
 
-            elbo_carry = tree_get_idx(-1, inner_steps_carries)
 
             if self.num_grad_steps > 1:
                 params_q_t, params_q_tm1_t = tree_get_idx(-1, aux)
@@ -438,7 +438,6 @@ class SVITrainer:
                 aux = None
 
             # if not isinstance(self.q, NonAmortizedBackwardSmoother):
-            params = new_params
             return (params, opt_state, elbo_carry), (elbos, aux)
         
 
@@ -460,19 +459,10 @@ class SVITrainer:
             strided_ys = self.elbo.preprocess(ys)
 
             timesteps_lists = self.timesteps(seq_length, None)
-
             
+
             for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
-                # if step_nb > 1: 
-                #     with open('jitted_step.txt', 'w') as f: 
-                #         f.write(jitted_step.lower(key_step, 
-                #                         strided_ys[timesteps], 
-                #                         ys[timesteps],
-                #                         elbo_carry, 
-                #                         timesteps, 
-                #                         params, 
-                #                         opt_state).compile().as_text())
-                    
+
                 (params, opt_state, elbo_carry), (elbos, aux) = step(
                                                                     key_step, 
                                                                     strided_ys[timesteps], 
@@ -551,31 +541,36 @@ class SVITrainer:
 
             key_params, key_montecarlo = jax.random.split(fit_key, 2)
 
-            params, elbos, means_t, means_tm1 = [], [], [], []
+            params, elbos, means_t, means_tm1 = dict(), dict(), dict(), dict()
 
-            time0 = time()
+            # time0 = time()
             for global_step_nb, (params_at_step, elbo_at_step, aux_at_step) in enumerate(self.fit(key_params, 
                                                                                     key_montecarlo, 
                                                                                     data, 
                                                                                     log_writer, 
                                                                                     args, 
                                                                                     log_writer_monitor)):
-                params.append(params_at_step)
-                elbos.append(elbo_at_step)
+                
+                if global_step_nb % 100 == 0:
+                    params[global_step_nb] = params_at_step
+                    elbos[global_step_nb] = elbo_at_step
+
                 if 'truncated' in self.elbo_mode:
-                    means_tm1.append(aux_at_step[0])
-                    means_t.append(aux_at_step[1])
-                times.append(time() - time0)
-                time0 = time()
+                    means_tm1[global_step_nb] = aux_at_step[0]
+                    means_t[global_step_nb] = aux_at_step[1]
+                #     times.append(time() - time0)
+                # time0 = time()
                 
 
             burnin = int(0.75*self.num_epochs)
-            best_step_for_fit = burnin + jnp.nanargmax(jnp.array(elbos[burnin:]))
 
+            elbos = {k:v for k,v in elbos.items() if k > burnin}
 
-            if self.true_online:
-                jnp.save(os.path.join(log_dir, 'x_tm1.npy'), jnp.array(means_tm1)[1:])
-                jnp.save(os.path.join(log_dir, 'x_t.npy'), jnp.array(means_t))
+            best_step_for_fit = max(elbos, key=elbos.get)
+
+            # if self.true_online:
+            #     jnp.save(os.path.join(log_dir, 'x_tm1.npy'), jnp.array(means_tm1)[1:])
+            #     jnp.save(os.path.join(log_dir, 'x_t.npy'), jnp.array(means_t))
 
             best_elbo_for_fit = elbos[best_step_for_fit]
             best_params_for_fit = params[best_step_for_fit]

@@ -295,7 +295,7 @@ def get_defaults(args):
         args.gamma = 2.5 # gamma for the chaotic rnn
         args.tau = 0.025 # tau for the chaotic rnn
 
-        args.emission_matrix_conditionning = None
+        args.emission_matrix_conditionning = 'diagonal'
         args.range_emission_map_params = (-1,1)
         args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
@@ -338,7 +338,8 @@ def get_defaults(args):
 
     args.parametrization = 'cov_chol' # parametrization of the covariance matrices 
 
-
+    args.num_particles = None
+    args.num_smooth_particles = None
     # args.num_particles = 10000 # number of particles for bootstrap filtering step
     # args.num_smooth_particles = 1000 # number of particles for the FFBSi ancestral sampling step
 

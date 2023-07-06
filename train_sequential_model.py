@@ -1,7 +1,7 @@
 import jax 
 import jax.numpy as jnp
 from src import variational
-
+jax.config.update('jax_log_compiles', True)
 import src.utils.misc as misc
 import src.stats.hmm as hmm
 import src.variational as variational
@@ -10,6 +10,7 @@ from src.training import SVITrainer, define_frozen_tree
 jax.config.update('jax_disable_jit', False)
 import tensorflow as tf
 # tf.config.set_visible_devices([], 'GPU')
+jax.profiler.start_server(9999)
 
     
 def main(args):
@@ -21,6 +22,7 @@ def main(args):
 
     p = hmm.get_generative_model(misc.load_args('args', args.exp_dir))
     theta_star = misc.load_params('theta_star', args.exp_dir)
+    print(theta_star)
     ys = jnp.load(os.path.join(args.exp_dir, 'obs_seqs.npy'))
     xs = jnp.load(os.path.join(args.exp_dir, 'state_seqs.npy'))
 
@@ -72,6 +74,7 @@ def main(args):
     for fit_nb in range(args.num_fits):
         misc.save_params(best_params_per_fit[fit_nb], f'phi_fit_{fit_nb}', args.save_dir)
 
+    jax.profiler.stop_server()
 if __name__ == '__main__':
 
     import argparse
@@ -81,8 +84,8 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--settings', type=str, default='nonamortized,100.100.adam,1e-2,cst.true_online,500.score,truncated,paris,variance_reduction,bptt_depth_1.cpu')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_06_27__19_04_54')
+    parser.add_argument('--settings', type=str, default='johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_07_04__09_07_02')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=1)
@@ -112,6 +115,6 @@ if __name__ == '__main__':
     args_p = misc.load_args('args', args.exp_dir)
     args.state_dim, args.obs_dim = args_p.state_dim, args_p.obs_dim
 
-
+    print(args)
     main(args)
 

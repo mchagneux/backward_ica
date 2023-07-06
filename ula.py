@@ -1,12 +1,9 @@
 #%%
-
 import jax, jax.numpy as jnp
 import numpy as np 
 jax.config.update('jax_enable_x64', False)
 jax.config.update('jax_disable_jit', False)
 jax.config.update('jax_platform_name', 'gpu')
-
-# jax.config.update('jax_platform_name', 'gpu')
 from jax.flatten_util import ravel_pytree
 import haiku as hk
 from src.online_smoothing import OnlineELBOScoreTruncatedGradients
@@ -26,34 +23,36 @@ from functools import partial
 key = jax.random.PRNGKey(0)
 args = Namespace()
 
-args.model = 'chaotic_rnn'
-args.default_emission_matrix = None
+args.model = 'chaotic_rnn_with_nonlinear_emission'
 args.load_from = '' #data/crnn/2022-10-18_15-28-00_Train_run'
 args.loaded_seq = False
-args.state_dim, args.obs_dim = 50,50
-args.seq_length = 500
+args.state_dim, args.obs_dim = 50,200
+args.seq_length = 100
+
+args.num_seqs = 1
+svgd_kernel_base = lambda x,y: jnp.exp(-jnp.sum((x-y)**2 / (2*0.01)))
+
+args = get_defaults(args)
 args.num_particles = 10_000
 args.num_smooth_particles = 50
-args.num_seqs = 1
-svgd_kernel_base = lambda x,y: jnp.exp(-jnp.sum((x-y)**2) / 0.01)
-
 num_ula_particles = args.num_smooth_particles
 h = 1e-3
 num_parametric_vi_samples = args.num_smooth_particles
 num_epochs_parametric_vi = 1_000
-num_ula_steps = 1_000
+num_ula_steps = 10_000
 
+# args.default_emission_matrix = None
 
-args = get_defaults(args)
 # args.default_emission_base_scale = 0.0001
+args.emission_matrix_conditionning = None
 del args.default_emission_matrix
-#%% 
+
 key, key_theta, key_sampling = jax.random.split(key, 3)
 
 # p = NonLinearHMM.chaotic_rnn(args)
 
 p, unformatted_theta = get_generative_model(args, key_theta)
-#%%
+
 # unformatted_theta = p.get_random_params(key_theta)
 theta = p.format_params(unformatted_theta)
 
@@ -64,7 +63,7 @@ x_true, y = p.sample_multiple_sequences(key_sampling,
                                         False,
                                         args.load_from,
                                         args.loaded_seq)
-
+#%%
 
 def plot_x_true_against_x_pred(x_pred):
   dims = args.state_dim
@@ -79,7 +78,6 @@ def plot_x_true_against_x_pred(x_pred):
   return rmse
 
 # plot_x_true_against_x_pred(y[0])
-#%%
 
 def variational_fit(num_epochs, num_samples, mode='offline'):
 
@@ -207,8 +205,31 @@ def recursive_ula_filtering(key, num_steps, num_particles):
   def _temporal_step(x_tm1, t_key_and_y):
     t, key, y_t = t_key_and_y
 
+
+    def _init_step(x_0, key):
+      def _ula_step(x_t, key):
+        def _gradient_term(x_t_i):
+          return p.emission_kernel.logpdf(y_t, x_t_i, theta.emission) \
+                + p.prior_dist.logpdf(x_t_i, theta.prior)
+        
+        grad = jax.vmap(jax.grad(_gradient_term))(x_t)
+        x_t += h*grad + jnp.sqrt(2*h)*jax.random.normal(key, shape=(num_particles, 
+                                                                      args.state_dim))
+        return x_t, None
+      
+      return jax.lax.scan(_ula_step, 
+                    init=x_0, 
+                    xs=(jax.random.split(key, num_steps)))[0]
+    
+
     def _advance_step(x_tm1, key):
-      def _step(x_t, key):
+
+      key, key_init = jax.random.split(key, 2)
+      x_t_init = jax.vmap(p.transition_kernel.sample, in_axes=(0,0,None))(jax.random.split(key_init, 
+                                                                                           num_particles), 
+                                                                                      x_tm1, 
+                                                                                      theta.transition)
+      def _ula_step(x_t, key):
         def _gradient_term(x_t_i):
           def _sum_component(x_t_i, x_tm1_j):
             return p.transition_kernel.logpdf(x_t_i, x_tm1_j, theta.transition)
@@ -221,30 +242,10 @@ def recursive_ula_filtering(key, num_steps, num_particles):
                                                                       args.state_dim))
         return x_t, None
 
-      key, key_init = jax.random.split(key, 2)
-      x_t_init = jax.vmap(p.transition_kernel.sample, in_axes=(0,0,None))(jax.random.split(key_init, num_particles), 
-                                                                                      x_tm1, 
-                                                                                      theta.transition)
-      return jax.lax.scan(_step, 
+      return jax.lax.scan(_ula_step, 
                         init=x_t_init, 
                         xs=(jax.random.split(key, num_steps)))[0]
     
-    def _init_step(x_0, key):
-      def _step(x_t, key):
-        def _gradient_term(x_t_i):
-          return p.emission_kernel.logpdf(y_t, x_t_i, theta.emission) \
-                + p.prior_dist.logpdf(x_t_i, theta.prior)
-        
-        grad = jax.vmap(jax.grad(_gradient_term))(x_t)
-        x_t += h*grad + jnp.sqrt(2*h)*jax.random.normal(key, shape=(num_particles, 
-                                                                      args.state_dim))
-        return x_t, None
-      
-      return jax.lax.scan(_step, 
-                    init=x_0, 
-                    xs=(jax.random.split(key, num_steps)))[0]
-    
-
     x_t = jax.lax.cond(t > 0, _advance_step, _init_step, x_tm1, key)
     return x_t, jnp.mean(x_t, axis=0)
   
@@ -257,7 +258,6 @@ def recursive_ula_filtering(key, num_steps, num_particles):
 
   return x_pred
   
-
 def svgd_fit(num_steps, num_particles):
 
 
@@ -291,8 +291,6 @@ def svgd_fit(num_steps, num_particles):
   
 
 # variational_fit(num_ula_steps, num_ula_particles)
-#%%
-
 
 # x_pred = variational_fit(num_epochs_parametric_vi, 
 #                          num_parametric_vi_samples,
@@ -311,7 +309,6 @@ def svgd_fit(num_steps, num_particles):
 # print('ULA time:', time() - time0)
 # rmse = plot_x_true_against_x_pred(x_pred)
 #%%
-
 # print('Precompiling svgd loop...')
 # _ = svgd_fit(2, num_ula_particles)
 # print('Running svgd loop...')
@@ -327,27 +324,20 @@ print('Running ULA recursive filtering loop...')
 x_pred = recursive_ula_filtering(key, 
                                  num_ula_steps, 
                                  num_ula_particles)
-rmse = plot_x_true_against_x_pred(x_pred)
-#%%
-print('Running SMC...')
-probs, positions = p.filt_seq(key, y[0], unformatted_theta)
-x_pred = jax.vmap(lambda w,x: jnp.sum(jax.vmap(lambda w,x:w*x)(w,x), axis=0))(probs, positions)
-# x_pred = p.smooth_seq(key, y[0], unformatted_theta)[0]
-rmse = plot_x_true_against_x_pred(x_pred)
 
-#%%
-#%%
+# print('Running SMC...')
+# probs, positions = p.filt_seq(key, y[0], unformatted_theta)
 # x_pred = jax.vmap(lambda w,x: jnp.sum(jax.vmap(lambda w,x:w*x)(w,x), axis=0))(probs, positions)
-# rmse = plot_x_true_against_x_pred(x_pred)
+# x_pred = p.smooth_seq(key, y[0], unformatted_theta)[0]
+# x_pred = jax.vmap(lambda w,x: jnp.sum(jax.vmap(lambda w,x:w*x)(w,x), axis=0))(probs, positions)
+rmse = plot_x_true_against_x_pred(x_pred)
+#%%
 
 
-#%%
-#%%
 # plt.autoscale(True)
 # plt.tight_layout()
 # plt.suptitle(f'RMSE:{rmse:.3f}')
 # plt.savefig('ula_example.pdf', format='pdf')
-#%%
 
 
 

@@ -5,15 +5,15 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['johnson_backward,100.2.adam,1e-2,cst.reset,500,1.autodiff_on_backward.cpu']
+settings_list = ['johnson_backward,200.200.adam,1e-3,cst.reset,500,1.autodiff_on_backward.gpu']
 num_fits = 1
-num_epochs = 2000
-dims = '5 5'
+num_epochs = 1000
+dims = '10 10'
 load_from = ''
 loaded_seq = False
 batch_size = 1
 num_seqs = 1
-seq_length = 50_000
+seq_length = 500
 store_every = 0
  
 

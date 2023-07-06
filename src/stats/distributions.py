@@ -7,7 +7,11 @@ class Scale:
     
     parametrization = 'cov_chol'
 
-    def __init__(self, cov_chol=None, prec_chol=None, cov=None, prec=None):
+    def __init__(self, 
+                cov_chol=None, 
+                prec_chol=None, 
+                cov=None, 
+                prec=None):
 
         if cov_chol is not None: 
             self._cov_chol = cov_chol
@@ -20,9 +24,7 @@ class Scale:
 
         elif prec is not None:
             self._prec_chol = cholesky(prec)
-        
-        else:
-            raise ValueError()        
+
 
     @property
     def cov_chol(self):
@@ -193,7 +195,6 @@ class Gaussian:
         def from_vec(cls, vec, d, chol_add=empty_add):
 
             chol = chol_from_vec(vec, d)
-                
             scale_kwargs = {Scale.parametrization:chol + chol_add(d)}
             return cls(scale=Scale(**scale_kwargs))
 
@@ -291,7 +292,8 @@ class Student:
 
 
     def sample(key, params):
-        return params.mean + jnp.diag(params.scale) @ random.t(key, params.df, shape=(params.mean.shape[0],))
+        return params.mean + jnp.diag(params.scale) @ random.t(key, params.df, 
+                                                               shape=(params.mean.shape[0],))
 
     @staticmethod
     def logpdf(x, params):
