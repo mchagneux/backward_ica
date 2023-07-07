@@ -8,7 +8,7 @@ import src.stats as stats
 from src.training import SVITrainer, define_frozen_tree
 jax.config.update('jax_log_compiles', False)
 jax.config.update('jax_disable_jit', False)
-# jax.profiler.start_server(9999)
+jax.profiler.start_server(9999)
 
 import tensorflow as tf
 # tf.config.set_visible_devices([], 'GPU')
@@ -54,7 +54,8 @@ def main(args):
                         frozen_params=frozen_params,
                         seq_length=ys.shape[1],
                         training_mode=args.training_mode,
-                        elbo_mode=args.elbo_mode)
+                        elbo_mode=args.elbo_mode, 
+                        logging_type=args.logging_type)
 
 
 
@@ -72,7 +73,7 @@ def main(args):
     for fit_nb in range(args.num_fits):
         misc.save_params(best_params_per_fit[fit_nb], f'phi_fit_{fit_nb}', args.save_dir)
 
-    # jax.profiler.stop_server()
+    jax.profiler.stop_server()
 if __name__ == '__main__':
 
     import argparse
@@ -82,8 +83,8 @@ if __name__ == '__main__':
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--settings', type=str, default='johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu')
-    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_07_04__09_07_02')
+    parser.add_argument('--settings', type=str, default='johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu.basic_logging')
+    parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_07_07__16_47_46')
     parser.add_argument('--num_fits', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=1)
@@ -98,7 +99,7 @@ if __name__ == '__main__':
     args.save_dir = os.path.join(args.exp_dir, args.settings)
     os.makedirs(args.save_dir, exist_ok=True)
     
-    args.model, num_samples, optim, args.training_mode, args.elbo_mode, args.device = args.settings.split('.')
+    args.model, num_samples, optim, args.training_mode, args.elbo_mode, args.device, args.logging_type = args.settings.split('.')
 
     if not args.device == 'gpu': 
         jax.config.update('jax_platform_name', 'cpu')

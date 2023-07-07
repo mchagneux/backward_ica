@@ -10,6 +10,7 @@ from jax import vmap, value_and_grad, numpy as jnp
 import multiprocessing
 import optax 
 from time import time
+from jax_tqdm import scan_tqdm
 
 def define_frozen_tree(key, frozen_params, q, theta_star):
 
@@ -46,7 +47,8 @@ class SVITrainer:
                 force_full_mc=False,
                 frozen_params='',
                 training_mode='offline',
-                elbo_mode='autodiff_on_backward'):
+                elbo_mode='autodiff_on_backward',
+                logging_type='basic_logging'):
         
         self.num_epochs = num_epochs
         self.batch_size = batch_size
@@ -58,6 +60,7 @@ class SVITrainer:
                                                          precompute=['prec'])
         self.frozen_params = frozen_params
 
+        self.logging_type = logging_type
         self.elbo_mode = elbo_mode
         self.training_mode = training_mode
 
@@ -390,9 +393,12 @@ class SVITrainer:
         keys = get_keys(key_montecarlo, 
                         seq_length // self.online_batch_size, 
                         self.num_epochs)
-        
-        @jax.jit
-        def step(key, strided_ys_on_timesteps, elbo_carry, timesteps, params, opt_state):
+        strided_ys = self.elbo.preprocess(ys)
+
+        def _step(step_carry, x):
+            params, opt_state, elbo_carry = step_carry
+            key, timesteps = x 
+            strided_ys_on_timesteps = strided_ys[timesteps]
             
             if self.true_online and (not self.online_difference):
                 opt_state = self.optimizer.init(params)
@@ -425,13 +431,12 @@ class SVITrainer:
                         opt_state), \
                         (elbo, aux)
             
+            
             (elbo_carry, params, opt_state), (elbos, aux) = jax.lax.scan(inner_step, 
                                                         init=(elbo_carry, params, opt_state), 
                                                         xs=jax.random.split(key, 
                                                                             self.num_grad_steps))
-
-
-
+            
             if self.num_grad_steps > 1:
                 params_q_t, params_q_tm1_t = tree_get_idx(-1, aux)
                 aux = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
@@ -442,9 +447,18 @@ class SVITrainer:
             return (params, opt_state, elbo_carry), (elbos, aux)
         
 
+        @scan_tqdm(seq_length)
+        def tqdm_step(carry, x):
+            return _step(carry, x[1:])
+        
+
+
+        jitted_step = jax.jit(_step)
+
+
+
         absolute_step_nb = 0
 
-        # jitted_step = jax.jit(step)
 
         if self.monitor: 
             monitor_elbo = jax.jit(lambda key, ys, T, formatted_theta_star, phi:self.monitor_elbo(key, 
@@ -454,70 +468,74 @@ class SVITrainer:
                                                                                                   self.q.format_params(phi))[0] / len(ys))
         else: 
             monitor_elbo = lambda *args: 0.0
-
-        for epoch_nb, keys_epoch in enumerate(keys):
-            elbo_carry = self.init_carry
-            strided_ys = self.elbo.preprocess(ys)
-
-            timesteps_lists = self.timesteps(seq_length, None)
             
+        elbo_carry = self.init_carry
 
-            for step_nb, (timesteps, key_step) in enumerate(zip(timesteps_lists, keys_epoch)):
-
-                (params, opt_state, elbo_carry), (elbos, aux) = step(
-                                                                    key_step, 
-                                                                    strided_ys[timesteps], 
-                                                                    elbo_carry, 
-                                                                    timesteps, 
-                                                                    params, 
-                                                                    opt_state)
-    
+        if self.logging_type == 'basic_logging':
+            for epoch_nb, keys_epoch in enumerate(keys):
 
 
-                
+                print(keys_epoch.shape)
+                print('Start of scan...')
+                all_timesteps = jnp.expand_dims(jnp.arange(0, seq_length), 
+                                                axis=-1)
+                (params, opt_state, elbo_carry) = jax.lax.scan(tqdm_step, 
+                                                                init=(params, opt_state, elbo_carry),
+                                                                xs=(jnp.arange(0, seq_length),
+                                                                    keys_epoch, 
+                                                                    all_timesteps))[0]
+                return params, self.elbo.postprocess(elbo_carry)[0] / seq_length
+                                                                            
+                        
+        else: 
+            all_params, all_elbos, all_means_tm1, all_means_t = dict(), dict(), dict(), dict()
 
+            for epoch_nb, keys_epoch in enumerate(keys): 
+                timesteps_lists = self.timesteps(seq_length, None)
+                for _ , (timesteps, key_step) in enumerate(zip(timesteps_lists, 
+                                                                    keys_epoch)):
+                    carry = params, opt_state, elbo_carry
+                    x = key_step, timesteps
+                    (params, opt_state, elbo_carry), (elbos, aux) = jitted_step(carry, x)
+        
+                    if log_writer is not None:
+                        if self.num_grad_steps > 1: 
+                            t = timesteps[-1]
+                            x_t = xs[t]
+                            if t > 0: 
+                                x_tm1 = xs[t-1]
+                            with log_writer.as_default():
+                                tf.summary.scalar('Filtering RMSE', 
+                                                    jnp.sqrt(jnp.mean((x_t - aux[1])**2)),
+                                                    absolute_step_nb)
+
+                                if t > 0:
+                                    tf.summary.scalar('1-step smoothing RMSE', 
+                                                    jnp.sqrt(jnp.mean((x_tm1 - aux[0])**2)),
+                                                    absolute_step_nb)
+
+                        if self.online_batch_size != seq_length:
+                            with log_writer.as_default():
+                                for inner_step_nb, elbo in enumerate(elbos): 
+                                    tf.summary.scalar('ELBO at inner step', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)
+                    if absolute_step_nb % 100 == 0:
+                        all_params[absolute_step_nb] = params
+                        all_elbos[absolute_step_nb] = elbos[-1] 
+                    if 'truncated' in self.elbo_mode:
+                        all_means_tm1[absolute_step_nb] = aux[0]
+                        all_means_t[absolute_step_nb] = aux[1]
+                    absolute_step_nb += 1
+
+                if self.monitor: 
+                    monitor_elbo_value = monitor_elbo(key_step, ys, len(ys)-1, self.formatted_theta_star, params)
+
+                    with log_writer.as_default():
+                        tf.summary.scalar('Unbiased ELBO at epoch', monitor_elbo_value, epoch_nb)
                 if log_writer is not None:
-                    if self.num_grad_steps > 1: 
-                        t = timesteps[-1]
-                        x_t = xs[t]
-                        if t > 0: 
-                            x_tm1 = xs[t-1]
-                        with log_writer.as_default():
-                            tf.summary.scalar('Filtering RMSE', 
-                                                jnp.sqrt(jnp.mean((x_t - aux[1])**2)),
-                                                absolute_step_nb)
+                    with log_writer.as_default():
+                        tf.summary.scalar('ELBO at epoch', elbos[-1], epoch_nb)
 
-                            if t > 0:
-                                tf.summary.scalar('1-step smoothing RMSE', 
-                                                jnp.sqrt(jnp.mean((x_tm1 - aux[0])**2)),
-                                                absolute_step_nb)
-
-                    if self.online_batch_size != seq_length:
-                        with log_writer.as_default():
-                            for inner_step_nb, elbo in enumerate(elbos): 
-                                tf.summary.scalar('ELBO at inner step', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)
-
-
-
-
-                absolute_step_nb += 1 
-
-                yield params, elbos[-1], aux
-
-
-
-
-            if self.monitor: 
-                monitor_elbo_value = monitor_elbo(key_step, ys, len(ys)-1, self.formatted_theta_star, params)
-
-                with log_writer.as_default():
-                    tf.summary.scalar('Unbiased ELBO at epoch', monitor_elbo_value, epoch_nb)
-            if log_writer is not None:
-                with log_writer.as_default():
-                    tf.summary.scalar('ELBO at epoch', elbos[-1], epoch_nb)
-            
-
-            
+                return all_params, all_elbos, (all_means_tm1, all_means_t)
 
     def multi_fit(self, 
                   key, 
@@ -533,50 +551,59 @@ class SVITrainer:
         times = []
         def run_fit(fit_nb, fit_key):
 
-            log_writer = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}'))
-            if self.monitor:
-                log_writer_monitor = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}_monitor'))
+            if self.logging_type == 'tensorboard':
+                log_writer = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}'))
+                if self.monitor:
+                    log_writer_monitor = tf.summary.create_file_writer(os.path.join(tensorboard_subdir, f'fit_{fit_nb}_monitor'))
+                else:
+                    log_writer_monitor = None
             else:
+                log_writer = None 
                 log_writer_monitor = None
             print(f'Starting fit {fit_nb}/{num_fits-1}...')
 
             key_params, key_montecarlo = jax.random.split(fit_key, 2)
 
-            params, elbos, means_t, means_tm1 = dict(), dict(), dict(), dict()
 
             # time0 = time()
-            for global_step_nb, (params_at_step, elbo_at_step, aux_at_step) in enumerate(self.fit(key_params, 
-                                                                                    key_montecarlo, 
-                                                                                    data, 
-                                                                                    log_writer, 
-                                                                                    args, 
-                                                                                    log_writer_monitor)):
-                
-                if global_step_nb % 100 == 0:
-                    params[global_step_nb] = params_at_step
-                    elbos[global_step_nb] = elbo_at_step
+            if self.logging_type == 'tensorboard':
+                params, elbos, (means_tm1, means_t) = self.fit(
+                                                            key_params, 
+                                                            key_montecarlo, 
+                                                            data, 
+                                                            log_writer, 
+                                                            args, 
+                                                            log_writer_monitor)
+
+
+
+                burnin = int(0.75*self.num_epochs)
+
+                elbos = {k:v for k,v in elbos.items() if k > burnin}
+
+                best_step_for_fit = max(elbos, key=elbos.get)
 
                 if 'truncated' in self.elbo_mode:
-                    means_tm1[global_step_nb] = aux_at_step[0]
-                    means_t[global_step_nb] = aux_at_step[1]
-                #     times.append(time() - time0)
+                    jnp.save(os.path.join(log_dir, 'x_tm1.npy'), jnp.array(means_tm1)[1:])
+                    jnp.save(os.path.join(log_dir, 'x_t.npy'), jnp.array(means_t))
+
+                best_elbo_for_fit = elbos[best_step_for_fit]
+                best_params_for_fit = params[best_step_for_fit]
+                print(f'Fit {fit_nb}: best ELBO {best_elbo_for_fit:.3f} at step {best_step_for_fit}')
+                return best_params_for_fit, best_elbo_for_fit, jnp.array(times[20:])
+        
+
+            else: 
+                results = self.fit(key_params, 
+                                key_montecarlo, 
+                                data, 
+                                log_writer, 
+                                args, 
+                                log_writer_monitor)
+                return *results, jnp.array(times[20:])
                 # time0 = time()
                 
 
-            burnin = int(0.75*self.num_epochs)
-
-            elbos = {k:v for k,v in elbos.items() if k > burnin}
-
-            best_step_for_fit = max(elbos, key=elbos.get)
-
-            # if self.true_online:
-            #     jnp.save(os.path.join(log_dir, 'x_tm1.npy'), jnp.array(means_tm1)[1:])
-            #     jnp.save(os.path.join(log_dir, 'x_t.npy'), jnp.array(means_t))
-
-            best_elbo_for_fit = elbos[best_step_for_fit]
-            best_params_for_fit = params[best_step_for_fit]
-            print(f'Fit {fit_nb}: best ELBO {best_elbo_for_fit:.3f} at step {best_step_for_fit}')
-            return best_params_for_fit, best_elbo_for_fit, jnp.array(times[20:])
         
         fit_nbs = range(args.num_fits)
         fit_keys = jax.random.split(key, args.num_fits)
