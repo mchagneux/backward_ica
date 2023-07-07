@@ -595,7 +595,8 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
         pred = Gaussian.Params(mean=pred_mean, scale=Scale(cov=pred_cov))
         out = self._net.apply(params.net, obs)
 
-        return Gaussian.Params(eta1=out[0] + pred.eta1, eta2=out[1] + pred.eta2)
+        return Gaussian.Params(eta1=out[0] + pred.eta1, 
+                               eta2=out[1] + pred.eta2)
 
     def filt_params_from_state(self, state, params):
         return state

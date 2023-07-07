@@ -232,7 +232,8 @@ class LinearBackwardSmoother(BackwardSmoother):
         a_back = C @ mu - K @ a
         cov_back = C @ Sigma
 
-        return ParametricKernel.Params(Maps.LinearMapParams(A_back, a_back), Gaussian.NoiseParams(Scale(cov=cov_back)))
+        return ParametricKernel.Params(Maps.LinearMapParams(A_back, a_back), 
+                                       Gaussian.NoiseParams(Scale(cov=cov_back)))
 
     def __init__(self, state_dim):
 
@@ -321,7 +322,9 @@ class LinearBackwardSmoother(BackwardSmoother):
        
     def new_proposal_params(self, backwd_params, filt_params):
 
-        proposal_params = self.linear_gaussian_backwd_params_from_transition_and_filt(filt_params.mean, filt_params.scale.cov, backwd_params)
+        proposal_params = self.linear_gaussian_backwd_params_from_transition_and_filt(filt_params.mean, 
+                                                                                      filt_params.scale.cov, 
+                                                                                      backwd_params)
         return proposal_params
 
     def smooth_seq_at_multiple_timesteps(self, obs_seq, params, slices):

@@ -21,7 +21,7 @@ key = jax.random.PRNGKey(0)
 dummy_key = key
 
 
-paths = ['experiments/p_chaotic_rnn/2023_07_07__10_09_26']
+paths = ['experiments/p_chaotic_rnn/2023_07_07__11_20_13']
 
 from collections import defaultdict
 
@@ -30,7 +30,7 @@ rmses = defaultdict(list)
 for path in paths: 
     print('---')
     p_args = load_args('args', path)
-    models = ['johnson_backward,200.2.adam,1e-2,cst.reset,500,1.autodiff_on_backward.cpu']
+    models = ['johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu']
     # models.append(p_args.load_from)
 
     p = get_generative_model(p_args)

@@ -6,9 +6,9 @@ import src.stats.hmm as hmm
 import src.variational as variational
 import src.stats as stats
 from src.training import SVITrainer, define_frozen_tree
-jax.config.update('jax_log_compiles', True)
+jax.config.update('jax_log_compiles', False)
 jax.config.update('jax_disable_jit', False)
-jax.profiler.start_server(9999)
+# jax.profiler.start_server(9999)
 
 import tensorflow as tf
 # tf.config.set_visible_devices([], 'GPU')
@@ -41,9 +41,6 @@ def main(args):
                                         q, 
                                         theta_star)
 
-
-
-    
     trainer = SVITrainer(p=p, 
                         theta_star=theta_star,
                         q=q, 
@@ -75,7 +72,7 @@ def main(args):
     for fit_nb in range(args.num_fits):
         misc.save_params(best_params_per_fit[fit_nb], f'phi_fit_{fit_nb}', args.save_dir)
 
-    jax.profiler.stop_server()
+    # jax.profiler.stop_server()
 if __name__ == '__main__':
 
     import argparse

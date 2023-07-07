@@ -23,11 +23,11 @@ from functools import partial
 key = jax.random.PRNGKey(0)
 args = Namespace()
 
-args.model = 'chaotic_rnn_with_nonlinear_emission'
+args.model = 'chaotic_rnn'
 args.load_from = '' #data/crnn/2022-10-18_15-28-00_Train_run'
 args.loaded_seq = False
-args.state_dim, args.obs_dim = 50,200
-args.seq_length = 100
+args.state_dim, args.obs_dim = 10,10
+args.seq_length = 200_000
 
 args.num_seqs = 1
 svgd_kernel_base = lambda x,y: jnp.exp(-jnp.sum((x-y)**2 / (2*0.01)))
@@ -44,8 +44,8 @@ num_ula_steps = 10_000
 # args.default_emission_matrix = None
 
 # args.default_emission_base_scale = 0.0001
-args.emission_matrix_conditionning = None
-del args.default_emission_matrix
+# args.emission_matrix_conditionning = None
+# del args.default_emission_matrix
 
 key, key_theta, key_sampling = jax.random.split(key, 3)
 
@@ -298,16 +298,16 @@ def svgd_fit(num_steps, num_particles):
 
 # rmse = plot_x_true_against_x_pred(x_pred)
 # # # plt.savefig('parameterized_vi_example.pdf', format='pdf')
-# print('Precompiling ULA loop...')
-# # _ = ula_fit(key, 2, num_ula_particles)
-# print('Running ULA smoothing loop on joint...')
-# time0 = time()
-# x_pred = ula_fit(key, 
-#                  num_ula_steps, 
-#                  num_ula_particles)
-# x_pred.block_until_ready()
-# print('ULA time:', time() - time0)
-# rmse = plot_x_true_against_x_pred(x_pred)
+print('Precompiling ULA loop...')
+# _ = ula_fit(key, 2, num_ula_particles)
+print('Running ULA smoothing loop on joint...')
+time0 = time()
+x_pred = ula_fit(key, 
+                 num_ula_steps, 
+                 num_ula_particles)
+x_pred.block_until_ready()
+print('ULA time:', time() - time0)
+rmse = plot_x_true_against_x_pred(x_pred)
 #%%
 # print('Precompiling svgd loop...')
 # _ = svgd_fit(2, num_ula_particles)
@@ -321,16 +321,16 @@ def svgd_fit(num_steps, num_particles):
 
 print('Running ULA recursive filtering loop...')
 
-x_pred = recursive_ula_filtering(key, 
-                                 num_ula_steps, 
-                                 num_ula_particles)
+# x_pred = recursive_ula_filtering(key, 
+#                                  num_ula_steps, 
+#                                  num_ula_particles)
 
-# print('Running SMC...')
-# probs, positions = p.filt_seq(key, y[0], unformatted_theta)
-# x_pred = jax.vmap(lambda w,x: jnp.sum(jax.vmap(lambda w,x:w*x)(w,x), axis=0))(probs, positions)
-# x_pred = p.smooth_seq(key, y[0], unformatted_theta)[0]
-# x_pred = jax.vmap(lambda w,x: jnp.sum(jax.vmap(lambda w,x:w*x)(w,x), axis=0))(probs, positions)
-rmse = plot_x_true_against_x_pred(x_pred)
+# # print('Running SMC...')
+# # probs, positions = p.filt_seq(key, y[0], unformatted_theta)
+# # x_pred = jax.vmap(lambda w,x: jnp.sum(jax.vmap(lambda w,x:w*x)(w,x), axis=0))(probs, positions)
+# # x_pred = p.smooth_seq(key, y[0], unformatted_theta)[0]
+# # x_pred = jax.vmap(lambda w,x: jnp.sum(jax.vmap(lambda w,x:w*x)(w,x), axis=0))(probs, positions)
+# rmse = plot_x_true_against_x_pred(x_pred)
 #%%
 
 

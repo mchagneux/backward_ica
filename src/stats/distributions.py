@@ -141,31 +141,27 @@ class Gaussian:
         def mean(self):
             if hasattr(self, '_mean'):
                 return self._mean
-            else: 
-                return self.scale.cov @ self._eta1
+            return self.scale.cov @ self._eta1
 
         @property
         def scale(self):
             if hasattr(self, '_scale'):
                 return self._scale
-            else: 
-                return Scale(prec=-2*self._eta2)
+            return Scale(prec=-2*self._eta2)
             
         @property
         def eta1(self):
             if hasattr(self, '_eta1'):
                 return self._eta1
-            else: 
-                return self._scale.prec @ self._mean 
+            return self._scale.prec @ self._mean 
             
     
         @property
         def eta2(self):
             if hasattr(self, '_eta2'):
                 return self._eta2
-            else: 
-                return -0.5 * self._scale.prec
-            
+            return -0.5 * self._scale.prec
+        
         def tree_flatten(self):
             attrs = vars(self)
             children = attrs.values()
