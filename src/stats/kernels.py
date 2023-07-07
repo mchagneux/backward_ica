@@ -143,10 +143,10 @@ class ParametricKernel:
             self.format_output = lambda mean, noise, params: Gaussian.Params(mean, noise.scale)
             self.params_type = Gaussian.NoiseParams
             
-        elif noise_dist == Student:
+        elif noise_dist == IsotropicStudent:
             self.exponential = False
-            self.format_output = lambda mean, noise, params: Student.Params(mean=mean, df=noise.df, scale=noise.scale)
-            self.params_type = Student.NoiseParams
+            self.format_output = lambda mean, noise, params: IsotropicStudent.Params(mean=mean, df=noise.df, scale=noise.scale)
+            self.params_type = IsotropicStudent.NoiseParams
 
         if self.map_type == 'linear':
 
@@ -236,10 +236,10 @@ class ParametricKernel:
             return self.Params(self._get_random_map_params(key), 
                                self._get_random_noise_params(subkey))
 
-    def format_params(self, params):
+    def format_params(self, params, precompute=[]):
         return self.Params(
                         self._format_map_params(params.map), 
-                        self.noise_dist.format_noise_params(params.noise))
+                        self.noise_dist.format_noise_params(params.noise, precompute))
 
 class NonParametricKernel:
     

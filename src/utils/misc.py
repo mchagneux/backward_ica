@@ -554,6 +554,10 @@ def chol_from_prec(prec):
     # which is more numerically stable.
     # Refer to:
     # https://nbviewer.jupyter.org/gist/fehiepsi/5ef8e09e61604f10607380467eb82006#Precision-to-scale_tril
+    
+    if prec.ndim == 1: 
+        return 1 / jnp.sqrt(prec)
+    
     tril_inv = jnp.swapaxes(
         jnp.linalg.cholesky(prec[..., ::-1, ::-1])[..., ::-1, ::-1], -2, -1
     )
@@ -561,13 +565,19 @@ def chol_from_prec(prec):
     return jsp.linalg.solve_triangular(tril_inv, identity, lower=True)
 
 def mat_from_chol(chol):
+    if chol.ndim == 1:
+        return chol ** 2
     return jnp.matmul(chol, jnp.swapaxes(chol, -1, -2))
 
 def cholesky(mat):
+    if mat.ndim == 1: 
+        return jnp.sqrt(mat)
     return jnp.linalg.cholesky(mat)
 
 def inv_from_chol(chol):
-
+    if chol.ndim == 1: 
+        return 1 / (chol ** 2)
+    
     identity = jnp.broadcast_to(
         jnp.eye(chol.shape[-1]), chol.shape)
 
@@ -577,7 +587,11 @@ def log_det_from_cov(cov):
     return log_det_from_chol(cholesky(cov))
 
 def log_det_from_chol(chol):
-    return jnp.sum(jnp.log(jnp.diagonal(chol)**2))
+    if chol.ndim == 1:
+        diag_of_chol = chol
+    else: 
+        diag_of_chol = jnp.diagonal(chol)
+    return jnp.sum(jnp.log(diag_of_chol**2))
 
 def inv(mat):
     return inv_from_chol(cholesky(mat))

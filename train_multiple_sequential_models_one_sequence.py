@@ -5,19 +5,17 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['johnson_backward,200.200.adam,1e-3,cst.reset,500,1.autodiff_on_backward.gpu']
+settings_list = ['johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu']
 num_fits = 1
-num_epochs = 1000
+num_epochs = 1
 dims = '10 10'
 load_from = ''
 loaded_seq = False
 batch_size = 1
 num_seqs = 1
-seq_length = 500
+seq_length = 200_000
 store_every = 0
  
-
-
 os.makedirs(base_dir, exist_ok=True)
 
 date = datetime.now().strftime('%Y_%m_%d__%H_%M_%S')

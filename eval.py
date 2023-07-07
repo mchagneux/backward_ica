@@ -14,14 +14,14 @@ import os
 
 num_smoothing_samples = 1000
 plot = True
-filt = True 
+filt = False 
 online_fit = False
 
 key = jax.random.PRNGKey(0)
 dummy_key = key
 
 
-paths = ['data/archived_experiments/tmlr/2023_06_30__15_24_17']
+paths = ['experiments/p_chaotic_rnn/2023_07_07__10_09_26']
 
 from collections import defaultdict
 
@@ -30,7 +30,7 @@ rmses = defaultdict(list)
 for path in paths: 
     print('---')
     p_args = load_args('args', path)
-    models = ['johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu']
+    models = ['johnson_backward,200.2.adam,1e-2,cst.reset,500,1.autodiff_on_backward.cpu']
     # models.append(p_args.load_from)
 
     p = get_generative_model(p_args)
@@ -45,7 +45,7 @@ for path in paths:
     formatted_theta_star = p.format_params(theta_star)
 
     # x_test = p.transition_kernel.map(x, formatted_theta_star.transition).mean
-    # from src.stats.distributions import Student, Gaussian
+    # from src.stats.distributions import IsotropicStudent, Gaussian
     # y_test = p.emission_kernel.map(x_test, formatted_theta_star.emission)
     # a = 0
     seq_length = len(y)

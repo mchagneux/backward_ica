@@ -109,10 +109,10 @@ class HMM:
             params = self.set_params(params, params_to_set)
         return params 
         
-    def format_params(self, params):
+    def format_params(self, params, precompute=[]):
 
-        return self.Params(self.prior_dist.format_params(params.prior),
-                        self.transition_kernel.format_params(params.transition),
+        return self.Params(self.prior_dist.format_params(params.prior, precompute),
+                        self.transition_kernel.format_params(params.transition, precompute),
                         self.emission_kernel.format_params(params.emission))
                         
 
@@ -373,7 +373,7 @@ class NonLinearHMM(HMM):
                                     'map_info' : {'conditionning': args.emission_matrix_conditionning, 
                                     'bias': args.emission_bias,
                                     'range_params':args.range_emission_map_params}}, 
-                                'noise_dist':Student}
+                                'noise_dist':IsotropicStudent}
 
         return NonLinearHMM(args.state_dim, 
                             args.obs_dim, 
@@ -399,7 +399,7 @@ class NonLinearHMM(HMM):
                                     'map_info' : {'conditionning': args.emission_matrix_conditionning, 
                                     'bias': args.emission_bias,
                                     'range_params':args.range_emission_map_params}}, 
-                                'noise_dist':Student}
+                                'noise_dist':IsotropicStudent}
 
         return NonLinearHMM(args.state_dim, 
                             args.obs_dim, 

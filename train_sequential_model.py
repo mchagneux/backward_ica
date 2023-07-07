@@ -1,16 +1,17 @@
 import jax 
 import jax.numpy as jnp
 from src import variational
-jax.config.update('jax_log_compiles', True)
 import src.utils.misc as misc
 import src.stats.hmm as hmm
 import src.variational as variational
 import src.stats as stats
 from src.training import SVITrainer, define_frozen_tree
+jax.config.update('jax_log_compiles', True)
 jax.config.update('jax_disable_jit', False)
+jax.profiler.start_server(9999)
+
 import tensorflow as tf
 # tf.config.set_visible_devices([], 'GPU')
-jax.profiler.start_server(9999)
 
     
 def main(args):

@@ -2,6 +2,12 @@ from src.utils.misc import *
 import jax.scipy.stats as stats
 from jax.scipy.special import gammaln
 
+
+def format_as_matrix(mat):
+    if mat.ndim == 1:
+        return jnp.diag(mat)
+    return mat
+
 @register_pytree_node_class
 class Scale:
     
@@ -9,55 +15,46 @@ class Scale:
 
     def __init__(self, 
                 cov_chol=None, 
-                prec_chol=None, 
                 cov=None, 
                 prec=None):
 
         if cov_chol is not None: 
             self._cov_chol = cov_chol
+            self._cov = mat_from_chol(cov_chol)
 
-        elif prec_chol is not None: 
-            self._prec_chol = prec_chol 
-        
         elif cov is not None:
+            self._cov = cov
             self._cov_chol = cholesky(cov)
 
         elif prec is not None:
-            self._prec_chol = cholesky(prec)
+            self._prec = prec
+            self._cov_chol = chol_from_prec(prec)
 
 
     @property
     def cov_chol(self):
-        if hasattr(self, '_cov_chol'):
-            return self._cov_chol
-        else: 
-            return chol_from_prec(self.prec)
-        
-    @property
-    def prec_chol(self):
-        if hasattr(self, '_prec_chol'):
-            return self._prec_chol
-        else: 
-            return chol_from_prec(self.cov)
-
+        return format_as_matrix(self._cov_chol)
 
     @property
     def cov(self):
-        if hasattr(self, '_cov_chol'):
-            return mat_from_chol(self._cov_chol)
-        else:
-            return inv_from_chol(self._prec_chol)
-
+        if hasattr(self, '_cov'):
+            cov = self._cov
+        else: 
+            cov = mat_from_chol(self._cov_chol)
+        return format_as_matrix(cov)
+    
     @property
     def prec(self):
-        if hasattr(self, '_prec_chol'):
-            return mat_from_chol(self._prec_chol)
+        if hasattr(self, '_prec'):
+            prec = self._prec
         else:
-            return inv_from_chol(self._cov_chol)
+            prec = inv_from_chol(self._cov_chol)
+
+        return format_as_matrix(prec)
 
     @property
     def log_det(self):
-        return log_det_from_chol(self.cov_chol)
+        return log_det_from_chol(self._cov_chol)
 
 
     def tree_flatten(self):
@@ -81,14 +78,16 @@ class Scale:
 
         scale = random.uniform(key, shape=(dim,), minval=-1, maxval=1)
 
-        if parametrization == 'prec_chol':scale=1/scale
 
         return {parametrization:scale}
 
     @classmethod
-    def format(cls, scale):
-        base_scale =  {k:jnp.diag(v) for k,v in scale.items()}
-        return cls(**base_scale)
+    def format(cls, scale, precompute=[]):
+        params = cls(**scale)
+        for param_name in precompute:
+            params.__setattr__(f'_{param_name}', 
+                            params.__getattribute__(param_name))
+        return params
 
     @staticmethod
     def set_default(previous_value, default_value, parametrization):
@@ -97,7 +96,6 @@ class Scale:
         
         scale = default_value * jnp.ones_like(previous_value[parametrization])
 
-        if parametrization == 'prec_chol':scale=1/scale
         return {parametrization:scale}
 
 class Gaussian: 
@@ -166,7 +164,7 @@ class Gaussian:
             if hasattr(self, '_eta2'):
                 return self._eta2
             else: 
-                return -0.5 * self._scale.prec 
+                return -0.5 * self._scale.prec
             
         def tree_flatten(self):
             attrs = vars(self)
@@ -212,11 +210,13 @@ class Gaussian:
     
     @staticmethod
     def logpdf(x, params):
+        if params.scale.cov.ndim == 1: 
+            return jax.vmap(stats.norm.logpdf)(x, params.mean, params.scale.cov_chol).sum()
         return stats.multivariate_normal.logpdf(x, params.mean, params.scale.cov)
     
     @staticmethod
     def pdf(x, params):
-        return stats.multivariate_normal.pdf(x, params.mean, params.scale.cov)
+        return jnp.exp(Gaussian.logpdf(x, params))
 
     @classmethod
     def get_random_params(cls, key, dim):
@@ -227,16 +227,17 @@ class Gaussian:
         return cls.Params(mean, Scale.get_random(key, dim, Scale.parametrization))
 
     @classmethod
-    def format_params(cls, params):
-        return cls.Params(mean=params.mean, scale=Scale.format(params.scale))
+    def format_params(cls, params, precompute=[]):
+        return cls.Params(mean=params.mean, 
+                          scale=Scale.format(params.scale, precompute))
 
     @classmethod
     def get_random_noise_params(cls, key, dim):
         return cls.NoiseParams(Scale.get_random(key, dim, Scale.parametrization))
 
     @classmethod
-    def format_noise_params(cls, noise_params):
-        return cls.NoiseParams(Scale.format(noise_params.scale))
+    def format_noise_params(cls, noise_params, precompute=[]):
+        return cls.NoiseParams(Scale.format(noise_params.scale, precompute))
 
     @staticmethod
     def KL(params_0, params_1):
@@ -257,16 +258,16 @@ class Gaussian:
         return jnp.linalg.norm(mu_0 - mu_1, ord=2) ** 2 \
                 + jnp.trace(sigma_0 + sigma_1  - 2*jnp.sqrt(sigma_0_half @ sigma_1 @ sigma_0_half))
 
-class Student: 
+class IsotropicStudent: 
 
 
     @register_pytree_node_class
     @dataclass(init=True)
     class Params:
         
-        mean: jnp.ndarray
+        mean: jax.Array
         df: int
-        scale: Scale
+        scale: jax.Array
 
 
         def tree_flatten(self):
@@ -281,7 +282,7 @@ class Student:
     class NoiseParams:
         
         df: int
-        scale: Scale
+        scale: jax.Array
 
         def tree_flatten(self):
             return ((self.df, self.scale), None)
@@ -301,12 +302,12 @@ class Student:
         mean = params.mean 
         df = params.df
         scale = params.scale
-        return jnp.sum(jax.vmap(jax.scipy.stats.t.logpdf, 
+        return jax.vmap(jax.scipy.stats.t.logpdf, 
                                 in_axes=(0, None, 0, 0))(
                                                     x, 
                                                     df, 
                                                     mean, 
-                                                    scale))
+                                                    scale).sum()
     
         dim = params.mean.shape[0]
         df = params.df  
@@ -327,7 +328,7 @@ class Student:
     
     @staticmethod
     def pdf(x, params):
-        return jnp.exp(Student.logpdf(x, params))
+        return jnp.exp(IsotropicStudent.logpdf(x, params))
 
     @classmethod
     def get_random_params(cls, key, dim):
@@ -354,5 +355,5 @@ class Student:
         return cls.NoiseParams(df, scale)
 
     @classmethod 
-    def format_noise_params(cls, noise_params):
+    def format_noise_params(cls, noise_params, precompute=[]):
         return noise_params #cls.NoiseParams(noise_params.df, Scale.format(noise_params.scale))

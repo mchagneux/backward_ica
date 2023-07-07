@@ -54,7 +54,8 @@ class SVITrainer:
         self.q.print_num_params()
         self.p = p
         self.theta_star = theta_star
-        self.formatted_theta_star = self.p.format_params(theta_star)
+        self.formatted_theta_star = self.p.format_params(theta_star, 
+                                                         precompute=['prec'])
         self.frozen_params = frozen_params
 
         self.elbo_mode = elbo_mode
