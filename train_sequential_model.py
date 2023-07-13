@@ -6,7 +6,7 @@ import src.stats.hmm as hmm
 import src.variational as variational
 import src.stats as stats
 from src.training import SVITrainer, define_frozen_tree
-jax.config.update('jax_log_compiles', False)
+jax.config.update('jax_log_compiles', True)
 jax.config.update('jax_disable_jit', False)
 jax.profiler.start_server(9999)
 

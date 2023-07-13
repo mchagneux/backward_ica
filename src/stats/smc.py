@@ -47,56 +47,103 @@ class SMC:
 
     def compute_filt_params_seq(self, key, obs_seq, params):
 
-
-        prior_key, proposal_key, resampling_key = random.split(key,3)
         
-        init_probs, init_particles, init_likel = self.init(prior_key, obs_seq[0], params.prior, params.emission)
-
-        @jit 
         def _filter_step(carry, x):
-            probs, particles = carry
-            obs, proposal_key, resampling_key = x
-            particles = self.predict(resampling_key, proposal_key, probs, particles, params.transition)
-            probs, likel = self.update(particles, obs, params.emission)
-
+            t = x[0]
+            def _init_step(carry, x):
+                obs, key = x
+                probs, particles, likel = self.init(key, 
+                                                    obs, 
+                                                    params.prior, 
+                                                    params.emission)
+                
+                return probs, particles, likel
+            
+            def _advance_step(carry, x):
+                probs, particles = carry
+                obs, key = x
+                proposal_key, resampling_key = jax.random.split(key, 2)
+                particles = self.predict(resampling_key, 
+                                         proposal_key, 
+                                         probs, 
+                                         particles, 
+                                         params.transition)
+                probs, likel = self.update(particles, obs, params.emission)
+                return probs, particles, likel 
+            
+            probs, particles, likel = jax.lax.cond(t > 0, 
+                                                   _advance_step, 
+                                                   _init_step, 
+                                                   carry,
+                                                   x[1:]) 
+            
             return (probs, particles), (probs, particles, likel)
 
-        proposal_keys = random.split(proposal_key, len(obs_seq) - 1)
-        resampling_keys = random.split(resampling_key, len(obs_seq) - 1)
+        keys = jax.random.split(key, len(obs_seq))
+        dummy_probs = jnp.empty((self.num_filt_particles,))
+        dummy_particles = jnp.empty((self.num_filt_particles, 
+                                     self.transition_kernel.in_dim))
 
         probs, particles, likel = lax.scan(_filter_step, 
-                                        init=(init_probs, init_particles), 
-                                        xs=(obs_seq[1:], proposal_keys, resampling_keys))[1]
+                                        init=(dummy_probs, dummy_particles), 
+                                        xs=(jnp.arange(0, len(obs_seq)), obs_seq, keys))[1]
 
-        return (tree_prepend(init_probs, probs), tree_prepend(init_particles, particles)), jnp.sum(likel) + init_likel - len(obs_seq)*jnp.log(self.num_filt_particles)
+        return probs, particles, likel.sum()
 
 
-    def smooth_from_filt_seq(self, key, filt_seq, params):
+    def smoothing_paths_from_filt_seq(self, key, filt_seq, params):
 
         probs_seq, particles_seq = filt_seq
 
-        @jax.jit
         def _sample_path(key, probs_seq, particles_seq):
 
             path_keys = random.split(key, len(particles_seq))
 
-            last_sample = random.choice(path_keys[-1], a=particles_seq[-1], p=probs_seq[-1])
-
+            @jax.jit
             def _step(carry, x):
-                next_sample = carry 
-                probs, particles, key = x 
-                log_probs_backwd = jnp.log(probs) + vmap(self.transition_kernel.logpdf, in_axes=(None, 0, None))(next_sample, particles, params.transition)
-                sample = random.choice(key, a=particles, p=exp_and_normalize(log_probs_backwd))
-                return sample, sample
+                t = x[0]
+                def _last_step(carry, x):
+                    probs, particles, key = x
+                    terminal_sample = random.choice(key,
+                                                    a=particles,
+                                                    p=probs)
+                    return terminal_sample, terminal_sample
+                
+                def _other_steps(carry, x):
+                    next_sample = carry 
+                    probs, particles, key = x 
+                    log_probs_backwd = jnp.log(probs) + vmap(self.transition_kernel.logpdf, 
+                                                             in_axes=(None, 0, None))(next_sample, 
+                                                                                      particles, 
+                                                                                      params.transition)
+                    
+                    sample = random.choice(key, a=particles, p=exp_and_normalize(log_probs_backwd))
+                    return sample, sample
+                
+                return jax.lax.cond(t < len(probs_seq) - 1, 
+                                    _other_steps, 
+                                    _last_step, 
+                                    carry, x[1:])
 
-            samples = lax.scan(_step, init=last_sample, xs=(probs_seq[:-1], particles_seq[:-1], path_keys[:-1]), reverse=True)[1]
+            return lax.scan(_step, 
+                            init=jnp.empty_like(particles_seq[0][0]), 
+                            xs=(jnp.arange(0, len(probs_seq)), 
+                                probs_seq, 
+                                particles_seq, 
+                                path_keys),
+                            reverse=True)[1]
             
-            return jnp.concatenate((samples, last_sample[None,:]))
 
-        keys = random.split(key, self.num_smooth_particles)
+        paths = vmap(_sample_path, in_axes=(0,None,None))(random.split(key, self.num_smooth_particles), 
+                                                          probs_seq, 
+                                                          particles_seq)
 
-        paths = vmap(_sample_path, in_axes=(0,None,None))(keys, probs_seq, particles_seq)
+        return paths
+    
+    def smooth_from_filt_seq(self, key, filt_seq, params):
 
+        paths = self.smoothing_paths_from_filt_seq(key, filt_seq, params)
+        
         return jnp.mean(paths, axis=0), jnp.std(paths, axis=0)
         
 

@@ -402,9 +402,7 @@ class SVITrainer:
             
             if self.true_online and (not self.online_difference):
                 opt_state = self.optimizer.init(params)
-#
 
-    
             def inner_step(carry, x):
                 inner_carry, params, opt_state = carry
                 key = x
@@ -446,49 +444,62 @@ class SVITrainer:
             # if not isinstance(self.q, NonAmortizedBackwardSmoother):
             return (params, opt_state, elbo_carry), (elbos, aux)
         
-
-        @scan_tqdm(seq_length)
-        def tqdm_step(carry, x):
-            return _step(carry, x[1:])
-        
-
-
-        jitted_step = jax.jit(_step)
-
-
-
         absolute_step_nb = 0
 
 
         if self.monitor: 
-            monitor_elbo = jax.jit(lambda key, ys, T, formatted_theta_star, phi:self.monitor_elbo(key, 
-                                                                                                  ys, 
-                                                                                                  T, 
-                                                                                                  formatted_theta_star, 
-                                                                                                  self.q.format_params(phi))[0] / len(ys))
+            monitor_elbo = jax.jit(lambda key, ys, T, formatted_theta_star, phi:self.monitor_elbo(
+                                                                                    key, 
+                                                                                    ys, 
+                                                                                    T, 
+                                                                                    formatted_theta_star, 
+                                                                                    self.q.format_params(phi))[0] / len(ys))
         else: 
             monitor_elbo = lambda *args: 0.0
             
         elbo_carry = self.init_carry
 
         if self.logging_type == 'basic_logging':
-            for epoch_nb, keys_epoch in enumerate(keys):
 
-
-                print(keys_epoch.shape)
-                print('Start of scan...')
+            if self.true_online:
                 all_timesteps = jnp.expand_dims(jnp.arange(0, seq_length), 
-                                                axis=-1)
-                (params, opt_state, elbo_carry) = jax.lax.scan(tqdm_step, 
+                                                    axis=-1)
+            else: 
+                all_timesteps = jnp.array(list(self.timesteps(seq_length, None)))
+
+            if self.num_epochs == 1:
+                @scan_tqdm(len(all_timesteps))
+                def step(carry, x):
+                    return _step(carry, x[1:])
+            else: 
+                def step(carry, x):
+                    return _step(carry, x[1:])
+            
+
+
+            @scan_tqdm(self.num_epochs)
+            def _epoch_step(carry, x):
+                params, opt_state, elbo_carry = carry
+                _, keys_epoch = x
+                (params, opt_state, elbo_carry), (elbos_steps, _) = jax.lax.scan(step, 
                                                                 init=(params, opt_state, elbo_carry),
-                                                                xs=(jnp.arange(0, seq_length),
+                                                                xs=(jnp.arange(0, len(all_timesteps)),
                                                                     keys_epoch, 
-                                                                    all_timesteps))[0]
-                return params, self.elbo.postprocess(elbo_carry)[0] / seq_length
+                                                                    all_timesteps))
+
+                return (params, opt_state, elbo_carry), elbos_steps[-1][-1]
+                
+            (params, _, elbo_carry), elbos_epochs = jax.lax.scan(_epoch_step, 
+                                                 init=(params, opt_state, elbo_carry), 
+                                                 xs = (jnp.arange(0, self.num_epochs), keys))
+            
+            return params, elbos_epochs[-1] #self.elbo.postprocess(elbo_carry)[0] / seq_length
                                                                             
                         
         else: 
             all_params, all_elbos, all_means_tm1, all_means_t = dict(), dict(), dict(), dict()
+            jitted_step = jax.jit(_step)
+
 
             for epoch_nb, keys_epoch in enumerate(keys): 
                 timesteps_lists = self.timesteps(seq_length, None)
@@ -576,6 +587,7 @@ class SVITrainer:
                                                             log_writer_monitor)
 
 
+                print(elbos)
 
                 burnin = int(0.75*self.num_epochs)
 
@@ -594,13 +606,14 @@ class SVITrainer:
         
 
             else: 
-                results = self.fit(key_params, 
+                final_params, final_elbo = self.fit(key_params, 
                                 key_montecarlo, 
                                 data, 
                                 log_writer, 
                                 args, 
                                 log_writer_monitor)
-                return *results, jnp.array(times[20:])
+                print(f'Fit {fit_nb}: final ELBO {final_elbo:.3f}')
+                return final_params, final_elbo, jnp.array(times[20:])
                 # time0 = time()
                 
 

@@ -286,14 +286,14 @@ class LinearBackwardSmoother(BackwardSmoother):
                 smoothed_mean, smoothed_cov = current_marginal
                 mean = A_back @ smoothed_mean + a_back
                 cov = A_back @ smoothed_cov @ A_back.T + cov_back
-                return (mean, cov), Gaussian.Params(mean=mean, scale=Scale(cov=cov))
+                return (mean, cov), ((mean, cov), current_marginal)
 
             marginals = lax.scan(_marginal_step, 
                                     init=(lagged_filt_params_mean, lagged_filt_params_cov), 
                                     xs=backward_params_subseq, 
                                     reverse=True)[1]
 
-            return tree_append(marginals, filt_params)
+            return marginals
 
         return vmap(_compute_joint_marginal)(tree_get_slice(lag, -1, filt_params_seq), 
                                             tree_get_strides(stride=lag, tree=backwd_params_seq))

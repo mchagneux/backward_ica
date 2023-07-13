@@ -13,15 +13,15 @@ from src.utils.misc import *
 import os 
 
 num_smoothing_samples = 1000
-plot = True
-filt = False 
+plot = False
+filt = False
 online_fit = False
 
 key = jax.random.PRNGKey(0)
 dummy_key = key
+max_length = 300_000
 
-
-paths = ['experiments/p_chaotic_rnn/2023_07_07__11_20_13']
+paths = ['experiments/p_chaotic_rnn/2023_07_07__18_19_00']
 
 from collections import defaultdict
 
@@ -30,25 +30,27 @@ rmses = defaultdict(list)
 for path in paths: 
     print('---')
     p_args = load_args('args', path)
-    models = ['johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu']
+    models = ['johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu.basic_logging']
     # models.append(p_args.load_from)
 
     p = get_generative_model(p_args)
     theta_star = load_params('theta_star', path)
 
-    
-
+    # if new_sequence: 
+    #     x, y = p.sample_multiple_sequences(jax.random.PRNGKey(6546), 
+    #                                        theta_star, 10, max_length)
+    # else:
     y = jnp.load(os.path.join(path, 'obs_seqs.npy'))[0]
 
-    x = jnp.ones((p.state_dim,))
-    theta_star.transition.map['linear']['w'] = theta_star.transition.map['linear']['w'].T
-    formatted_theta_star = p.format_params(theta_star)
+    # x = jnp.ones((p.state_dim,))
+    # theta_star.transition.map['linear']['w'] = theta_star.transition.map['linear']['w'].T
+    # formatted_theta_star = p.format_params(theta_star)
 
     # x_test = p.transition_kernel.map(x, formatted_theta_star.transition).mean
     # from src.stats.distributions import IsotropicStudent, Gaussian
     # y_test = p.emission_kernel.map(x_test, formatted_theta_star.emission)
     # a = 0
-    seq_length = len(y)
+    seq_length = min(max_length, len(y))
     T = seq_length - 1
 
     if isinstance(p, LinearGaussianHMM):
@@ -57,6 +59,7 @@ for path in paths:
         else: 
             x = p.smooth_seq(y, theta_star)[0]
     else:
+        # if not new_sequence:
         x = jnp.load(os.path.join(path, 'state_seqs.npy'))[0]
 
 
@@ -126,8 +129,9 @@ for path in paths:
     x = x[:seq_length]
 
     color = 'grey'
-    plot_params = {'marker':'x',
-                'linestyle':'dashed'}
+    plot_params = {}
+    # plot_params = {'marker':'x',
+    #             'linestyle':'dashed'}
 
     nb_sigma = 1.96
 
@@ -167,14 +171,11 @@ for path in paths:
                     ax.legend()
                 # plt.suptitle(f'model: {model}, rmse: {rmse_of_best:.3f}')
                 if not 'crnn' in model:
-                    plt.savefig(os.path.join(path, model, 'eval_best.pdf'), format='pdf')
+                    plt.savefig(os.path.join(path, model, 'eval_best.png'))
 
         else: 
 
             smoothed_results, filt_results = eval_model(model)
-
-
-
 
             if filt: 
                 means, stds = filt_results
@@ -219,7 +220,7 @@ for path in paths:
                     ax.plot(x[:,dim], label='True', color='black', **plot_params)
                     ax.legend()
                 # plt.suptitle(f'model: {model}, rmse: {rmse_of_best:.3f}')
-                plt.savefig(os.path.join(path, model, 'eval_best.pdf'), format='pdf')
+                plt.savefig(os.path.join(path, model, 'eval_best.png'))
 
 for k,v in rmses.items():
     mean_of_rmse = jnp.mean(jnp.array(v))
