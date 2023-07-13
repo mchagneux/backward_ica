@@ -1,7 +1,7 @@
 #%%
 import jax, jax.numpy as jnp
 jax.config.update('jax_disable_jit', False)
-jax.config.update('jax_platform_name', 'cpu')
+jax.config.update('jax_platform_name', 'gpu')
 jax.config.update('jax_enable_x64', False)
 import dill
 
@@ -19,7 +19,7 @@ experiment_path = 'experiments/p_chaotic_rnn/2023_07_11__16_34_50'
 model_path = 'johnson_backward,200.5.adam,1e-2,cst.reset,500,1.autodiff_on_backward.cpu.basic_logging'
 full_model_path = os.path.join(experiment_path, model_path)
 p_args = load_args('args', experiment_path)
-p_args.num_particles, p_args.num_smooth_particles = 1e6, 100_000
+p_args.num_particles, p_args.num_smooth_particles = 1_000_000, 1_000
 
 x_true = jnp.load(os.path.join(experiment_path, 'state_seqs.npy'))[0]
 y = jnp.load(os.path.join(experiment_path, 'obs_seqs.npy'))[0]
@@ -111,9 +111,9 @@ def variational_analytical_marginals(y, timesteps):
 
 timesteps = jnp.arange(0, len(y)+1, 10)[1:]
 
-# smc_paths = smc_smoothing_up_to_t(key, y, timesteps)
-with open('smc_paths.dill', 'rb') as f: 
-  smc_paths = dill.load(f)
+smc_paths = smc_smoothing_up_to_t(key, y, timesteps)
+with open('smc_paths.dill', 'wb') as f: 
+  smc_paths = dill.dump(smc_paths, f)
   # smc_paths = dill.load(f)
 
 
