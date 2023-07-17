@@ -1,7 +1,7 @@
 #%%
 import jax, jax.numpy as jnp
 jax.config.update('jax_disable_jit', False)
-jax.config.update('jax_platform_name', 'cpu')
+jax.config.update('jax_platform_name', 'gpu')
 jax.config.update('jax_enable_x64', False)
 import dill
 
@@ -12,39 +12,55 @@ from src.stats.hmm import get_generative_model, LinearGaussianHMM
 from src.stats.smc import SMC
 from src.utils.misc import *
 import os
-
+model_name = 'johnson_backward,200.5.adam,1e-2,cst.reset,500,1.autodiff_on_backward.cpu.basic_logging'
 
 key = jax.random.PRNGKey(0)
-experiment_path = 'experiments/p_chaotic_rnn/2023_07_17__13_54_08'
-p_args = load_args('args', experiment_path)
+base_path = 'experiments/p_chaotic_rnn/offline_on_8_sequences_bis'
+p_args = load_args('args', os.path.join(base_path, os.listdir(base_path)[0]))
 p_args.num_particles, p_args.num_smooth_particles = 10_000, 1_000
-
-x_true = jnp.load(os.path.join(experiment_path, 'state_seqs.npy'))[0]
-y = jnp.load(os.path.join(experiment_path, 'obs_seqs.npy'))[0]
-
-
 p = get_generative_model(p_args)
-theta_star = load_params('theta_star', experiment_path)
-formatted_theta_star = p.format_params(theta_star)
-
-key, key_smc_smooth = jax.random.split(key, 2)
 smc_engine = p.smc
 
-
-# @jax.jit
-def smc_smoothing_up_to_t(key, y, timesteps):
+def smc_smoothing_up_to_t(key, formatted_theta, y):
   key, key_filt = jax.random.split(key, 2)
   log_probs, particles = smc_engine.compute_filt_params_seq(key_filt, 
                                                             y, 
-                                                            formatted_theta_star)[:-1]
+                                                            formatted_theta)[:-1]
   paths = []
   for t in tqdm(timesteps):
       key, key_smooth = jax.random.split(key, 2)
       paths.append(np.array(smc_engine.smoothing_paths_from_filt_seq(key_smooth,
                                                             (log_probs[:t], particles[:t]),
-                                                            formatted_theta_star)))
+                                                            formatted_theta)))
 
   return paths
+
+timesteps = range(100, p_args.seq_length+1, 100)
+
+
+smoothed_sequences_at_multiples_timesteps = []
+
+
+
+
+for experiment_path in os.listdir(base_path):
+  experiment_path = os.path.join(base_path, experiment_path)
+  x_true = jnp.load(os.path.join(experiment_path, 'state_seqs.npy'))[0]
+  y = jnp.load(os.path.join(experiment_path, 'obs_seqs.npy'))[0]
+  theta_star = load_params('theta_star', experiment_path)
+  formatted_theta_star = p.format_params(theta_star)
+  key, key_smc_smooth = jax.random.split(key, 2)
+  smoothed_sequences_at_multiples_timesteps.append(smc_smoothing_up_to_t(key_smc_smooth, formatted_theta_star, y))
+#%%
+with open('smc_paths.dill', 'wb') as f: 
+  # smc_paths = dill.dump(smc_paths, f)
+  smc_paths = dill.dump(smoothed_sequences_at_multiples_timesteps, f)
+
+
+
+
+# @jax.jit
+
 
 def variational_montecarlo_smoothing_up_to_t(key, y, timesteps):
 
@@ -109,13 +125,7 @@ def variational_analytical_marginals(y,timesteps):
   return marginals
 
 
-timesteps = jnp.arange(50, len(y)+1, 50)
-
 # smc_paths = smc_smoothing_up_to_t(key, y, timesteps)
-
-with open('smc_paths.dill', 'rb') as f: 
-  # smc_paths = dill.dump(smc_paths, f)
-  smc_paths = dill.load(f)
 
 
 
@@ -184,7 +194,7 @@ plt.plot(timesteps, errors_1st_moment)
 
 #%%
 
-x_smoothed_smc = jnp.mean(smc_paths[-1], axis=0)
+x_smoothed_smc = jnp.mean(smoothed_sequences_at_multiples_timesteps[-1][-1], axis=0)
 # x_smoothed_svi = jnp.mean(variational_paths[-1], axis=0)
 # x_smoothed_svi = svi_marginals[-1][0]
 # x_smoothed_svi = q.smooth_seq(y, phi)[0]
