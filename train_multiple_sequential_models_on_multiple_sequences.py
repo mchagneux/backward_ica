@@ -44,7 +44,6 @@ for load_from in [os.path.join(load_from_base_dir, path) for path in load_from_l
                                     --settings {settings} \
                                     --exp_dir {exp_dir} \
                                     --num_fits {num_fits} \
-                                    --batch_size {batch_size} \
                                     --num_epochs {num_epochs} \
                                     --store_every {store_every}',
                                 shell=True) for settings in settings_list]

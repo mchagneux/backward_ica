@@ -3,3 +3,4 @@
 *.png
 test.py
 .vscode/
+*.dill

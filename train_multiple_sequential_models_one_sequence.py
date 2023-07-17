@@ -5,14 +5,13 @@ p_model = 'chaotic_rnn'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['neural_backward_explicit_transition,200.5.adam,1e-2,cst.reset,500,1.autodiff_on_backward.cpu.basic_logging']
+settings_list = ['johnson_backward,8.5.adam,1e-2,cst.reset,500,1.autodiff_on_backward.cpu.basic_logging']
 num_fits = 1
 num_epochs = 1000
 dims = '5 5'
-load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
-loaded_seq = True
-batch_size = 1
-num_seqs = 1
+load_from = ''
+loaded_seq = False
+num_seqs = 50
 seq_length = 500
 store_every = 0
  
@@ -40,8 +39,8 @@ processes = [subprocess.Popen(f'python train_sequential_model.py \
                                 --settings {settings} \
                                 --exp_dir {exp_dir} \
                                 --num_fits {num_fits} \
-                                --batch_size {batch_size} \
                                 --num_epochs {num_epochs} \
+                                --subseq_length {seq_length} \
                                 --store_every {store_every}',
                             shell=True) for settings in settings_list]
 

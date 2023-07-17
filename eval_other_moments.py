@@ -1,7 +1,7 @@
 #%%
 import jax, jax.numpy as jnp
 jax.config.update('jax_disable_jit', False)
-jax.config.update('jax_platform_name', 'gpu')
+jax.config.update('jax_platform_name', 'cpu')
 jax.config.update('jax_enable_x64', False)
 import dill
 
@@ -15,11 +15,9 @@ import os
 
 
 key = jax.random.PRNGKey(0)
-experiment_path = 'experiments/p_chaotic_rnn/2023_07_11__16_34_50'
-model_path = 'johnson_backward,200.5.adam,1e-2,cst.reset,500,1.autodiff_on_backward.cpu.basic_logging'
-full_model_path = os.path.join(experiment_path, model_path)
+experiment_path = 'experiments/p_chaotic_rnn/2023_07_17__13_54_08'
 p_args = load_args('args', experiment_path)
-p_args.num_particles, p_args.num_smooth_particles = 1_000_000, 1_000
+p_args.num_particles, p_args.num_smooth_particles = 10_000, 1_000
 
 x_true = jnp.load(os.path.join(experiment_path, 'state_seqs.npy'))[0]
 y = jnp.load(os.path.join(experiment_path, 'obs_seqs.npy'))[0]
@@ -28,12 +26,6 @@ y = jnp.load(os.path.join(experiment_path, 'obs_seqs.npy'))[0]
 p = get_generative_model(p_args)
 theta_star = load_params('theta_star', experiment_path)
 formatted_theta_star = p.format_params(theta_star)
-
-q_args = load_args('args', full_model_path)
-q_args.state_dim, q_args.obs_dim = p_args.state_dim, p_args.obs_dim
-q = get_variational_model(q_args, p)
-phi = load_params('phi', full_model_path)
-formatted_phi = q.format_params(phi)
 
 key, key_smc_smooth = jax.random.split(key, 2)
 smc_engine = p.smc
@@ -101,20 +93,29 @@ def variational_montecarlo_smoothing_up_to_t(key, y, timesteps):
 
   return paths
     
-def variational_analytical_marginals(y, timesteps):
+def variational_analytical_marginals(y,timesteps):
+
+  full_model_path = os.path.join(experiment_path, f'johnson_backward,200.5.adam,1e-2,cst.reset,{p_args.seq_length},1.autodiff_on_backward.cpu.basic_logging')
+  q_args = load_args('args', full_model_path)
+  q_args.state_dim, q_args.obs_dim = p_args.state_dim, p_args.obs_dim
+  q = get_variational_model(q_args, p)
+  
   marginals = []
   for t in tqdm(timesteps): 
+    # model_name = f'johnson_backward,200.5.adam,1e-2,cst.reset,{t},1.autodiff_on_backward.cpu.basic_logging'
+    phi = load_params('phi', full_model_path)
     marginals.append(q.smooth_seq(y[:t], phi))
 
   return marginals
 
 
-timesteps = jnp.arange(0, len(y)+1, 10)[1:]
+timesteps = jnp.arange(50, len(y)+1, 50)
 
-smc_paths = smc_smoothing_up_to_t(key, y, timesteps)
-with open('smc_paths.dill', 'wb') as f: 
-  smc_paths = dill.dump(smc_paths, f)
-  # smc_paths = dill.load(f)
+# smc_paths = smc_smoothing_up_to_t(key, y, timesteps)
+
+with open('smc_paths.dill', 'rb') as f: 
+  # smc_paths = dill.dump(smc_paths, f)
+  smc_paths = dill.load(f)
 
 
 
@@ -163,7 +164,7 @@ def additive_errors_2nd_moment(smc_paths, svi_marginals):
   return errors
 
 errors_1st_moment = additive_errors_1st_moment(smc_paths, svi_marginals)
-errors_2nd_moment = additive_errors_2nd_moment(smc_paths, svi_marginals)
+# errors_2nd_moment = additive_errors_2nd_moment(smc_paths, svi_marginals)
 
 plt.plot(timesteps, errors_1st_moment)
 # plt.plot(timesteps, errors_2nd_moment)
@@ -185,19 +186,19 @@ plt.plot(timesteps, errors_1st_moment)
 
 x_smoothed_smc = jnp.mean(smc_paths[-1], axis=0)
 # x_smoothed_svi = jnp.mean(variational_paths[-1], axis=0)
-x_smoothed_svi = svi_marginals[-1][0]
+# x_smoothed_svi = svi_marginals[-1][0]
 # x_smoothed_svi = q.smooth_seq(y, phi)[0]
 # x_smoothed_svi = q.smooth_seq(y, phi)[0]
 
 dims = p_args.state_dim
 fig, axes = plt.subplots(dims, 1, figsize=(15,1.5*p_args.state_dim))
 for d in range(dims):
-    # axes[d].plot(x_true[:,d], label='True')
-    # axes[d].legend()
+    axes[d].plot(x_true[:,d], label='True')
+    axes[d].legend()
     axes[d].plot(x_smoothed_smc[:,d], label='FFBSi')
     axes[d].legend()
-    axes[d].plot(x_smoothed_svi[:,d], label='Variational')
-    axes[d].legend()
+    # axes[d].plot(x_smoothed_svi[:,d], label='Variational')
+    # axes[d].legend()
 #%%
 
 # seq_length = p_args.seq_length

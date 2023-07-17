@@ -41,18 +41,18 @@ class SVITrainer:
                 learning_rate, 
                 optim_options,
                 num_epochs, 
-                batch_size, 
                 seq_length,
                 num_samples=1, 
                 force_full_mc=False,
                 frozen_params='',
+                num_seqs=1,
                 training_mode='offline',
                 elbo_mode='autodiff_on_backward',
                 logging_type='basic_logging'):
         
         self.num_epochs = num_epochs
-        self.batch_size = batch_size
         self.q = q 
+        self.seq_length = seq_length
         self.q.print_num_params()
         self.p = p
         self.theta_star = theta_star
@@ -60,6 +60,7 @@ class SVITrainer:
                                                          precompute=['prec'])
         self.frozen_params = frozen_params
 
+        self.num_seqs = num_seqs
         self.logging_type = logging_type
         self.elbo_mode = elbo_mode
         self.training_mode = training_mode
@@ -268,11 +269,13 @@ class SVITrainer:
         self.get_montecarlo_keys = get_keys
 
         if self.reset:
-            init_carry = 0.0
+            init_carry = jnp.zeros((self.num_seqs,))
         else: 
             params = self.q.get_random_params(jax.random.PRNGKey(0))
             params = self._extract_params(params)
-            init_carry = self.elbo.init_carry(self._build_params(params))
+            init_carry = jax.vmap(self.elbo.init_carry, 
+                                  in_axes=None, 
+                                  length=self.num_seqs)(self._build_params(params))
 
         self.init_carry = init_carry
 
@@ -387,18 +390,17 @@ class SVITrainer:
         
         opt_state = self.optimizer.init(params)
         xs, ys = data
-        xs = xs[0]
-        ys = ys[0]
-        seq_length = ys.shape[0]
+        seq_length = self.seq_length
         keys = get_keys(key_montecarlo, 
                         seq_length // self.online_batch_size, 
                         self.num_epochs)
-        strided_ys = self.elbo.preprocess(ys)
+        
+        strided_ys = jax.vmap(self.elbo.preprocess)(ys)
 
         def _step(step_carry, x):
             params, opt_state, elbo_carry = step_carry
             key, timesteps = x 
-            strided_ys_on_timesteps = strided_ys[timesteps]
+            strided_ys_on_timesteps = strided_ys[:,timesteps]
             
             if self.true_online and (not self.online_difference):
                 opt_state = self.optimizer.init(params)
@@ -407,8 +409,8 @@ class SVITrainer:
                 inner_carry, params, opt_state = carry
                 key = x
                 
-                elbo, neg_grad, new_carry, aux = self.update(
-                                                            key, 
+                elbo, neg_grad, new_carry, aux = jax.vmap(self.update, in_axes=(0, 0, 0, None, None))(
+                                                            jax.random.split(key, len(strided_ys_on_timesteps)), 
                                                             lax.cond(timesteps[-1] > 0, 
                                                                      lambda x:x, 
                                                                      lambda x:elbo_carry,
@@ -417,6 +419,8 @@ class SVITrainer:
                                                             timesteps, 
                                                             self._build_params(params))
                 neg_grad = self._extract_params(neg_grad)
+
+                neg_grad = tree_map(partial(jnp.mean, axis=0), neg_grad)
 
                 updates, opt_state = self.optimizer.update(neg_grad, 
                                                             opt_state, 
@@ -427,7 +431,7 @@ class SVITrainer:
                 return (new_carry, 
                         new_params, 
                         opt_state), \
-                        (elbo, aux)
+                        (jnp.mean(elbo, axis=0), aux)
             
             
             (elbo_carry, params, opt_state), (elbos, aux) = jax.lax.scan(inner_step, 
@@ -436,7 +440,7 @@ class SVITrainer:
                                                                             self.num_grad_steps))
             
             if self.num_grad_steps > 1:
-                params_q_t, params_q_tm1_t = tree_get_idx(-1, aux)
+                params_q_t, params_q_tm1_t = tree_get_idx(-1, tree_get_idx(-1, aux))
                 aux = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
             else: 
                 aux = None

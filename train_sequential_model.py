@@ -6,7 +6,7 @@ import src.stats.hmm as hmm
 import src.variational as variational
 import src.stats as stats
 from src.training import SVITrainer, define_frozen_tree
-jax.config.update('jax_log_compiles', True)
+jax.config.update('jax_log_compiles', False)
 jax.config.update('jax_disable_jit', False)
 jax.profiler.start_server(9999)
 
@@ -23,9 +23,9 @@ def main(args):
 
     p = hmm.get_generative_model(misc.load_args('args', args.exp_dir))
     theta_star = misc.load_params('theta_star', args.exp_dir)
-    print(theta_star)
-    ys = jnp.load(os.path.join(args.exp_dir, 'obs_seqs.npy'))
-    xs = jnp.load(os.path.join(args.exp_dir, 'state_seqs.npy'))
+
+    ys = jnp.load(os.path.join(args.exp_dir, 'obs_seqs.npy'))[:,:args.subseq_length]
+    xs = jnp.load(os.path.join(args.exp_dir, 'state_seqs.npy'))[:,:args.subseq_length]
 
 
 
@@ -48,14 +48,14 @@ def main(args):
                         learning_rate=args.learning_rate,
                         optim_options=args.optim_options,
                         num_epochs=args.num_epochs, 
-                        batch_size=args.batch_size, 
                         num_samples=args.num_samples,
                         force_full_mc=args.full_mc,
                         frozen_params=frozen_params,
-                        seq_length=ys.shape[1],
+                        seq_length=args.subseq_length,
                         training_mode=args.training_mode,
                         elbo_mode=args.elbo_mode, 
-                        logging_type=args.logging_type)
+                        logging_type=args.logging_type,
+                        num_seqs=len(ys))
 
 
 
@@ -86,9 +86,9 @@ if __name__ == '__main__':
     parser.add_argument('--settings', type=str, default='johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu.basic_logging')
     parser.add_argument('--exp_dir', type=str, default='experiments/p_chaotic_rnn/2023_07_07__16_47_46')
     parser.add_argument('--num_fits', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=1)
     parser.add_argument('--store_every', type=int, default=0)
+    parser.add_argument('--subseq_length', type=int)
     parser.add_argument('--seed', type=int, default=0)
 
     args = parser.parse_args()
