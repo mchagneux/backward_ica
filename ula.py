@@ -26,8 +26,8 @@ args = Namespace()
 args.model = 'chaotic_rnn'
 args.load_from = '' #data/crnn/2022-10-18_15-28-00_Train_run'
 args.loaded_seq = False
-args.state_dim, args.obs_dim = 10,10
-args.seq_length = 200_000
+args.state_dim, args.obs_dim = 64,64
+args.seq_length = 1000
 
 args.num_seqs = 1
 svgd_kernel_base = lambda x,y: jnp.exp(-jnp.sum((x-y)**2 / (2*0.01)))
@@ -319,7 +319,7 @@ rmse = plot_x_true_against_x_pred(x_pred)
 # print('SVGD time:', time() - time0)
 # rmse = plot_x_true_against_x_pred(x_pred)
 
-print('Running ULA recursive filtering loop...')
+# print('Running ULA recursive filtering loop...')
 
 # x_pred = recursive_ula_filtering(key, 
 #                                  num_ula_steps, 
