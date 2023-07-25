@@ -198,7 +198,25 @@ class SVITrainer:
 
         self.optimizer = optimizer
 
-        if 'closed_form' in self.elbo_mode: 
+
+        if isinstance(self.q, ConjugateForward):
+            self.elbo = GeneralForwardELBO(self.p, 
+                                           self.q, 
+                                           num_samples)
+            print('USING AUTODIFF ON FORWARD ELBO.')
+
+            def elbo_and_grads_batch(key, ys, params):
+                def f(params):
+                    elbo, aux = self.elbo(key, 
+                                            ys, 
+                                            len(ys)-1, 
+                                            self.formatted_theta_star, 
+                                            q.format_params(params))
+                    return -elbo / len(ys), aux 
+                (neg_elbo, aux), neg_grad = jax.value_and_grad(f, has_aux=True)(params)
+                return (-neg_elbo, neg_grad), aux                
+
+        elif 'closed_form' in self.elbo_mode: 
             print('USING ANALYTICAL ELBO.')
             self.elbo = LinearGaussianELBO(self.p, self.q)
             def elbo_and_grads_batch(key, ys, params):

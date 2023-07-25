@@ -203,7 +203,7 @@ class GeneralForwardELBO:
                                 reverse=False)[1]
 
 
-            return jnp.sum(terms), 0.0
+            return jnp.sum(terms)
 
 
         parallel_sampler = vmap(_monte_carlo_sample, in_axes=(0,None,None,None))
@@ -236,7 +236,6 @@ def check_linear_gaussian_elbo(p: LinearGaussianHMM, num_seqs, seq_length):
 
     print('ELBO sanity check:', jnp.mean(
         jnp.abs(evidence_elbo - evidence_reference)))
-
 
 def check_general_elbo(mc_key, p: LinearGaussianHMM, num_seqs, seq_length, num_samples):
 

@@ -1,5 +1,5 @@
 from src.stats.hmm import LinearGaussianHMM
-from src.variational.sequential_models import NeuralBackwardSmoother, JohnsonBackward, NonAmortizedBackwardSmoother
+from src.variational.sequential_models import NeuralBackwardSmoother, JohnsonBackward, NonAmortizedBackwardSmoother, ConjugateForward
 
 def get_variational_model(args, p=None, key_for_random_params=None):
 
@@ -26,6 +26,15 @@ def get_variational_model(args, p=None, key_for_random_params=None):
 
     elif 'johnson_backward' in args.model:
         q = JohnsonBackward.from_args(args)
+
+    elif 'conjugate_forward' in args.model:
+        q = ConjugateForward(args.state_dim, 
+                             args.obs_dim, 
+                             args.transition_matrix_conditionning,
+                             args.range_transition_map_params,
+                             args.transition_bias,
+                             args.update_layers, 
+                             args.anisotropic)
 
     elif 'nonamortized' in args.model:
         q = NonAmortizedBackwardSmoother(args.state_dim, args.obs_dim, args.backwd_layers)

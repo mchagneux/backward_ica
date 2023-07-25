@@ -618,6 +618,38 @@ class JohnsonBackward(JohnsonSmoother, LinearBackwardSmoother):
 
 BackwdVar = namedtuple('BackwdVar', ['base', 'tilde'])
 
+@register_pytree_node_class
+class Var:
+    def __init__(self, eta1, eta2):
+        self.eta1 = eta1
+        self.eta2 = eta2 
+
+    def tree_flatten(self):
+        return ((self.eta1, self.eta2), None)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+    
+    @property
+    def mean(self):
+        return self.eta1
+
+    @property
+    def prec(self):
+        return self.eta2
+    
+    @property
+    def cov(self):
+        return inv(self.eta2)
+    
+    @property
+    def cov_chol(self):
+        return cholesky(inv(self.eta2))
+    
+
+
+
 class ConjugateForward(JohnsonSmoother):
     
     @staticmethod
@@ -626,29 +658,49 @@ class ConjugateForward(JohnsonSmoother):
         A, R_prec = transition_params.map.w, transition_params.noise.scale.prec
 
         eta1, eta2 = backwd_variable_tilde.eta1, backwd_variable_tilde.eta2
-        prec_forward = R_prec + eta2
+        
+        prec_forward = R_prec + (-2)*eta2
 
         K = inv(prec_forward)
 
         A_forward = K @ R_prec @ A
         b_forward = K @ eta1
 
-        return ParametricKernel.Params(map=Maps.LinearMapParams(A_forward, b_forward), 
+        return ParametricKernel.Params(
+                            map=Maps.LinearMapParams(A_forward, b_forward), 
                             noise=Gaussian.NoiseParams(Scale(prec=prec_forward)))
         
-    def __init__(self, state_dim, obs_dim, layers, anisotropic):
-        JohnsonSmoother.__init__(self, state_dim, obs_dim, layers, anisotropic)
+    def __init__(self, 
+            state_dim,
+            obs_dim, 
+            transition_matrix_conditionning, 
+            range_transition_map_params, 
+            transition_bias, 
+            update_layers, 
+            anisotropic):
         
-        self.forward_kernel=ParametricKernel.linear_gaussian(matrix_conditonning=None, 
+        JohnsonSmoother.__init__(self, 
+                                 state_dim, 
+                                 obs_dim, 
+                                 transition_matrix_conditionning, 
+                                 range_transition_map_params, 
+                                 transition_bias, 
+                                 update_layers, 
+                                 anisotropic)
+        
+        self.forward_kernel = ParametricKernel.linear_gaussian(matrix_conditonning=None, 
                                                                         bias=True, 
-                                                                        range_params=(0,1))
+                                                                        range_params=(0,1))(state_dim, state_dim)
         self.marginal_dist = Gaussian
 
     def init_filt_params(self, state, params):
-        return Gaussian.Params(eta1=state[0] + params.prior.eta1, eta2=state[1] + params.prior.eta2)
+        return Gaussian.Params(eta1=state[0] + params.prior.eta1, 
+                               eta2=state[1] + params.prior.eta2)
 
     def new_filt_params(self, state, prev_filt_params, params):
-        pred_mean, pred_cov = Kalman.predict(prev_filt_params.mean, prev_filt_params.scale.cov, params.transition)  
+        pred_mean, pred_cov = Kalman.predict(prev_filt_params.mean, 
+                                             prev_filt_params.scale.cov, 
+                                             params.transition)  
 
         pred = Gaussian.Params(mean=pred_mean, cov=pred_cov)
 
@@ -659,12 +711,13 @@ class ConjugateForward(JohnsonSmoother):
 
 
         d = self.state_dim 
-        base = Gaussian.Params(eta1=jnp.zeros((d,)), 
-                                eta2=jnp.zeros((d,d)))               
+        base = Gaussian.Params(
+                            eta1=jnp.zeros((d,)), 
+                            eta2=jnp.zeros((d,d)))               
 
 
         return BackwdVar(base=base, 
-                         tilde=Gaussian.Params(eta1=state[0], eta1=state[1]))
+                         tilde=Gaussian.Params(eta1=state[0], eta2=state[1]))
 
     def compute_state(self, obs, params):
         return self._net.apply(params.net, obs)
@@ -674,10 +727,11 @@ class ConjugateForward(JohnsonSmoother):
         next_eta1_tilde, next_eta2_tilde = next_backwd_var.tilde.eta1, next_backwd_var.tilde.eta2
 
         A, R = params.transition.map.w, params.transition.noise.scale.cov
-        K = inv(jnp.eye(self.state_dim) + next_eta2_tilde @ R)
+        K = inv(jnp.eye(self.state_dim) + (-2)*next_eta2_tilde @ R)
 
-        base = Gaussian.Params(eta1 = A.T @ K @ next_eta1_tilde, 
-                                eta2 = A.T @ K @ next_eta2_tilde @ A)
+        base = Gaussian.Params(
+                            eta1 = A.T @ K @ next_eta1_tilde, 
+                            eta2 = -0.5*(A.T @ K @ next_eta2_tilde @ A))
 
 
         tilde = Gaussian.Params(eta1=state[0] + base.eta1, 
@@ -691,7 +745,6 @@ class ConjugateForward(JohnsonSmoother):
         return self.linear_gaussian_forward_params_from_backwd_variable_and_transition(backwd_var.tilde, params.transition)
 
     def compute_state_seq(self, obs_seq, formatted_params):
-        formatted_params.compute_covs()
         return vmap(self.compute_state, in_axes=(0,None))(obs_seq, formatted_params)
 
     def compute_filt_params_seq(self, state_seq, formatted_params):
@@ -763,7 +816,6 @@ class ConjugateForward(JohnsonSmoother):
     def smooth_seq(self, obs_seq, params, lag=None):
         
         formatted_params = self.format_params(params)
-        formatted_params.compute_covs()
 
         state_seq = self.compute_state_seq(obs_seq, formatted_params)
         marginal_smoothing_stats =  self.compute_marginals(self.compute_filt_params_seq(state_seq, formatted_params),
@@ -773,7 +825,6 @@ class ConjugateForward(JohnsonSmoother):
 
     def smooth_seq_at_multiple_timesteps(self, obs_seq, params, slices):
         formatted_params = self.format_params(params)
-        formatted_params.compute_covs()
         state_seq = self.compute_state_seq(obs_seq, formatted_params)
         filt_params_seq = self.compute_filt_params_seq(state_seq, formatted_params)
 
@@ -793,7 +844,6 @@ class ConjugateForward(JohnsonSmoother):
 
     def filt_seq(self, obs_seq, params):
         formatted_params = self.format_params(params)
-        formatted_params.compute_covs()
         
         state_seq = self.compute_state_seq(obs_seq, formatted_params)
         filt_params_seq =  self.compute_filt_params_seq(state_seq, formatted_params)
