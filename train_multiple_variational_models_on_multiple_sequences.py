@@ -8,9 +8,9 @@ from src.training import SVITrainer
 import jax, jax.numpy as jnp
 import dill 
 import matplotlib
-
+from functools import partial
 from tqdm import tqdm
-exp_path = 'fitting_several_sequences'
+exp_path = 'experiments/eval_multiple_seqs/fitting_several_sequences'
 load = True
 os.makedirs(exp_path, exist_ok=True)
 
@@ -180,11 +180,11 @@ def get_vi_backwd_params(params_q):
 
 def get_vi_marginals(params_q, load):
   if load:
-    with open('vi_marginals.dill', 'rb') as f: 
+    with open(os.path.join(exp_path,'vi_marginals.dill'), 'rb') as f: 
       vi_marginals = dill.load(f)
   else: 
     vi_marginals = vi_marginals_at_multiple_timesteps(params_q)
-    with open('vi_marginals.dill', 'wb') as f: 
+    with open(os.path.join(exp_path,'vi_marginals.dill'), 'wb') as f: 
       dill.dump(vi_marginals, f)
   return vi_marginals
 
@@ -202,10 +202,11 @@ def errors_1st_moment(smc_paths, vi_marginals):
     if exp_nb not in bad_exp_nbs:
       additive_errors[exp_nb] = {}
       for t, smc_path_up_to_t, vi_marginals_up_to_t in zip(timesteps, smc_path_all_t, vi_marginals_all_t):
-        smc_means = jnp.mean(smc_path_up_to_t, axis=0)
-        vi_means = vi_marginals_up_to_t[0]
-        additive_errors[exp_nb][t] = jnp.linalg.norm(jnp.sum(smc_means, axis=0) - jnp.sum(vi_means, axis=0)).tolist()
-      marginal_errors_for_exp = jnp.linalg.norm(smc_means-vi_means, axis=1)
+        smc_means = jnp.mean(jax.vmap(jax.vmap(partial(jnp.linalg.norm,ord=1)))(smc_path_up_to_t), axis=0)
+        vi_means = jnp.linalg.norm(vi_marginals_up_to_t[0], axis=1, ord=1)
+        additive_errors[exp_nb][t] = jnp.abs(jnp.sum(smc_means, axis=0) \
+                                                     - jnp.sum(vi_means, axis=0)).tolist() / p.state_dim
+      marginal_errors_for_exp = jnp.abs(smc_means - vi_means) / p.state_dim
       marginal_errors[exp_nb] = {t:v.tolist() for t,v in enumerate(marginal_errors_for_exp) if t in timesteps}
 
   return additive_errors, marginal_errors
@@ -218,12 +219,17 @@ def errors_2nd_moment(smc_paths, vi_marginals):
     if exp_nb not in bad_exp_nbs:
       additive_errors[exp_nb] = {}
       for t, smc_path_up_to_t, vi_marginals_up_to_t in zip(timesteps, smc_path_all_t, vi_marginals_all_t):
-        smc_2nd_moment = jnp.mean(smc_path_up_to_t**2, axis=0)
-        vi_2nd_moment = vi_marginals_up_to_t[0]**2 + jax.vmap(jnp.diagonal)(vi_marginals_up_to_t[1])
-        additive_errors[exp_nb][t] = jnp.linalg.norm(jnp.sum(smc_2nd_moment, axis=0) - jnp.sum(vi_2nd_moment, axis=0)).tolist()
-      marginal_errors_for_exp = jnp.linalg.norm(smc_2nd_moment-vi_2nd_moment, axis=1)
+        # smc_2nd_moment = jnp.mean(smc_path_up_to_t**2, axis=0)
+        # vi_2nd_moment = vi_marginals_up_to_t[0]**2 + jax.vmap(jnp.diagonal)(vi_marginals_up_to_t[1])
+        # additive_errors[exp_nb][t] = jnp.linalg.norm(jnp.sum(smc_2nd_moment, axis=0) \
+        #                                              - jnp.sum(vi_2nd_moment, axis=0), ord=1).tolist() / p.state_dim
+        smc_2nd_moment = jnp.mean(jax.vmap(jax.vmap(lambda x:x.T @ x))(smc_path_up_to_t), axis=0)
+        vi_2nd_moment = jnp.sum(vi_marginals_up_to_t[0]**2 + jax.vmap(jnp.diagonal)(vi_marginals_up_to_t[1]), 
+                                axis=1)
+        additive_errors[exp_nb][t] = jnp.abs(jnp.sum(smc_2nd_moment, axis=0) \
+                                                     - jnp.sum(vi_2nd_moment, axis=0)).tolist() / p.state_dim
+      marginal_errors_for_exp = jnp.abs(smc_2nd_moment-vi_2nd_moment) / p.state_dim
       marginal_errors[exp_nb] = {t:v.tolist() for t,v in enumerate(marginal_errors_for_exp) if t in timesteps}
-
   return additive_errors, marginal_errors
 
 def errors_crossprods(smc_paths, vi_marginals, vi_backwd_params):
@@ -238,13 +244,13 @@ def errors_crossprods(smc_paths, vi_marginals, vi_backwd_params):
     if exp_nb not in bad_exp_nbs:
       additive_errors[exp_nb] = {}
       for t, smc_path_up_to_t, vi_marginals_up_to_t in zip(timesteps, smc_path_all_t, vi_marginals_all_t):
-        smc_crossprods = jnp.mean(smc_path_up_to_t[:,:-1]*smc_path_up_to_t[:,1:], axis=0)
+        smc_crossprods = jnp.mean(jax.vmap(jax.vmap(lambda x,y: x.T @ y))(smc_path_up_to_t[:,:-1], smc_path_up_to_t[:,1:]), axis=0)
         vi_1st_moment = vi_marginals_up_to_t[0]
         vi_2nd_moment = vi_1st_moment**2 + jax.vmap(jnp.diagonal)(vi_marginals_up_to_t[1])
         vi_backwd_params = tree_get_slice(0, t-1, vi_backwd_params_all_t)
-        vi_cross_prods = jax.vmap(analytical_crossprod)(vi_1st_moment[1:], vi_2nd_moment[1:], vi_backwd_params)
-        additive_errors[exp_nb][t] = jnp.linalg.norm(jnp.sum(smc_crossprods, axis=0) - jnp.sum(vi_cross_prods, axis=0)).tolist()
-      marginal_errors_for_exp = jnp.linalg.norm(smc_crossprods-vi_cross_prods, axis=1)
+        vi_cross_prods = jnp.sum(jax.vmap(analytical_crossprod)(vi_1st_moment[1:], vi_2nd_moment[1:], vi_backwd_params), axis=1)
+        additive_errors[exp_nb][t] = jnp.abs(jnp.sum(smc_crossprods, axis=0) - jnp.sum(vi_cross_prods, axis=0)).tolist() / p.state_dim
+      marginal_errors_for_exp = jnp.abs(smc_crossprods-vi_cross_prods) / p.state_dim
       marginal_errors[exp_nb] = {t:v.tolist() for t,v in enumerate(marginal_errors_for_exp) if t in timesteps}
 
   return additive_errors, marginal_errors
@@ -255,11 +261,12 @@ additive_errors_crossprods, marginal_errors_crossprods = errors_crossprods(smc_p
 
 #%%
 color = sns.color_palette()[1]
+alpha = 0.2
 def plot_errors(errors, name, ax):
   errors = pd.DataFrame.from_dict(errors).unstack().reset_index()
   errors.columns = ['Sequence', 'Timesteps', name]
-  # sns.lineplot(errors, ax=ax, x='Timesteps', y=name, c=color)
-  sns.lineplot(errors, ax=ax, x='Timesteps', y=name, style='Sequence', c=color, legend=False)  
+  sns.lineplot(errors, ax=ax, x='Timesteps', y=name, c=color)
+  sns.lineplot(errors, ax=ax, x='Timesteps', y=name, style='Sequence', c=color, legend=False, alpha=alpha)  
 
 
 matplotlib.rc('font',size=15)

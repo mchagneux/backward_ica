@@ -1,16 +1,17 @@
 import subprocess
 import os
 from datetime import datetime 
-p_model = 'chaotic_rnn'
+p_model = 'nonlinear_emission'
 base_dir = os.path.join('experiments', f'p_{p_model}')
 
 
-settings_list = ['neural_backward_explicit_transition,8_8.5.adam,1e-2,cst.reset,500,1.autodiff_on_backward.cpu.basic_logging']
+settings_list = ['johnson_backward,8_8.5.adam,1e-2,cst.reset,50,1.autodiff_on_backward.cpu.tensorboard',
+                 'neural_backward_explicit_transition,8_8.5.adam,1e-2,cst.reset,50,1.autodiff_on_backward.cpu.tensorboard']
 num_fits = 1
 num_epochs = 1000
-dims = '5 5'
-load_from = 'data/crnn/2022-10-18_15-28-00_Train_run'
-loaded_seq = True
+dims = '10 10'
+load_from = '' #data/crnn/2022-10-18_15-28-00_Train_run'
+loaded_seq = False
 num_seqs = 1
 seq_length = 500
 store_every = 0
