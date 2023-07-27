@@ -47,7 +47,7 @@ class SVITrainer:
                 frozen_params='',
                 num_seqs=1,
                 training_mode='offline',
-                elbo_mode='autodiff_on_backward',
+                elbo_mode='autodiff_on_batch',
                 logging_type='basic_logging'):
         
         self.num_epochs = num_epochs
@@ -203,7 +203,7 @@ class SVITrainer:
             self.elbo = GeneralForwardELBO(self.p, 
                                            self.q, 
                                            num_samples)
-            print('USING AUTODIFF ON FORWARD ELBO.')
+            print('USING AUTODIFF ON FORWARD BATCH ELBO.')
 
             def elbo_and_grads_batch(key, ys, params):
                 def f(params):
@@ -264,9 +264,9 @@ class SVITrainer:
             self.elbo_step = self.elbo.step
             
                 
-        elif ('autodiff_on_backward' in self.elbo_mode) and self.reset:
+        elif ('autodiff_on_batch' in self.elbo_mode) and self.reset:
             self.elbo = GeneralBackwardELBO(self.p, self.q, num_samples)
-            print('USING AUTODIFF ON BACKWARD ELBO.')
+            print('USING AUTODIFF ON BACKWARD BATCH ELBO.')
 
             def elbo_and_grads_batch(key, ys, params):
                 def f(params):

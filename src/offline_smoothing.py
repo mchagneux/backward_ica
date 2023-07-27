@@ -2,7 +2,8 @@ import jax
 from jax import vmap, lax, numpy as jnp
 from .stats.hmm import *
 from .utils.misc import *
-from src.stats import BackwardSmoother, TwoFilterSmoother
+from src.stats import BackwardSmoother
+from src.variational.sequential_models import ConjugateForward
 
 class OfflineVariationalAdditiveSmoothing:
 
@@ -149,7 +150,7 @@ GeneralBackwardELBO = lambda p, q, num_samples: OfflineVariationalAdditiveSmooth
 
 class GeneralForwardELBO:
 
-    def __init__(self, p:HMM, q:TwoFilterSmoother, num_samples=200):
+    def __init__(self, p:HMM, q:ConjugateForward, num_samples=200):
 
         self.p = p
         self.q = q
