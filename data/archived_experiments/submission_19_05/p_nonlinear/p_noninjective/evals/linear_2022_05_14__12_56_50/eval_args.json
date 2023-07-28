@@ -1,9 +1,0 @@
-{
-    "train_dir": "experiments/p_nonlinear/p_noninjective/trainings/linear/2022_05_14__12_56_50",
-    "save_dir": "experiments/p_nonlinear/p_noninjective/evals/linear_2022_05_14__12_56_50",
-    "num_seqs": 5,
-    "seq_length": 200,
-    "num_particles": 1000,
-    "step": 10,
-    "seed": 0
-}

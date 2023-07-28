@@ -1,7 +1,0 @@
-{
-    "save_dir": "experiments/p_linear/evals/q_linear_2022_05_17__19_32_42",
-    "num_seqs": 20,
-    "seq_length": 2000,
-    "step": 100,
-    "seed": 0
-}
