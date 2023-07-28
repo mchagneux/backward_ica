@@ -311,7 +311,7 @@ def get_defaults(args):
     if 'nonlinear_emission' in args.model:
         args.emission_map_layers = (8,)
         args.slope = 0 # amount of linearity in the emission function
-        args.injective = True
+        args.injective = False
 
     if ('neural_backward' in args.model) or ('johnson' in args.model) or ('conjugate' in args.model):
         ## variational family
