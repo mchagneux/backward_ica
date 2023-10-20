@@ -128,10 +128,7 @@ class SVITrainer:
         
 
         self.true_online = true_online
-
-
         self.monitor = 'monitor' in elbo_mode
-
 
         if not self.training_mode == 'closed_form':
             self.elbo_options = {}
@@ -292,8 +289,7 @@ class SVITrainer:
             params = self.q.get_random_params(jax.random.PRNGKey(0))
             params = self._extract_params(params)
             init_carry = jax.vmap(self.elbo.init_carry, 
-                                  in_axes=None, 
-                                  length=self.num_seqs)(self._build_params(params))
+                                  axis_size=self.num_seqs, in_axes=None)(self._build_params(params))
 
         self.init_carry = init_carry
 

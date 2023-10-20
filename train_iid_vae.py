@@ -1,4 +1,5 @@
 #%%
+import os
 import dataclasses
 from typing import NamedTuple
 from absl import app
@@ -9,7 +10,6 @@ import jax
 import jax.numpy as jnp
 import optax
 import tensorflow as tf
-import os
 import datetime
 from src.utils.video_datasets import load_dataset, Batch
 from src.variational.inference_nets import build_model
@@ -35,7 +35,7 @@ class Config:
   training_steps: int = 20000
   eval_every: int = 100
   seed: int = 0
-  dataset_path: str = 'datasets/2023_04_17__17_36_33'
+  dataset_path: str = 'data/video_datasets/2023_04_17__17_36_33'
 
 #%%
 
@@ -49,7 +49,6 @@ class TrainingState(NamedTuple):
 
 def main(_):
 
-  flags.FLAGS.alsologtostderr = True
   config = Config()
 
   serializer.save_config(config)
@@ -63,7 +62,6 @@ def main(_):
   if config.vae_type == 'gaussian':
     @jax.jit
     def loss_fn(params, rng_key, batch: Batch) -> jax.Array:
-      """ELBO loss: E_p[log(x)] - KL(d||q), where p ~ Be(0.5) and q ~ N(0,1)."""
 
       # Run the model on the inputs.
       _, mean_z, var_z, mean_x, var_x = model.apply(params, rng_key, batch.image)
@@ -158,5 +156,5 @@ def main(_):
   serializer.save_params(state.params)
 
 
-if __name__ == "__main__":
-  app.run(main)
+if __name__ == '__main__':
+  main()

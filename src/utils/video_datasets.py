@@ -60,7 +60,7 @@ def load_dataset(path:str, split: str, batch_size: int, seed: int, binarize=Fals
 if __name__ == '__main__':
   #%%
   import matplotlib.pyplot as plt
-  ds = load_dataset('../datasets/2023_04_17__17_36_33', split='train', batch_size=10, seed=0)
+  ds = load_dataset('data/video_datasets/2023_04_17__17_36_33', split='train', batch_size=10, seed=0)
   batch = next(ds)
   for i in range(10):
      print(batch.label)
