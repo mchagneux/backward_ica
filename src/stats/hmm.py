@@ -8,7 +8,7 @@ from src.stats.kernels import *
 from jax.flatten_util import ravel_pytree
 from jax import lax, vmap
 from src.utils.misc import * 
-
+from jax_tqdm import scan_tqdm
 
 from functools import partial
 import optax
@@ -115,7 +115,6 @@ class HMM:
                         self.transition_kernel.format_params(params.transition, precompute),
                         self.emission_kernel.format_params(params.emission))
                         
-
     def sample_prior(self, key, params, seq_length):
 
         params = self.format_params(params)
@@ -133,7 +132,6 @@ class HMM:
         _, state_seq = lax.scan(_state_sample, init=prior_sample, xs=state_keys[1:])
 
         return tree_prepend(prior_sample, state_seq)
-
 
     def sample_seq(self, key, params, seq_length):
 
@@ -418,7 +416,8 @@ class NonLinearHMM(HMM):
                 num_particles=None, 
                 num_smooth_particles=None):
                 
-                                                
+        self.num_particles = num_particles
+
         HMM.__init__(self, 
                     state_dim, 
                     obs_dim, 
@@ -568,3 +567,59 @@ class NonLinearHMM(HMM):
 
         
         return params, avg_logls
+
+
+
+    
+
+
+    def ula_smoothing(self, key, y, params, h, num_steps):
+
+        theta = self.format_params(params)
+
+        def joint_logl(x):
+            init_term = self.prior_dist.logpdf(x[0], theta.prior)
+            emission_terms = jax.vmap(self.emission_kernel.logpdf, 
+                                        in_axes=(0,0,None))(
+                                                        y, 
+                                                        x,
+                                                        theta.emission)
+            
+            transition_terms = jax.vmap(self.transition_kernel.logpdf, 
+                                        in_axes=(0,0,None))(x[1:], 
+                                                            x[:-1], 
+                                                            theta.transition)
+            return init_term + jnp.sum(emission_terms) + jnp.sum(transition_terms)
+
+        key, key_init = jax.random.split(key, 2)
+        keys = jax.random.split(key, num_steps)
+
+        x_init = jax.jit(jax.vmap(self.sample_prior, in_axes=(0,None,None)), static_argnums=2)(
+                                                jax.random.split(key_init, self.num_particles), 
+                                                params, 
+                                                len(y))
+        
+
+        scan_tqdm(len(keys))
+        def _step(x, input):
+            _, key = input
+            grad_log_l = jax.vmap(jax.grad(joint_logl))(x)
+            x += h*grad_log_l + jnp.sqrt(2*h)*jax.random.normal(key, shape=(self.num_particles, 
+                                                                        len(y), 
+                                                                        self.state_dim))
+            return x, None
+
+        
+        steps = jnp.arange(len(keys))
+        x_end = jax.lax.scan(
+                            _step, 
+                            init=x_init, 
+                            xs=(steps, keys))[0]
+
+
+        x_pred = jnp.mean(x_end, 
+                            axis=0)
+
+        return x_pred 
+
+

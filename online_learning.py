@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import os
-jax.config.update('jax_platform_name', 'cpu')
+jax.config.update('jax_platform_name', 'gpu')
+# jax.config.update('jax_disable_jit', True)
 
 from src.utils.misc import get_defaults, save_args, load_args, tree_get_slice
 from src.stats.hmm import get_generative_model, HMM
@@ -30,6 +31,7 @@ def set_p_args(load, model, seq_length, n_bootstrap, n_ffbsi, exp_path, d_x, d_y
     p_args = argparse.Namespace()
     p_args.state_dim, p_args.obs_dim = d_x, d_y
     p_args.model = model
+    # p_args.load_from = 'data/crnn/2023-06-09_15-46-10_Train_run'
     p_args.load_from = ''
     p_args.loaded_seq = False
     p_args.seq_length = seq_length
@@ -39,7 +41,7 @@ def set_p_args(load, model, seq_length, n_bootstrap, n_ffbsi, exp_path, d_x, d_y
   p_args.num_smooth_particles = n_ffbsi
   return p_args
 
-def set_q_args(load, exp_path, num_epochs, p_args, model):
+def set_q_args(load, exp_path, p_args, model):
   model_path = os.path.join(exp_path, model)
   if load: 
     q_args = load_args('q_args', model_path)
@@ -52,10 +54,14 @@ def set_q_args(load, exp_path, num_epochs, p_args, model):
     q_args.optimizer = 'adam'
     q_args.learning_rate = 1e-3
     q_args.optim_options = 'cst'
-    q_args.num_epochs = num_epochs
-    q_args.num_samples = 100
+    q_args.num_epochs = 1
+    q_args.num_samples = 50
     q_args.training_mode = 'true_online,1,difference'
     q_args.elbo_mode = 'score,paris,bptt_depth_2'
+
+    # q_args.training_mode = f'reset,{p_args.seq_length},1'
+    # q_args.elbo_mode = 'autodiff_on_batch'
+
     q_args.logging_type = 'basic_logging'
     save_args(q_args, 'q_args', model_path)
   return q_args
@@ -103,12 +109,14 @@ def get_params_q(key, p, theta, p_args, q_args, data, load, exp_path):
                        logging_type=q_args.logging_type)
 
   key, key_params, key_mc = jax.random.split(key, 3)
-  fitted_params, final_elbo = trainer.fit(key_params, 
+  fitted_params, elbos = trainer.fit(key_params, 
                                   key_mc, 
                                   data, 
                                   None,
                                   q_args,
                                   None)
+
+  plt.plot(elbos.squeeze())
 
   with open(os.path.join(exp_path, q_args.model, 'params'), 'wb') as f: 
       dill.dump(fitted_params, f)
@@ -127,14 +135,14 @@ else:
   load = True
 
 p_model = 'chaotic_rnn'
-seq_length = 10_000
-n_bootstrap = 10_000
+seq_length = 100_000
+n_bootstrap = 10
 n_ffbsi = 50
-d_x, d_y = 5,5
+d_x, d_y = 20,20
 num_epochs_vi_learning = 1
 
 key = jax.random.PRNGKey(0)
-q_model = 'johnson_backward,8_8'
+q_model = 'johnson_backward,100'
 
 key, key_theta, key_train_seqs, key_smc, key_vi = jax.random.split(key, 5)
 p_args = set_p_args(load, 
@@ -152,15 +160,19 @@ p, theta = get_generative_model(p_args,
 
 xs, ys = get_sequence(key_train_seqs, p, theta, p_args, load, exp_path, '')
 
-q_args = set_q_args(load, exp_path, num_epochs_vi_learning, p_args, q_model)
+#%%
+# smoothed_means_ula = p.ula_smoothing(key, ys[0], theta, 0.001, 5_000)
+#%%
+q_args = set_q_args(load, exp_path, p_args, q_model)
 q, params_q = get_params_q(key_vi, p, theta, p_args, q_args, (xs, ys), load, exp_path)  
 #%%
+burnin = 10_000
 smoothed_means = q.smooth_seq(ys[0], params_q)[0]
 #%%
 fig, axes = plt.subplots(d_x, 1, figsize=(20,15))
 plt.autoscale(True)
 for d in range(d_x):
-  axes[d].plot(xs[0][:,d], label='True states')
-  axes[d].plot(smoothed_means[:,d], label='Smoothed states')
+  axes[d].plot(xs[0][burnin:,d], label='True states')
+  axes[d].plot(smoothed_means[burnin:,d], label='Smoothed states')
   axes[d].legend()
 #%%

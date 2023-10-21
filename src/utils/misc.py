@@ -299,7 +299,7 @@ def get_defaults(args):
         args.range_emission_map_params = (-1,1)
         args.default_emission_df = 2 # degrees of freedom for the emission noise
         args.default_emission_matrix = 1.0 # diagonal values for the emission matrix
-        args.transition_bias = True 
+        args.transition_bias = False 
         args.emission_bias = False
     else:
         args.transition_matrix_conditionning = 'diagonal'

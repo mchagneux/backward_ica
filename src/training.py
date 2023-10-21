@@ -495,7 +495,7 @@ class SVITrainer:
             
 
 
-            @scan_tqdm(self.num_epochs)
+            # @scan_tqdm(self.num_epochs)
             def _epoch_step(carry, x):
                 params, opt_state, elbo_carry = carry
                 _, keys_epoch = x
@@ -505,13 +505,13 @@ class SVITrainer:
                                                                     keys_epoch, 
                                                                     all_timesteps))
 
-                return (params, opt_state, elbo_carry), elbos_steps[-1][-1]
+                return (params, opt_state, elbo_carry), elbos_steps
                 
             (params, _, elbo_carry), elbos_epochs = jax.lax.scan(_epoch_step, 
                                                  init=(params, opt_state, elbo_carry), 
                                                  xs = (jnp.arange(0, self.num_epochs), keys))
             
-            return params, elbos_epochs[-1] #self.elbo.postprocess(elbo_carry)[0] / seq_length
+            return params, elbos_epochs #self.elbo.postprocess(elbo_carry)[0] / seq_length
                                                                             
                         
         else: 
