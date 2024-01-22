@@ -485,17 +485,12 @@ class SVITrainer:
             else: 
                 all_timesteps = jnp.array(list(self.timesteps(seq_length, None)))
 
-            if self.num_epochs == 1:
-                @scan_tqdm(len(all_timesteps))
-                def step(carry, x):
-                    return _step(carry, x[1:])
-            else: 
-                def step(carry, x):
-                    return _step(carry, x[1:])
-            
+            # @scan_tqdm(len(all_timesteps))
+            def step(carry, x):
+                return _step(carry, x[1:])
 
 
-            # @scan_tqdm(self.num_epochs)
+            @scan_tqdm(self.num_epochs)
             def _epoch_step(carry, x):
                 params, opt_state, elbo_carry = carry
                 _, keys_epoch = x
@@ -504,7 +499,9 @@ class SVITrainer:
                                                                 xs=(jnp.arange(0, len(all_timesteps)),
                                                                     keys_epoch, 
                                                                     all_timesteps))
-
+                if self.true_online and self.num_epochs > 1:
+                    opt_state = self.optimizer.init(params)
+                    elbo_carry = self.init_carry
                 return (params, opt_state, elbo_carry), elbos_steps
                 
             (params, _, elbo_carry), elbos_epochs = jax.lax.scan(_epoch_step, 

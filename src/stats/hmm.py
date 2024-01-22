@@ -3,6 +3,8 @@ from jax.tree_util import tree_leaves
 from src.stats import LinearBackwardSmoother, State
 from src.stats.kalman import Kalman
 from src.stats.smc import SMC
+from src.stats.ula import ULA
+
 from src.stats.distributions import * 
 from src.stats.kernels import * 
 from jax.flatten_util import ravel_pytree
@@ -380,7 +382,29 @@ class NonLinearHMM(HMM):
                             prior_dist = Gaussian,
                             num_particles = args.num_particles, 
                             num_smooth_particles=args.num_smooth_particles)
+
+    @staticmethod    
+    def stochastic_volatility(args):
+        nonlinear_map_forward = Maps.stochastic_vol_map
+        transition_kernel_def = {'map':{'map_type':'linear',
+                                        'map_info' : {'conditionning': args.transition_matrix_conditionning, 
+                                        'bias': args.transition_bias,
+                                        'range_params':args.range_transition_map_params}}, 
+                                'noise_dist':Gaussian}
         
+        emission_kernel_def = {'map':{'map_type':'nonlinear',
+                                    'map_info' : {'homogeneous': True},
+                                    'map': nonlinear_map_forward},
+                            'noise_dist':Gaussian}
+        
+        return NonLinearHMM(args.state_dim,
+                            args.obs_dim,
+                            transition_kernel_def,
+                            emission_kernel_def,
+                            prior_dist=Gaussian,
+                            num_particles=args.num_particles,
+                            num_smooth_particles=args.num_smooth_particles)
+
     @staticmethod
     def chaotic_rnn_with_nonlinear_emission(args):
         nonlinear_map_forward = partial(Maps.chaotic_map, 
@@ -417,6 +441,7 @@ class NonLinearHMM(HMM):
                 num_smooth_particles=None):
                 
         self.num_particles = num_particles
+        self.num_smooth_particles = num_smooth_particles
 
         HMM.__init__(self, 
                     state_dim, 
@@ -430,7 +455,9 @@ class NonLinearHMM(HMM):
                     self.prior_dist, 
                     num_particles,
                     num_smooth_particles)
-
+        
+        self.ula = ULA(self)
+        
     def likelihood_seq(self, key, obs_seq, params):
 
         return self.smc.compute_filt_params_seq(key, 
@@ -569,57 +596,10 @@ class NonLinearHMM(HMM):
         return params, avg_logls
 
 
-
-    
-
-
-    def ula_smoothing(self, key, y, params, h, num_steps):
-
-        theta = self.format_params(params)
-
-        def joint_logl(x):
-            init_term = self.prior_dist.logpdf(x[0], theta.prior)
-            emission_terms = jax.vmap(self.emission_kernel.logpdf, 
-                                        in_axes=(0,0,None))(
-                                                        y, 
-                                                        x,
-                                                        theta.emission)
-            
-            transition_terms = jax.vmap(self.transition_kernel.logpdf, 
-                                        in_axes=(0,0,None))(x[1:], 
-                                                            x[:-1], 
-                                                            theta.transition)
-            return init_term + jnp.sum(emission_terms) + jnp.sum(transition_terms)
-
-        key, key_init = jax.random.split(key, 2)
-        keys = jax.random.split(key, num_steps)
-
-        x_init = jax.jit(jax.vmap(self.sample_prior, in_axes=(0,None,None)), static_argnums=2)(
-                                                jax.random.split(key_init, self.num_particles), 
-                                                params, 
-                                                len(y))
-        
-
-        scan_tqdm(len(keys))
-        def _step(x, input):
-            _, key = input
-            grad_log_l = jax.vmap(jax.grad(joint_logl))(x)
-            x += h*grad_log_l + jnp.sqrt(2*h)*jax.random.normal(key, shape=(self.num_particles, 
-                                                                        len(y), 
-                                                                        self.state_dim))
-            return x, None
-
-        
-        steps = jnp.arange(len(keys))
-        x_end = jax.lax.scan(
-                            _step, 
-                            init=x_init, 
-                            xs=(steps, keys))[0]
-
-
-        x_pred = jnp.mean(x_end, 
-                            axis=0)
-
-        return x_pred 
-
-
+    def smooth_ula(self, key, y, params, num_steps, h, num_particles):
+        return self.ula.fit(key, 
+                            y, 
+                            params, 
+                            num_steps, 
+                            h, 
+                            num_particles)

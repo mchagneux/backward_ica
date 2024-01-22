@@ -303,7 +303,7 @@ def get_defaults(args):
         args.emission_bias = False
     else:
         args.transition_matrix_conditionning = 'diagonal'
-        args.range_transition_map_params = [0.98, 0.99]
+        args.range_transition_map_params = [0.9,1]
         args.transition_bias = False
         args.emission_bias = False
 
@@ -311,7 +311,7 @@ def get_defaults(args):
     if 'nonlinear_emission' in args.model:
         args.emission_map_layers = (8,)
         args.slope = 0 # amount of linearity in the emission function
-        args.injective = False
+        args.injective = True
 
     if ('neural_backward' in args.model) or ('johnson' in args.model) or ('conjugate' in args.model):
         ## variational family

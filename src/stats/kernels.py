@@ -44,6 +44,17 @@ class Maps:
         return net(input)
     
     @staticmethod
+    def stochastic_vol_map(x, out_dim):
+        linear_map = hk.Linear(out_dim, 
+                            with_bias=False, 
+                            w_init=hk.initializers.VarianceScaling(
+                                                                1.0, 
+                                                                'fan_avg', 
+                                                                'normal'))
+        return linear_map(jnp.exp(x/2))
+
+    
+    @staticmethod
     def neural_map_noninjective(input, layers, slope, out_dim):
 
         net = hk.nets.MLP((*layers, out_dim), 
@@ -70,7 +81,8 @@ class Maps:
     
     @staticmethod
     def nonlinear_map_apply(map_params, input):
-        return jnp.sin(Maps.linear_map_apply(map_params, input)**2)
+
+        return -Maps.linear_map_apply(map_params, input)**3 #+ Maps.linear_map_apply(map_params, input)**3)
 
     @classmethod
     def linear_map_init_params(cls, key, dummy_in, out_dim, conditionning, bias, range_params):

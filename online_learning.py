@@ -3,14 +3,11 @@ import argparse
 import jax, jax.numpy as jnp
 import dill 
 import matplotlib
-from functools import partial
-from tqdm import tqdm
 from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
-import pandas as pd
 import os
-jax.config.update('jax_platform_name', 'gpu')
+jax.config.update('jax_platform_name', 'cpu')
 # jax.config.update('jax_disable_jit', True)
 
 from src.utils.misc import get_defaults, save_args, load_args, tree_get_slice
@@ -138,7 +135,7 @@ p_model = 'chaotic_rnn'
 seq_length = 100_000
 n_bootstrap = 10
 n_ffbsi = 50
-d_x, d_y = 20,20
+d_x, d_y = 10,10
 num_epochs_vi_learning = 1
 
 key = jax.random.PRNGKey(0)

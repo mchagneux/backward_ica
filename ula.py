@@ -24,22 +24,25 @@ key = jax.random.PRNGKey(0)
 args = Namespace()
 
 args.model = 'chaotic_rnn'
-args.load_from = '' #data/crnn/2022-10-18_15-28-00_Train_run'
+args.load_from = '' # 'data/crnn/2022-10-18_15-28-00_Train_run'
 args.loaded_seq = False
-args.state_dim, args.obs_dim = 64,64
-args.seq_length = 1000
+args.state_dim, args.obs_dim = 100,200
+args.seq_length = 30_000
 
 args.num_seqs = 1
 svgd_kernel_base = lambda x,y: jnp.exp(-jnp.sum((x-y)**2 / (2*0.01)))
 
 args = get_defaults(args)
+args.emission_matrix_conditionning = None
+del args.default_emission_matrix
+
 args.num_particles = 10_000
 args.num_smooth_particles = 50
 num_ula_particles = args.num_smooth_particles
 h = 1e-3
 num_parametric_vi_samples = args.num_smooth_particles
 num_epochs_parametric_vi = 1_000
-num_ula_steps = 10_000
+num_ula_steps = 10
 
 # args.default_emission_matrix = None
 
@@ -52,7 +55,7 @@ key, key_theta, key_sampling = jax.random.split(key, 3)
 # p = NonLinearHMM.chaotic_rnn(args)
 
 p, unformatted_theta = get_generative_model(args, key_theta)
-
+#%%
 # unformatted_theta = p.get_random_params(key_theta)
 theta = p.format_params(unformatted_theta)
 
@@ -67,7 +70,7 @@ x_true, y = p.sample_multiple_sequences(key_sampling,
 
 def plot_x_true_against_x_pred(x_pred):
   dims = args.state_dim
-  fig, axes = plt.subplots(dims, 1, figsize=(15,1.5*args.state_dim))
+  fig, axes = plt.subplots(dims, 1, figsize=(15,2*args.state_dim))
   for dim in range(dims):
     axes[dim].plot(x_true[0][:,dim], c='red', label='True')
     axes[dim].plot(x_pred[:,dim], c='green', label='Pred')
@@ -84,7 +87,7 @@ def variational_fit(num_epochs, num_samples, mode='offline'):
 
   if mode == 'offline':
     training_mode = f'reset,{args.seq_length},1'
-    elbo_mode = 'autodiff_on_backward'
+    elbo_mode = 'autodiff_on_batch'
     learning_rate = 1e-2
 
   else: 
@@ -94,7 +97,6 @@ def variational_fit(num_epochs, num_samples, mode='offline'):
     learning_rate = 1e-3
   
   optim_options = 'cst'
-  batch_size = 1
   optimizer = 'adam'
 
   q = JohnsonBackward(args.state_dim, 
@@ -102,32 +104,35 @@ def variational_fit(num_epochs, num_samples, mode='offline'):
                       'diagonal', 
                       (0.9,0.99), 
                       False, 
-                      (100,), 
+                      (8,), 
                       False)
 
-  q_trainer = SVITrainer(p, 
-                        unformatted_theta,
-                        q, 
-                        optimizer,
-                        learning_rate,
-                        optim_options,
-                        num_epochs,
-                        batch_size,
-                        args.seq_length,
-                        num_samples,
-                        False,
-                        '',
-                        training_mode,
-                        elbo_mode)
-  progress_bar = tqdm(total=num_epochs,
-                      desc='ELBO')
+  q_trainer = SVITrainer(p=p, 
+                        theta_star=unformatted_theta,
+                        q=q, 
+                        optimizer=optimizer, 
+                        learning_rate=learning_rate,
+                        optim_options=optim_options,
+                        num_epochs=num_epochs,
+                        seq_length=args.seq_length,
+                        num_samples=num_samples,
+                        force_full_mc=False,
+                        frozen_params='',
+                        num_seqs=1,
+                        training_mode=training_mode,
+                        elbo_mode=elbo_mode,
+                        logging_type='basic_logging')
+  
+  # progress_bar = tqdm(total=num_epochs,
+  #                     desc='ELBO')
   data = (x_true, y)
   key = jax.random.PRNGKey(0)
   key_params, key_montecarlo = jax.random.split(key, 2)
-  for params, elbo, _ in q_trainer.fit(key_params, key_montecarlo, data, None, args):
-    progress_bar.update(1)
-    progress_bar.set_postfix({'ELBO':elbo})
-  progress_bar.close()
+  params, elbos = q_trainer.fit(key_params, key_montecarlo, data, None, args)
+  # for params, elbo, _ in q_trainer.fit(key_params, key_montecarlo, data, None, args):
+  #   progress_bar.update(1)
+  #   progress_bar.set_postfix({'ELBO':elbo})
+  # progress_bar.close()
 
   x_pred = q.smooth_seq(y[0], params)[0]
 
@@ -163,6 +168,72 @@ def l_theta_recursive(x):
 
 l_theta = l_theta_vmapped
 
+
+def recursive_ula_smoothing(key, num_steps_per_timestep, num_particles):
+
+  key, key_init = jax.random.split(key, 2)
+
+  x_dummy = jnp.empty(shape=(num_particles, p.state_dim))
+
+  x_init = jax.vmap(p.prior_dist.sample, 
+                    in_axes=(0,None))(jax.random.split(key_init, 
+                                                       num_particles), 
+                                      theta.prior)
+  x = jnp.stack([x_dummy, x_init], axis=1)
+  
+  def proposal(key, x_tm1):
+    return p.transition_kernel.sample(key, x_tm1, theta.transition)
+
+  def l_t(t, x_tm1, x_t):
+
+
+    y_t = y[0][t]
+    def l_0(x_m1, x_0):
+      return p.prior_dist.logpdf(x_0, theta.prior) \
+      + p.emission_kernel.logpdf(y_t, x_0, theta.emission)
+    
+    def l_t(x_tm1, x_t):
+      return p.transition_kernel.logpdf(x_t, x_tm1, theta.transition) \
+      + p.emission_kernel.logpdf(y_t, x_t, theta.emission)
+    
+    return jax.lax.cond(t == 0, 
+                        l_0, 
+                        l_t, 
+                        x_tm1,
+                        x_t)
+  
+  def _step(x, key):
+
+
+    key_langevin, key_proposal = jax.random.split(key, 2)
+
+    l_0t = lambda x: jax.vmap(l_t)(jnp.arange(len(x)-1), 
+                                   x[:-1], 
+                                   x[1:]).sum()
+    
+    def _langevin_step(x, key):
+    
+      grad_l0t = jax.vmap(jax.grad(l_0t))(x)
+
+      x += h*grad_l0t + jnp.sqrt(2*h)*jax.random.normal(key_langevin, shape=x.shape)
+      return x,None 
+    
+    x = jax.lax.scan(_langevin_step, 
+                     init=x, 
+                     xs=jax.random.split(key_langevin, num_steps_per_timestep))[0]
+    
+    x_tp1 = jax.vmap(proposal)(jax.random.split(key_proposal, num_particles),  
+                               x[:,-1]).reshape(num_particles, 1, p.state_dim)
+
+    x = jnp.concatenate([x, x_tp1], axis=1)
+
+    return x
+  
+  for key in tqdm(jax.random.split(key, len(y[0]))):
+    x = _step(x, key)
+
+  return jnp.mean(x[:,1:-1], axis=0)
+    
 def ula_fit(key, 
             num_steps, 
             num_particles):
@@ -298,16 +369,36 @@ def svgd_fit(num_steps, num_particles):
 
 # rmse = plot_x_true_against_x_pred(x_pred)
 # # # plt.savefig('parameterized_vi_example.pdf', format='pdf')
-print('Precompiling ULA loop...')
+# print('Precompiling ULA loop...')
 # _ = ula_fit(key, 2, num_ula_particles)
-print('Running ULA smoothing loop on joint...')
-time0 = time()
-x_pred = ula_fit(key, 
-                 num_ula_steps, 
-                 num_ula_particles)
-x_pred.block_until_ready()
-print('ULA time:', time() - time0)
+# print('Running ULA smoothing loop on joint...')
+# time0 = time()
+
+# x_pred = recursive_ula_smoothing(key, 1, num_ula_particles)
+# x_pred = variational_fit(num_epochs_parametric_vi, num_samples=2, mode='offline')
+# x_pred = p.smooth_ula(key, y[0], unformatted_theta, num_ula_steps, h, num_ula_particles)
+# x_pred = ula_fit(key, 
+#                  num_ula_steps, 
+#                  num_ula_particles)
+# x_pred.block_until_ready()
+# print('ULA time:', time() - time0)
+# x_pred = recursive_ula_filtering(key, 
+#                                  num_ula_steps // 500, 
+#                                  num_ula_particles)
+
+# #%%
+# probs, particles = p.smc.compute_filt_params_seq(key, y[0], theta)[:-1]
+
+# x_pred = jax.vmap(lambda particles, weights: jnp.average(a=particles, axis=0, weights=weights))(particles, probs)
+
+# rmse = plot_x_true_against_x_pred(x_pred)
+# plt.savefig('smc_100k.pdf',format='pdf')
+#%%
+x_pred = recursive_ula_filtering(key, 
+                                 num_ula_steps, 
+                                 num_ula_particles)
 rmse = plot_x_true_against_x_pred(x_pred)
+plt.savefig('ula_filtering.pdf',format='pdf')
 #%%
 # print('Precompiling svgd loop...')
 # _ = svgd_fit(2, num_ula_particles)
