@@ -6,6 +6,7 @@ from src.stats import BackwardSmoother
 from src.variational.sequential_models import ConjugateForward
 
 class OfflineVariationalAdditiveSmoothing:
+    """Base class to compute expectations of additve state functionals via offline backward sampling."""
 
     def __init__(self, p: HMM, q: BackwardSmoother, functional, num_samples=200):
 
@@ -13,7 +14,6 @@ class OfflineVariationalAdditiveSmoothing:
         self.q = q
         self.num_samples = num_samples
         self.functional: AdditiveFunctional = functional
-
 
     def preprocess(self, data, **kwargs):
         return data 
@@ -148,7 +148,59 @@ class OfflineVariationalAdditiveSmoothing:
 
 GeneralBackwardELBO = lambda p, q, num_samples: OfflineVariationalAdditiveSmoothing(p, q, offline_elbo_functional(p,q), num_samples)
 
+
+class LinearGaussianELBO:
+
+    def __init__(self, p: HMM, q: LinearGaussianHMM):
+        self.p = p
+        self.q = q
+
+    def preprocess(self, data, **kwargs):
+        return data 
+    
+    def __call__(self, obs_seq, compute_up_to, theta: HMM.Params, phi: HMM.Params):
+
+        def step(carry, x):
+
+            state, kl_term = carry
+            idx, obs = x
+
+            def false_fun(state, kl_term, obs):
+                return (state, kl_term), None
+
+            def true_fun(state, kl_term, obs):
+
+                q_backwd_params = self.q.backwd_params_from_states((state,None), phi)
+
+                kl_term = expect_quadratic_term_under_backward(kl_term, q_backwd_params) \
+                    + transition_term_integrated_under_backward(q_backwd_params, theta.transition) \
+                    + get_tractable_emission_term(obs, theta.emission)
+
+                kl_term.c += -constant_terms_from_log_gaussian(
+                    self.p.state_dim, q_backwd_params.noise.scale.log_det) + 0.5 * self.p.state_dim
+                new_state = self.q.new_state(obs, state, phi)
+                return (new_state, kl_term), None
+
+            return lax.cond(idx <= compute_up_to, true_fun, false_fun, state, kl_term, obs)
+
+        kl_term = quadratic_term_from_log_gaussian(
+            theta.prior) + get_tractable_emission_term(obs_seq[0], theta.emission)
+        state = self.q.init_state(obs_seq[0], phi)
+
+        (state, kl_term) = lax.scan(step,
+                                    init=(state, kl_term),
+                                    xs=(jnp.arange(1, len(obs_seq)), obs_seq[1:]))[0]
+
+        q_last_filt_params = self.q.filt_params_from_state(state, phi)
+
+        kl_term = expect_quadratic_term_under_gaussian(kl_term, q_last_filt_params) \
+            - constant_terms_from_log_gaussian(self.p.state_dim, q_last_filt_params.scale.log_det) \
+            + 0.5*self.p.state_dim
+
+        return kl_term, 0
+    
 class GeneralForwardELBO:
+    """Base class to compute expectations of smoothing functionals via offline forward sampling (forward factorization)."""
 
     def __init__(self, p:HMM, q:ConjugateForward, num_samples=200):
 

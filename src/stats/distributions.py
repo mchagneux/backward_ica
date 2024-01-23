@@ -184,7 +184,6 @@ class Gaussian:
         
         scale: Scale
 
-
         @classmethod
         def from_vec(cls, vec, d, chol_add=empty_add):
 
@@ -254,6 +253,8 @@ class Gaussian:
         return jnp.linalg.norm(mu_0 - mu_1, ord=2) ** 2 \
                 + jnp.trace(sigma_0 + sigma_1  - 2*jnp.sqrt(sigma_0_half @ sigma_1 @ sigma_0_half))
 
+
+
 class IsotropicStudent: 
 
 
@@ -288,6 +289,7 @@ class IsotropicStudent:
             return cls(*children)
 
 
+    @staticmethod
     def sample(key, params):
         return params.mean + jnp.diag(params.scale) @ random.t(key, params.df, 
                                                                shape=(params.mean.shape[0],))
@@ -353,3 +355,5 @@ class IsotropicStudent:
     @classmethod 
     def format_noise_params(cls, noise_params, precompute=[]):
         return noise_params #cls.NoiseParams(noise_params.df, Scale.format(noise_params.scale))
+
+

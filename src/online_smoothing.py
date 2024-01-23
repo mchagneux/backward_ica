@@ -15,9 +15,8 @@ def value_and_jac(fun, argnums=0, has_aux=False):
         return lambda *args: (fun(*args), jax.jacobian(fun, argnums=argnums, has_aux=False)(*args))
 
 
-
 class OnlineVariationalAdditiveSmoothing:
-
+    """Base class to compute expectations of addtive state functionals via our online algorithm"""
     def __init__(self, 
                 p:HMM, 
                 q:BackwardSmoother, 
@@ -78,6 +77,7 @@ class OnlineVariationalAdditiveSmoothing:
         return self._preprocess_fn(obs_seq, **kwargs, **self.options)
 
     def batch_compute(self, key, strided_obs_seq, theta, phi):
+        """Utility member function to compute the expectation on a sequence of fixed length, processing all data at once."""
 
 
         T = len(strided_obs_seq) - 1 # T + 1 observations

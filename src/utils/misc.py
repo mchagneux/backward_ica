@@ -219,6 +219,7 @@ def samples_and_log_probs(dist, key, params_dist, num_samples):
 
 class AdditiveFunctional:
 
+    """Base class for additive state functionals, specifying the first, middle and last terms."""
     def __init__(self, h_t, out_shape, h_0=None, h_T=None):
         
         self.out_shape = out_shape
@@ -272,6 +273,7 @@ def named_vmap(f, axes_names, input_dict):
 
 
 def get_defaults(args):
+    """Utility function to specify default parameters to set before running experiment."""
     args.float64 = False
 
     args.default_prior_mean = 0.0 # default value for the mean of Gaussian prior

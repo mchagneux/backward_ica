@@ -43,7 +43,6 @@ class SVITrainer:
                 num_epochs, 
                 seq_length,
                 num_samples=1, 
-                force_full_mc=False,
                 frozen_params='',
                 num_seqs=1,
                 training_mode='offline',
@@ -110,10 +109,10 @@ class SVITrainer:
         else: 
             self.monitor_elbo = GeneralBackwardELBO(p, q, num_samples)
 
-        if 'true_online' in training_mode:
+        if 'streaming' in training_mode:
             self.online_difference = 'difference' in training_mode
             self.num_grad_steps = int(training_mode.split(',')[1])
-            true_online = True
+            streaming = True
             if 'recompute' in training_mode:
                 self.online_batch_size = 2
             else: 
@@ -121,13 +120,13 @@ class SVITrainer:
             self.reset = False
                 
         else: 
-            true_online = False
+            streaming = False
             self.online_batch_size, self.num_grad_steps = int(training_mode.split(',')[1]), \
                                                 int(training_mode.split(',')[2])
             self.reset = 'reset' in training_mode
         
 
-        self.true_online = true_online
+        self.streaming = streaming
         self.monitor = 'monitor' in elbo_mode
 
         if not self.training_mode == 'closed_form':
@@ -144,7 +143,7 @@ class SVITrainer:
                 else:
                     self.elbo_options['normalizer'] = exp_and_normalize
 
-                self.elbo_options['true_online'] = True if self.true_online else False
+                self.elbo_options['streaming'] = True if self.streaming else False
         
         def optimizer_update_fn(params, updates):
             new_params = optax.apply_updates(params, updates)
@@ -305,7 +304,7 @@ class SVITrainer:
 
             else: 
 
-                if self.true_online: 
+                if self.streaming: 
                     def _step(carry, x):
                         key, t, strided_y = x
 
@@ -379,7 +378,7 @@ class SVITrainer:
 
         all_timesteps = jnp.arange(0, seq_length)
         if key is None: 
-            if self.true_online:
+            if self.streaming:
                 cnts = range(0, seq_length, 1)
             else:
                 cnts = range(0, seq_length, self.online_batch_size)
@@ -416,7 +415,7 @@ class SVITrainer:
             key, timesteps = x 
             strided_ys_on_timesteps = strided_ys[:,timesteps]
             
-            if self.true_online and (not self.online_difference):
+            if self.streaming and (not self.online_difference):
                 opt_state = self.optimizer.init(params)
 
             def inner_step(carry, x):
@@ -479,30 +478,48 @@ class SVITrainer:
 
         if self.logging_type == 'basic_logging':
 
-            if self.true_online:
+            if self.streaming:
                 all_timesteps = jnp.expand_dims(jnp.arange(0, seq_length), 
                                                     axis=-1)
             else: 
                 all_timesteps = jnp.array(list(self.timesteps(seq_length, None)))
 
-            # @scan_tqdm(len(all_timesteps))
-            def step(carry, x):
-                return _step(carry, x[1:])
+            if self.streaming: 
+                @scan_tqdm(len(all_timesteps))
+                def step(carry, x):
+                    return _step(carry, x[1:])
+            else: 
+                def step(carry, x):
+                    return _step(carry, x[1:])
 
-
-            @scan_tqdm(self.num_epochs)
-            def _epoch_step(carry, x):
-                params, opt_state, elbo_carry = carry
-                _, keys_epoch = x
-                (params, opt_state, elbo_carry), (elbos_steps, _) = jax.lax.scan(step, 
-                                                                init=(params, opt_state, elbo_carry),
-                                                                xs=(jnp.arange(0, len(all_timesteps)),
-                                                                    keys_epoch, 
-                                                                    all_timesteps))
-                if self.true_online and self.num_epochs > 1:
-                    opt_state = self.optimizer.init(params)
-                    elbo_carry = self.init_carry
-                return (params, opt_state, elbo_carry), elbos_steps
+            if self.streaming: 
+                def _epoch_step(carry, x):
+                    params, opt_state, elbo_carry = carry
+                    _, keys_epoch = x
+                    (params, opt_state, elbo_carry), (elbos_steps, _) = jax.lax.scan(step, 
+                                                                    init=(params, opt_state, elbo_carry),
+                                                                    xs=(jnp.arange(0, len(all_timesteps)),
+                                                                        keys_epoch, 
+                                                                        all_timesteps))
+                    if self.streaming and self.num_epochs > 1:
+                        opt_state = self.optimizer.init(params)
+                        elbo_carry = self.init_carry
+                    return (params, opt_state, elbo_carry), elbos_steps
+                
+            else: 
+                @scan_tqdm(self.num_epochs)
+                def _epoch_step(carry, x):
+                    params, opt_state, elbo_carry = carry
+                    _, keys_epoch = x
+                    (params, opt_state, elbo_carry), (elbos_steps, _) = jax.lax.scan(step, 
+                                                                    init=(params, opt_state, elbo_carry),
+                                                                    xs=(jnp.arange(0, len(all_timesteps)),
+                                                                        keys_epoch, 
+                                                                        all_timesteps))
+                    if self.streaming and self.num_epochs > 1:
+                        opt_state = self.optimizer.init(params)
+                        elbo_carry = self.init_carry
+                    return (params, opt_state, elbo_carry), elbos_steps
                 
             (params, _, elbo_carry), elbos_epochs = jax.lax.scan(_epoch_step, 
                                                  init=(params, opt_state, elbo_carry), 

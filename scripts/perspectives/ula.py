@@ -27,7 +27,7 @@ args.model = 'chaotic_rnn'
 args.load_from = '' # 'data/crnn/2022-10-18_15-28-00_Train_run'
 args.loaded_seq = False
 args.state_dim, args.obs_dim = 100,200
-args.seq_length = 30_000
+args.seq_length = 2_00
 
 args.num_seqs = 1
 svgd_kernel_base = lambda x,y: jnp.exp(-jnp.sum((x-y)**2 / (2*0.01)))

@@ -595,8 +595,8 @@ class NonLinearHMM(HMM):
         
         return params, avg_logls
 
-
     def smooth_ula(self, key, y, params, num_steps, h, num_particles):
+        
         return self.ula.fit(key, 
                             y, 
                             params, 
