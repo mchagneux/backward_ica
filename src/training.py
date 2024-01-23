@@ -342,6 +342,7 @@ class SVITrainer:
                     if not 'recompute' in self.training_mode:
                         elbo_carry = new_carry
                 else: 
+                    keys = jax.random.split(key, len(timesteps))
                     def _step(carry, x):
                         key, t, ys_bptt = x
                         input_t = {'t':t, 
