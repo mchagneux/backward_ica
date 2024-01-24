@@ -3,7 +3,5 @@ pandas
 seaborn
 tqdm
 dm-haiku
-tensorflow 
-tbp-nightly
 dill
 jax_tqdm

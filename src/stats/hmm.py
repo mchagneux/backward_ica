@@ -23,19 +23,23 @@ def xtanh(slope):
 def get_generative_model(args, key_for_random_params=None):
 
     if args.model == 'linear':
-        p = LinearGaussianHMM(args.state_dim, 
-                                args.obs_dim, 
-                                args.transition_matrix_conditionning, 
-                                args.range_transition_map_params,
-                                args.transition_bias, 
-                                args.emission_bias)
+        p = LinearGaussianHMM(
+                            args.state_dim, 
+                            args.obs_dim, 
+                            args.transition_matrix_conditionning, 
+                            args.range_transition_map_params,
+                            args.transition_bias, 
+                            args.emission_bias)
     elif 'chaotic_rnn' in args.model or args.model == 'chaotic_rnn':
         if 'nonlinear_emission' in args.model:
             p = NonLinearHMM.chaotic_rnn_with_nonlinear_emission(args)
         else: 
             p = NonLinearHMM.chaotic_rnn(args)
-    else: 
+    elif args.model == 'linear_transition_with_nonlinear_emission': 
         p = NonLinearHMM.linear_transition_with_nonlinear_emission(args) # specify the structure of the true model
+    
+    else:
+        raise NotImplementedError
     
     if key_for_random_params is not None:
         theta_star = p.get_random_params(key_for_random_params, args)
@@ -594,12 +598,3 @@ class NonLinearHMM(HMM):
 
         
         return params, avg_logls
-
-    def smooth_ula(self, key, y, params, num_steps, h, num_particles):
-        
-        return self.ula.fit(key, 
-                            y, 
-                            params, 
-                            num_steps, 
-                            h, 
-                            num_particles)
