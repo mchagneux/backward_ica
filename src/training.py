@@ -46,8 +46,7 @@ class SVITrainer:
                 frozen_params='',
                 num_seqs=1,
                 training_mode='offline',
-                elbo_mode='autodiff_on_batch',
-                logging_type='basic_logging'):
+                elbo_mode='autodiff_on_batch'):
         
         self.num_epochs = num_epochs
         self.q = q 
@@ -60,7 +59,6 @@ class SVITrainer:
         self.frozen_params = frozen_params
 
         self.num_seqs = num_seqs
-        self.logging_type = logging_type
         self.elbo_mode = elbo_mode
         self.training_mode = training_mode
 
@@ -394,9 +392,7 @@ class SVITrainer:
             key_params, 
             key_montecarlo, 
             data, 
-            log_writer=None, 
-            args=None, 
-            log_writer_monitor=None):
+            args=None):
 
         params = self.q.get_random_params(key_params, args)
         params = self._extract_params(params)
@@ -454,133 +450,83 @@ class SVITrainer:
                                                                             self.num_grad_steps))
             
             if self.num_grad_steps > 1:
-                params_q_t, params_q_tm1_t = tree_get_idx(-1, tree_get_idx(-1, aux))
-                aux = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
+                pass
+                aux = None
+                # params_q_t, params_q_tm1_t = tree_get_idx(-1, tree_get_idx(-1, aux))
+                # aux = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
             else: 
                 aux = None
 
             # if not isinstance(self.q, NonAmortizedBackwardSmoother):
-            return (params, opt_state, elbo_carry), (elbos, aux)
+            return (params, opt_state, elbo_carry), (elbos, aux, params)
         
-        absolute_step_nb = 0
+        # absolute_step_nb = 0
 
 
-        if self.monitor: 
-            monitor_elbo = jax.jit(lambda key, ys, T, formatted_theta_star, phi:self.monitor_elbo(
-                                                                                    key, 
-                                                                                    ys, 
-                                                                                    T, 
-                                                                                    formatted_theta_star, 
-                                                                                    self.q.format_params(phi))[0] / len(ys))
-        else: 
-            monitor_elbo = lambda *args: 0.0
+        # if self.monitor: 
+        #     monitor_elbo = jax.jit(lambda key, ys, T, formatted_theta_star, phi:self.monitor_elbo(
+        #                                                                             key, 
+        #                                                                             ys, 
+        #                                                                             T, 
+        #                                                                             formatted_theta_star, 
+        #                                                                             self.q.format_params(phi))[0] / len(ys))
+        # else: 
+        #     monitor_elbo = lambda *args: 0.0
             
         elbo_carry = self.init_carry
 
-        if self.logging_type == 'basic_logging':
 
-            if self.streaming:
-                all_timesteps = jnp.expand_dims(jnp.arange(0, seq_length), 
-                                                    axis=-1)
-            else: 
-                all_timesteps = jnp.array(list(self.timesteps(seq_length, None)))
+        if self.streaming:
+            all_timesteps = jnp.expand_dims(jnp.arange(0, seq_length), 
+                                                axis=-1)
+        else: 
+            all_timesteps = jnp.array(list(self.timesteps(seq_length, None)))
 
-            if self.streaming: 
-                @scan_tqdm(len(all_timesteps))
-                def step(carry, x):
-                    return _step(carry, x[1:])
-            else: 
-                def step(carry, x):
-                    return _step(carry, x[1:])
+        if self.streaming: 
+            @scan_tqdm(len(all_timesteps))
+            def step(carry, x):
+                return _step(carry, x[1:])
+        else: 
+            def step(carry, x):
+                return _step(carry, x[1:])
 
-            if self.streaming: 
-                def _epoch_step(carry, x):
-                    params, opt_state, elbo_carry = carry
-                    _, keys_epoch = x
-                    (params, opt_state, elbo_carry), (elbos_steps, aux_results) = jax.lax.scan(step, 
-                                                                    init=(params, opt_state, elbo_carry),
-                                                                    xs=(jnp.arange(0, len(all_timesteps)),
-                                                                        keys_epoch, 
-                                                                        all_timesteps))
-                    if self.streaming and self.num_epochs > 1:
-                        opt_state = self.optimizer.init(params)
-                        elbo_carry = self.init_carry
-                    return (params, opt_state, elbo_carry), (elbos_steps, aux_results)
-                
-            else: 
-                @scan_tqdm(self.num_epochs)
-                def _epoch_step(carry, x):
-                    params, opt_state, elbo_carry = carry
-                    _, keys_epoch = x
-                    (params, opt_state, elbo_carry), (elbos_steps, aux_results) = jax.lax.scan(step, 
-                                                                    init=(params, opt_state, elbo_carry),
-                                                                    xs=(jnp.arange(0, len(all_timesteps)),
-                                                                        keys_epoch, 
-                                                                        all_timesteps))
-                    if self.streaming and self.num_epochs > 1:
-                        opt_state = self.optimizer.init(params)
-                        elbo_carry = self.init_carry
-                    return (params, opt_state, elbo_carry), (elbos_steps, aux_results)
-                
-            (params, _ , elbo_carry), (elbos_epochs, aux_results) = jax.lax.scan(_epoch_step, 
-                                                 init=(params, opt_state, elbo_carry), 
-                                                 xs = (jnp.arange(0, self.num_epochs), keys))
+        if self.streaming: 
+            def _epoch_step(carry, x):
+                params, opt_state, elbo_carry = carry
+                _, keys_epoch = x
+                (params, opt_state, elbo_carry), (elbos_steps, aux_results, params_steps) = jax.lax.scan(step, 
+                                                                init=(params, opt_state, elbo_carry),
+                                                                xs=(jnp.arange(0, len(all_timesteps)),
+                                                                    keys_epoch, 
+                                                                    all_timesteps))
+                if self.streaming and self.num_epochs > 1:
+                    opt_state = self.optimizer.init(params)
+                    elbo_carry = self.init_carry
+                return (params, opt_state, elbo_carry), (elbos_steps, aux_results, params_steps)
             
-            return params, elbos_epochs, aux_results #self.elbo.postprocess(elbo_carry)[0] / seq_length
-                                                                            
-                        
-        # else: 
-        #     all_params, all_elbos, all_means_tm1, all_means_t = dict(), dict(), dict(), dict()
-        #     jitted_step = jax.jit(_step)
-
-
-        #     for epoch_nb, keys_epoch in enumerate(keys): 
-        #         timesteps_lists = self.timesteps(seq_length, None)
-        #         for _ , (timesteps, key_step) in enumerate(zip(timesteps_lists, 
-        #                                                             keys_epoch)):
-        #             carry = params, opt_state, elbo_carry
-        #             x = key_step, timesteps
-        #             (params, opt_state, elbo_carry), (elbos, aux) = jitted_step(carry, x)
+        else: 
+            @scan_tqdm(self.num_epochs)
+            def _epoch_step(carry, x):
+                params, opt_state, elbo_carry = carry
+                _, keys_epoch = x
+                (params, opt_state, elbo_carry), (elbos_steps, aux_results, params_steps) = jax.lax.scan(step, 
+                                                                init=(params, opt_state, elbo_carry),
+                                                                xs=(jnp.arange(0, len(all_timesteps)),
+                                                                    keys_epoch, 
+                                                                    all_timesteps))
+                if self.streaming and self.num_epochs > 1:
+                    opt_state = self.optimizer.init(params)
+                    elbo_carry = self.init_carry
+                return (params, opt_state, elbo_carry), (elbos_steps, aux_results, params_steps)
+            
+        (params, _ , elbo_carry), (elbos_epochs, aux_results, params_epochs) = jax.lax.scan(_epoch_step, 
+                                                init=(params, opt_state, elbo_carry), 
+                                                xs = (jnp.arange(0, self.num_epochs), keys))
         
-        #             if log_writer is not None:
-        #                 if self.num_grad_steps > 1: 
-        #                     t = timesteps[-1]
-        #                     x_t = xs[t]
-        #                     if t > 0: 
-        #                         x_tm1 = xs[t-1]
-        #                     with log_writer.as_default():
-        #                         tf.summary.scalar('Filtering RMSE', 
-        #                                             jnp.sqrt(jnp.mean((x_t - aux[1])**2)),
-        #                                             absolute_step_nb)
 
-        #                         if t > 0:
-        #                             tf.summary.scalar('1-step smoothing RMSE', 
-        #                                             jnp.sqrt(jnp.mean((x_tm1 - aux[0])**2)),
-        #                                             absolute_step_nb)
-
-        #                 if self.online_batch_size != seq_length:
-        #                     with log_writer.as_default():
-        #                         for inner_step_nb, elbo in enumerate(elbos): 
-        #                             tf.summary.scalar('ELBO at inner step', elbo, self.num_grad_steps*absolute_step_nb + inner_step_nb)
-        #             if absolute_step_nb % 100 == 0:
-        #                 all_params[absolute_step_nb] = params
-        #                 all_elbos[absolute_step_nb] = elbos[-1] 
-        #             if 'truncated' in self.elbo_mode:
-        #                 all_means_tm1[absolute_step_nb] = aux[0]
-        #                 all_means_t[absolute_step_nb] = aux[1]
-        #             absolute_step_nb += 1
-
-        #         if self.monitor: 
-        #             monitor_elbo_value = monitor_elbo(key_step, ys, len(ys)-1, self.formatted_theta_star, params)
-
-        #             with log_writer.as_default():
-        #                 tf.summary.scalar('Unbiased ELBO at epoch', monitor_elbo_value, epoch_nb)
-        #         if log_writer is not None:
-        #             with log_writer.as_default():
-        #                 tf.summary.scalar('ELBO at epoch', elbos[-1], epoch_nb)
-
-        #         return all_params, all_elbos, (all_means_tm1, all_means_t)
-
+        
+        return params, elbos_epochs, aux_results, params_epochs 
+    
     def multi_fit(self, 
                   key, 
                   data, 

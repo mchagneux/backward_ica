@@ -649,8 +649,8 @@ def init_elbo_score_gradients_3(carry_m1, input_0, **kwargs):
             'grad_log_q_bar':grad_log_q_0_bar,
             'grad_H_bar':grad_H_0_bar}
 
-    return carry, (params_q_0, q.backwd_params_from_states((s_0, s_0), 
-                                                           q.format_params(unformatted_phi_0)))
+    return carry,  None #(params_q_0, q.backwd_params_from_states((s_0, s_0), 
+                                                           #q.format_params(unformatted_phi_0)))
 
 def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
 
@@ -847,7 +847,9 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
             'grad_H_bar':grad_H_t_bar}
     
 
-    return carry_t, (tree_get_idx(0, params_q_t), tree_get_idx(0, params_q_tm1_t)),# A_backwd, a_backwd, Sigma_backwd)
+    return carry_t, None 
+#(tree_get_idx(0, params_q_t), 
+                     #tree_get_idx(0, params_q_tm1_t)),# A_backwd, a_backwd, Sigma_backwd)
 
 def postprocess_elbo_score_gradients_3(carry, 
                                      **kwargs):

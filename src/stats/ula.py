@@ -1,6 +1,7 @@
 import jax, jax.numpy as jnp
 from jax_tqdm import scan_tqdm
 
+
 class ULA:
 
     def __init__(self, 
@@ -38,13 +39,13 @@ class ULA:
         x_init = jax.jit(jax.vmap(self.p.sample_prior, in_axes=(0,None,None)), static_argnums=2)(
                                                 jax.random.split(key_init, self.num_particles), 
                                                 params, 
-                                                len(y))
+                                                len(y)) # sample N trajectories samples from the hidden chain
         
 
         @scan_tqdm(len(keys))
         def _step(x, input):
             _, key = input
-            grad_log_l = jax.vmap(jax.grad(joint_logl))(x)
+            grad_log_l = jax.vmap(jax.grad(joint_logl))(x) # vmapping over particles the fn that computes the gradient
             x += self.h*grad_log_l + jnp.sqrt(2*self.h)*jax.random.normal(key, shape=(self.num_particles, 
                                                                         len(y), 
                                                                         self.p.state_dim))
@@ -52,7 +53,8 @@ class ULA:
 
 
         
-        steps = jnp.arange(len(keys))
+        steps = jnp.arange(len(keys)) # needed to get a progress bar in scan
+
         x_end = jax.lax.scan(
                             _step, 
                             init=x_init, 
@@ -79,7 +81,7 @@ class ULA:
             t, key, y_t = t_key_and_y
 
 
-            def _init_step(x_0, key):
+            def _init_step(x_0, key): # basic langevin to target \phi_0 \propto p(y_0|x_0)p(x_0)
                 def _ula_step(x_t, key):
                     def _gradient_term(x_t_i):
                         return self.p.emission_kernel.logpdf(y_t, x_t_i, formatted_params.emission) \
@@ -95,7 +97,11 @@ class ULA:
                                 xs=(jax.random.split(key, num_steps_per_timstep)))[0]
             
 
-            def _advance_step(x_tm1, key):
+            def _advance_step(x_tm1, key): 
+                '''Langevin to target \phi_t \propto \int p(y_t|x_t)p(x_t|d x_{t-1}) \phi_{t-1}(d x_{t-1})
+                where \phi_{t-1} is replaced with 1 /  N \sum_{i=1}^N choo
+                '''
+
 
                 key, key_init = jax.random.split(key, 2)
                 x_t_init = jax.vmap(self.p.transition_kernel.sample, in_axes=(0,0,None))(jax.random.split(key_init, 
@@ -131,5 +137,68 @@ class ULA:
 
         return x_pred
         
+    def learn_params(self, key, y, params_init):
 
 
+        key, key_init = jax.random.split(key, 2)
+
+        x_init = jax.jit(jax.vmap(self.p.sample_prior, in_axes=(0,None,None)), static_argnums=2)(
+                                                jax.random.split(key_init, self.num_particles), 
+                                                params_init, 
+                                                len(y)) # sample N trajectories samples from the hidden chain
+        
+
+        def joint_logl(x, params):
+            formatted_params = self.p.format_params(params)
+            init_term = self.p.prior_dist.logpdf(x[0], formatted_params.prior)
+            emission_terms = jax.vmap(self.p.emission_kernel.logpdf, 
+                                        in_axes=(0,0,None))(
+                                                        y, 
+                                                        x,
+                                                        formatted_params.emission)
+            
+            transition_terms = jax.vmap(self.p.transition_kernel.logpdf, 
+                                        in_axes=(0,0,None))(x[1:], 
+                                                            x[:-1], 
+                                                            formatted_params.transition)
+            return init_term + jnp.sum(emission_terms) + jnp.sum(transition_terms) 
+    
+
+
+        keys = jax.random.split(key, self.num_steps)
+
+
+        @scan_tqdm((len(keys)))
+        def _step(carry, input):
+
+            x, params = carry
+            _, key = input
+
+            
+            # advance langevin one step
+            grad_log_l_wrt_x = jax.vmap(jax.grad(joint_logl, argnums=0), in_axes=(0,None))(x, params) # vmapping over particles the fn that computes the gradient
+            x += self.h*grad_log_l_wrt_x + jnp.sqrt(2*self.h)*jax.random.normal(key, shape=(self.num_particles, 
+                                                                        len(y), 
+                                                                        self.p.state_dim))
+            
+            grad_log_l_wrt_params = jax.vmap(jax.grad(joint_logl, argnums=1), 
+                                             in_axes=(0,None))(x, params)
+            
+            params = jax.tree_map(lambda x,y: x + self.h*jnp.mean(y, axis=0), 
+                                  params, grad_log_l_wrt_params)
+
+
+            return (x, params), None
+        
+
+        
+        steps = jnp.arange(len(keys)) # needed to get a progress bar in scan
+
+        fitted_params = jax.lax.scan(
+                            _step, 
+                            init=(x_init, params_init),
+                            xs=(steps, keys))[0]
+
+
+
+        return fitted_params
