@@ -6,6 +6,7 @@
 python3 -m venv <location-of-env>
 source <location-of-env>/bin/activate
 ```
+Or use Conda. 
 
 ### Install JAX 
 ```shell
