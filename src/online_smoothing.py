@@ -8,6 +8,7 @@ from src.variational import NeuralBackwardSmoother
 vmap_ravel = jax.vmap(lambda x: ravel_pytree(x)[0])
 import blackjax
 
+
 def value_and_jac(fun, argnums=0, has_aux=False):
     if has_aux:
         return lambda *args: (fun(*args), jax.jacobian(fun, argnums=argnums, has_aux=True)(*args)[0])
@@ -351,7 +352,7 @@ def update_elbo_score_gradients(carry_tm1, input_t, **kwargs):
     p:HMM = kwargs['p']
     q:BackwardSmoother = kwargs['q']
     num_samples = kwargs['num_samples']
-    paris = kwargs['paris']
+    resampling = kwargs['resampling']
     bptt_depth = kwargs['bptt_depth']
     mcmc = kwargs['mcmc']
     normalizer = kwargs['normalizer']
@@ -411,8 +412,8 @@ def update_elbo_score_gradients(carry_tm1, input_t, **kwargs):
 
     def update(key_t):
     
-        if paris:
-            key_new_sample, key_paris = jax.random.split(key_t, 2)
+        if resampling:
+            key_new_sample, key_resampling = jax.random.split(key_t, 2)
         else: 
             key_new_sample = key_t
         
@@ -432,7 +433,7 @@ def update_elbo_score_gradients(carry_tm1, input_t, **kwargs):
         _vmaped_h = jax.vmap(_h, in_axes=(0,0))
         
 
-        if not paris: 
+        if not resampling: 
 
             (log_q_tm1_t, params_q_tm1_t), grad_log_q_tm1_t = jax.vmap(jax.value_and_grad(_log_q_tm1_t, has_aux=True),
                                                     in_axes=(None,0,None))(unformatted_phi_t, 
@@ -504,11 +505,11 @@ def update_elbo_score_gradients(carry_tm1, input_t, **kwargs):
                 backwd_indices = jax.lax.scan(_backwd_sample_step, 
                                             init=backwd_sampler.init(0), 
                                             xs=(jnp.arange(3), 
-                                                jax.random.split(key_paris, 3)))[1][1:]
+                                                jax.random.split(key_resampling, 3)))[1][1:]
                 
             else:
 
-                backwd_indices = jax.random.choice(key_paris, 
+                backwd_indices = jax.random.choice(key_resampling, 
                                                    a=num_samples, 
                                                    p=normalizer(log_w_t), 
                                                    shape=(2,))
@@ -658,7 +659,7 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
     p:HMM = kwargs['p']
     q:BackwardSmoother = kwargs['q']
     num_samples = kwargs['num_samples']
-    paris = kwargs['paris']
+    resampling = kwargs['resampling']
     mcmc = kwargs['mcmc']
     normalizer = kwargs['normalizer']
 
@@ -701,8 +702,8 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
 
     def update(key_t):
     
-        if paris:
-            key_new_sample, key_paris = jax.random.split(key_t, 2)
+        if resampling:
+            key_new_sample, key_resampling = jax.random.split(key_t, 2)
         else: 
             key_new_sample = key_t
 
@@ -710,7 +711,7 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
         (log_q_t, (x_t, base_s_t, params_q_t)), grad_log_q_t_bar = jax.value_and_grad(_log_q_t_bar, has_aux=True)(unformatted_phi_t, 
                                                                             key_new_sample)
             
-        if not paris: 
+        if not resampling: 
 
         
             (log_q_tm1_t, params_q_tm1_t), grad_log_q_tm1_t_bar = jax.vmap(jax.value_and_grad(_log_q_tm1_t_bar, has_aux=True),
@@ -779,11 +780,11 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
                 backwd_indices = jax.lax.scan(_backwd_sample_step, 
                                             init=backwd_sampler.init(0), 
                                             xs=(jnp.arange(3), 
-                                                jax.random.split(key_paris, 3)))[1][1:]
+                                                jax.random.split(key_resampling, 3)))[1][1:]
                 
             else:
                 w_t = normalizer(log_w_t)
-                backwd_indices = jax.random.choice(key_paris, 
+                backwd_indices = jax.random.choice(key_resampling, 
                                                    a=num_samples, 
                                                    p=w_t, 
                                                    shape=(2,))
@@ -950,7 +951,7 @@ def postprocess_elbo_score_gradients_3(carry,
 #     p:HMM = kwargs['p']
 #     q:BackwardSmoother = kwargs['q']
 #     num_samples = kwargs['num_samples']
-#     paris = kwargs['paris']
+#     resampling = kwargs['resampling']
 #     bptt_depth = kwargs['bptt_depth']
 #     mcmc = kwargs['mcmc']
 #     normalizer, variance_reduction = kwargs['normalizer'], kwargs['variance_reduction']
@@ -1008,8 +1009,8 @@ def postprocess_elbo_score_gradients_3(carry,
 
 #     def update(key_t):
     
-#         if paris:
-#             key_new_sample, key_paris = jax.random.split(key_t, 2)
+#         if resampling:
+#             key_new_sample, key_resampling = jax.random.split(key_t, 2)
 #         else: 
 #             key_new_sample = key_t
 
@@ -1017,7 +1018,7 @@ def postprocess_elbo_score_gradients_3(carry,
 #         (log_q_t, (x_t, base_s_t, params_q_t)), grad_log_q_t_bar = jax.value_and_grad(_log_q_t_bar, has_aux=True)(unformatted_phi_t, 
 #                                                                             key_new_sample)
             
-#         if not paris: 
+#         if not resampling: 
 
         
 #             (log_q_tm1_t, params_q_tm1_t), grad_log_q_tm1_t_bar = jax.vmap(jax.value_and_grad(_log_q_tm1_t_bar, has_aux=True),
@@ -1072,7 +1073,7 @@ def postprocess_elbo_score_gradients_3(carry,
 #             log_w_t = log_q_tm1_t - log_q_tm1
 
 #             w_t = normalizer(log_w_t)
-#             backwd_indices = jax.random.choice(key_paris, 
+#             backwd_indices = jax.random.choice(key_resampling, 
 #                                     a=num_samples, 
 #                                     p=w_t, 
 #                                     shape=(2,))

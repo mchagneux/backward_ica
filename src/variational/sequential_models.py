@@ -9,8 +9,6 @@ from jax import numpy as jnp, lax
 from src.utils.misc import * 
 import copy
 
-
-
 from typing import Any 
 import src.variational.inference_nets as inference_nets
 from collections import namedtuple

@@ -93,7 +93,7 @@ def variational_fit(num_epochs, num_samples, mode='offline'):
   else: 
     training_mode = f'true_online,{num_epochs},difference'
     num_epochs = 1
-    elbo_mode = 'score,truncated,paris'
+    elbo_mode = 'score,truncated,resampling'
     learning_rate = 1e-3
   
   optim_options = 'cst'

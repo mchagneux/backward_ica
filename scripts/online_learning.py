@@ -54,7 +54,7 @@ def set_q_args(load, exp_path, p_args, model):
     q_args.num_epochs = 1
     q_args.num_samples = 50
     q_args.training_mode = 'true_online,1,difference'
-    q_args.elbo_mode = 'score,paris,bptt_depth_2'
+    q_args.elbo_mode = 'score,resampling,bptt_depth_2'
 
     # q_args.training_mode = f'reset,{p_args.seq_length},1'
     # q_args.elbo_mode = 'autodiff_on_batch'

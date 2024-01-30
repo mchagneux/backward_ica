@@ -12,6 +12,7 @@ import optax
 from time import time
 from jax_tqdm import scan_tqdm
 
+
 def define_frozen_tree(key, frozen_params, q, theta_star):
 
     # key_theta, key_phi = random.split(key, 2)
@@ -130,7 +131,7 @@ class SVITrainer:
         if not self.training_mode == 'closed_form':
             self.elbo_options = {}
             if 'score' in elbo_mode: 
-                for option in ['paris', 'mcmc']:
+                for option in ['resampling', 'mcmc']:
                     self.elbo_options[option] = True if option in elbo_mode else False
 
                 if 'bptt_depth' in elbo_mode: 
@@ -399,7 +400,7 @@ class SVITrainer:
         
         
         opt_state = self.optimizer.init(params)
-        xs, ys = data
+        ys = data
         seq_length = self.seq_length
         keys = get_keys(key_montecarlo, 
                         seq_length // self.online_batch_size, 
@@ -451,7 +452,7 @@ class SVITrainer:
             
             if self.num_grad_steps > 1:
                 pass
-                aux = None
+                # aux = None
                 # params_q_t, params_q_tm1_t = tree_get_idx(-1, tree_get_idx(-1, aux))
                 # aux = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
             else: 
@@ -482,7 +483,7 @@ class SVITrainer:
         else: 
             all_timesteps = jnp.array(list(self.timesteps(seq_length, None)))
 
-        if self.streaming: 
+        if self.streaming and self.num_epochs == 1: 
             @scan_tqdm(len(all_timesteps))
             def step(carry, x):
                 return _step(carry, x[1:])
@@ -490,7 +491,14 @@ class SVITrainer:
             def step(carry, x):
                 return _step(carry, x[1:])
 
-        if self.streaming: 
+
+        # if self.profile: 
+        #     with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
+        #         # Run the operations to be profiled
+        #         key = jax.random.PRNGKey(0)
+                
+
+        if self.streaming and self.num_epochs == 1: 
             def _epoch_step(carry, x):
                 params, opt_state, elbo_carry = carry
                 _, keys_epoch = x

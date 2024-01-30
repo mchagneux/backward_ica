@@ -30,7 +30,7 @@ rmses = defaultdict(list)
 for path in paths: 
     print('---')
     p_args = load_args('args', path)
-    models = ['johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,paris,bptt_depth_2.gpu.basic_logging']
+    models = ['johnson_backward,200.200.adam,1e-3,cst.true_online,1,difference.score,resampling,bptt_depth_2.gpu.basic_logging']
     # models.append(p_args.load_from)
 
     p = get_generative_model(p_args)
