@@ -409,12 +409,13 @@ class SVITrainer:
         strided_ys = jax.vmap(self.elbo.preprocess)(ys)
 
         def _step(step_carry, x):
-            params, opt_state, elbo_carry = step_carry
+            params, opt_state, elbo_carry = step_carry                
             key, timesteps = x 
             strided_ys_on_timesteps = strided_ys[:,timesteps]
             
-            if self.streaming and (not self.online_difference):
-                opt_state = self.optimizer.init(params)
+            # if 'truncated' in self.elbo_mode:
+            #     key, key_params = jax.random.split(key,2)
+            #     params.backwd = self.q.get_random_params(key_params).backwd
 
             def inner_step(carry, x):
                 inner_carry, params, opt_state = carry
@@ -482,6 +483,7 @@ class SVITrainer:
                                                 axis=-1)
         else: 
             all_timesteps = jnp.array(list(self.timesteps(seq_length, None)))
+
 
         if self.streaming and self.num_epochs == 1: 
             @scan_tqdm(len(all_timesteps))
