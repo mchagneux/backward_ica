@@ -417,7 +417,8 @@ class NonAmortizedBackwardSmoother(BackwardSmoother):
         mu = jnp.empty((self.state_dim,))
         Sigma = jnp.ones((self.state_dim,))
                     
-        return Gaussian.Params(mean=mu, scale=Scale(cov_chol=Sigma))
+        return Gaussian.Params(mean=mu, 
+                               scale=Scale(cov_chol=Sigma))
     
     def smoothing_means_tm1_t(self, filt_params, backwd_params, num_samples, key):
         key_t, key_tm1 = jax.random.split(key, 2)

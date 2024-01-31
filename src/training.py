@@ -486,6 +486,7 @@ class SVITrainer:
 
 
         if self.streaming and self.num_epochs == 1: 
+
             @scan_tqdm(len(all_timesteps))
             def step(carry, x):
                 return _step(carry, x[1:])
@@ -541,7 +542,7 @@ class SVITrainer:
                   key, 
                   data, 
                   num_fits, 
-                  log_dir='', 
+                  log_dir='',
                   args=None):
 
         print('Starting training...')
