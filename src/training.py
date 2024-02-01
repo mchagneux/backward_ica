@@ -459,11 +459,19 @@ class SVITrainer:
                                                                             self.num_grad_steps))
 
             if 'truncated' in self.elbo_mode:
-                new_filt_mean = self.p.transition_kernel.map(params.filt.mean, 
-                                                             self.formatted_theta_star.transition).mean
+
+                ## using all the same tricks than Campbell 
+                transition_map = lambda x: self.p.transition_kernel.map(x, 
+                                                                        self.formatted_theta_star.transition).mean
+                new_filt_mean = transition_map(params.filt.mean)
+                
+                jac_transition_map = jax.jacobian(transition_map)(params.filt.mean)
+                transition_cov = self.formatted_theta_star.transition.noise.scale.cov
+                new_filt_cov = jac_transition_map @ params.filt.scale.cov @ jac_transition_map.T + transition_cov # impact of this is small but that's what they do
+                new_filt_cov_chol = cholesky(new_filt_cov)
                 init_params_next_step = NonAmortizedBackwardSmoother.Params(backwd=params.backwd,
                                                                             filt=Gaussian.Params(mean=new_filt_mean, 
-                                                                                                 scale=params.filt.scale))
+                                                                                                 scale=Scale(cov_chol=jnp.diagonal(new_filt_cov_chol))))
                 opt_state = self.optimizer.init(init_params_next_step)
 
                 
@@ -510,7 +518,7 @@ class SVITrainer:
                 
 
         if self.streaming and self.num_epochs == 1: 
-            print('Streaming on a single epoch.')
+            print('Streaming on a single sequence only once.')
             def _epoch_step(carry, x):
                 params, opt_state, elbo_carry = carry
                 _, keys_epoch = x
@@ -519,9 +527,7 @@ class SVITrainer:
                                                                 xs=(jnp.arange(0, len(all_timesteps)),
                                                                     keys_epoch, 
                                                                     all_timesteps))
-                # if self.streaming and self.num_epochs > 1:
-                # elbo_carry = self.init_carry
-                
+
                 return (params, opt_state, elbo_carry), (elbos_steps, aux_results, params_steps)
             
         else: 
