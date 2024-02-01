@@ -16,45 +16,71 @@ class Scale:
     def __init__(self, 
                 cov_chol=None, 
                 cov=None, 
-                prec=None):
+                prec=None,
+                log_std=None):
 
         if cov_chol is not None: 
             self._cov_chol = cov_chol
-            self._cov = mat_from_chol(cov_chol)
+            # self._cov = mat_from_chol(cov_chol)
+
+        elif log_std is not None:
+            self._log_std = log_std
 
         elif cov is not None:
             self._cov = cov
-            self._cov_chol = cholesky(cov)
+            # self._cov_chol = cholesky(cov)
 
         elif prec is not None:
             self._prec = prec
-            self._cov_chol = chol_from_prec(prec)
+            # self._cov_chol = chol_from_prec(prec)
 
+            # self._cov_chol = jnp.exp(log_std)
+            # self._cov = mat_from_chol(self._cov_chol)
 
     @property
     def cov_chol(self):
-        return format_as_matrix(self._cov_chol)
+        if hasattr(self,'_cov_chol'):
+            mat =  self._cov_chol
+        elif hasattr(self, '_cov'):
+            mat =  cholesky(self._cov)
+        elif hasattr(self, '_log_std'): 
+            mat =  jnp.exp(self._log_std)
+        elif hasattr(self, '_prec'):
+            mat =  chol_from_prec(self._prec)
+
+        return format_as_matrix(mat)
 
     @property
     def cov(self):
-        if hasattr(self, '_cov'):
-            cov = self._cov
-        else: 
-            cov = mat_from_chol(self._cov_chol)
-        return format_as_matrix(cov)
+        if hasattr(self,'_cov_chol'):
+            mat =  mat_from_chol(self._cov_chol)
+        elif hasattr(self, '_cov'):
+            mat =  self._cov
+        elif hasattr(self, '_log_std'): 
+            mat =  mat_from_chol(jnp.exp(self._log_std))
+        elif hasattr(self, '_prec'):
+            mat =  mat_from_chol(chol_from_prec(self._prec))
+
+            
+        return format_as_matrix(mat)
     
     @property
     def prec(self):
-        if hasattr(self, '_prec'):
-            prec = self._prec
-        else:
-            prec = inv_from_chol(self._cov_chol)
-
-        return format_as_matrix(prec)
-
+        if hasattr(self,'_cov_chol'):
+            mat =  inv_from_chol(self._cov_chol)
+        elif hasattr(self, '_cov'):
+            mat =  inv(self._cov)
+        elif hasattr(self, '_log_std'): 
+            mat =  inv_from_chol(jnp.exp(self._log_std))
+        elif hasattr(self, '_prec'):
+            mat = self._prec
+            
+            
+        return format_as_matrix(mat)
+    
     @property
     def log_det(self):
-        return log_det_from_chol(self._cov_chol)
+        return log_det_from_chol(self.cov_chol)
 
 
     def tree_flatten(self):
@@ -127,7 +153,7 @@ class Gaussian:
                 chol = jnp.diag(vec[d:])
             else: 
                 chol = chol_from_vec(vec[d:], d)
-                
+                scale
             # chol = lax.cond(diag, diag_chol, non_diag_chol, vec, d)
 
             scale_kwargs = {Scale.parametrization:chol + chol_add(d)}

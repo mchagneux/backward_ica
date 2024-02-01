@@ -604,7 +604,7 @@ def init_carry_elbo_score_gradients_3(unformatted_params, **kwargs):
 def init_elbo_score_gradients_3(carry_m1, input_0, **kwargs):
 
 
-    y_0 = input_0['ys_bptt']
+    y_0 = input_0['ys_bptt'][-1]
     key_0, unformatted_phi_0 = input_0['key'], input_0['phi']
 
     p:HMM = kwargs['p']
@@ -665,7 +665,7 @@ def update_elbo_score_gradients_3(carry_tm1, input_t, **kwargs):
 
     t, T, key_t, unformatted_phi_t = input_t['t'], input_t['T'], \
                                     input_t['key'], input_t['phi']
-    y_t = input_t['ys_bptt']
+    y_t = input_t['ys_bptt'][-1]
 
     x_tm1, base_s_tm1, stats_tm1, theta = carry_tm1['x'], carry_tm1['base_s'], \
                                         carry_tm1['stats'], carry_tm1['theta']
@@ -954,7 +954,7 @@ def postprocess_elbo_score_gradients_3(carry,
 #     resampling = kwargs['resampling']
 #     bptt_depth = kwargs['bptt_depth']
 #     mcmc = kwargs['mcmc']
-#     normalizer, variance_reduction = kwargs['normalizer'], kwargs['variance_reduction']
+#     normalizer, variance_reduction = kwargs['normalizer'], True
 
 #     t, T, key_t, unformatted_phi_t = input_t['t'], input_t['T'], \
 #                                     input_t['key'], input_t['phi']
@@ -1155,98 +1155,6 @@ def postprocess_elbo_score_gradients_3(carry,
 #         return elbo, grad
 
 
-
-def init_carry_elbo_score_gradients_4(unformatted_params, **kwargs):
-
-    num_samples = kwargs['num_samples']
-    state_dim = kwargs['p'].state_dim
-    dummy_state = kwargs['q'].empty_state()
-    out_shape = kwargs['h'].out_shape
-    
-    dummy_x = jnp.zeros((num_samples, state_dim))
-    dummy_H = jnp.zeros((num_samples, *out_shape))
-    dummy_F = jax.jacrev(lambda phi:dummy_H)(unformatted_params)
-
-    carry = {'base_s': dummy_state, 
-            'x':dummy_x, 
-            'log_q':jnp.zeros((num_samples,)),
-            'stats':{'H':dummy_H},
-            'grad_log_q_bar':dummy_F,
-            'grad_H_bar':dummy_F}
-    
-    return carry
-
-def init_elbo_score_gradients_4(carry_m1, input_0, **kwargs):
-
-
-    y_0 = input_0['ys_bptt'][-1]
-    key_0, phi_0 = input_0['key'], input_0['phi']
-
-    p:HMM = kwargs['p']
-    q:BackwardSmoother = kwargs['q']
-    num_samples = kwargs['num_samples']
-
-    keys = jax.random.split(key_0, num_samples)
-
-
-    def filt_params_state_and_sample(key, phi):
-        s_0 = q.init_state(y_0, phi)
-        params_q_t = q.filt_params_from_state(s_0, phi)
-        x_t = q.filt_dist.sample(key, params_q_t)
-        return x_t, s_0, params_q_t
-    
-
-    def _log_q_0_bar(unformatted_phi, key):
-        x_t, s_0, params_q_t = filt_params_state_and_sample(key, unformatted_phi)
-        return q.filt_dist.logpdf(x_t, params_q_t), (x_t, s_0, params_q_t)
-
-
-    (log_q_0, (x_0, s_0, params_q_0)), grad_log_q_0_bar = jax.vmap(jax.value_and_grad(_log_q_0_bar, argnums=0, has_aux=True),
-                                    in_axes=(None,0))(phi_0, keys)
-    
-    s_0 = tree_get_idx(0, s_0)
-    params_q_0 = tree_get_idx(0, params_q_0)
-
-    theta:HMM.Params = carry_m1['theta']
-
-    def _h(unformatted_phi, key):
-        x_0 = filt_params_state_and_sample(key, unformatted_phi)[0]
-        return p.prior_dist.logpdf(x_0, theta.prior) \
-            + p.emission_kernel.logpdf(y_0, x_0, theta.emission)
-    
-    H_0, grad_H_0_bar = jax.vmap(jax.value_and_grad(_h), in_axes=(None,0))(phi_0, keys)
-
-
-    carry = {'stats':{'H':H_0},
-            'base_s':s_0, 
-            'x':x_0,
-            'log_q':log_q_0,
-            'grad_log_q_bar':grad_log_q_0_bar,
-            'grad_H_bar':grad_H_0_bar}
-
-    return carry, (params_q_0, q.backwd_params_from_states((s_0, s_0), phi_0))
-
-def postprocess_elbo_score_gradients_4(carry, 
-                                     **kwargs):
-
-
-
-        H_T = carry['stats']['H']
-        log_q_T = carry['log_q']
-        grad_H_bar_T = carry['grad_H_bar']
-        grad_log_q_T = carry['grad_log_q_bar']
-
-        
-        elbo = jnp.mean(H_T - log_q_T, axis=0)
-
-
-        grad = tree_map(lambda x,y: jnp.mean(x-y, axis=0), 
-                        grad_H_bar_T, 
-                        grad_log_q_T)
-
-        return elbo, grad
-
-
 OnlineELBO = lambda p, q, num_samples, **options: OnlineVariationalAdditiveSmoothing(          
                                                     p, 
                                                     q,
@@ -1278,7 +1186,7 @@ OnlineELBOScoreTruncatedGradients = lambda p, q, num_samples, **options: OnlineV
                                                                 init_carry_fn=init_carry_elbo_score_gradients_3, 
                                                                 init_fn=init_elbo_score_gradients_3,
                                                                 update_fn=update_elbo_score_gradients_3,
-                                                                preprocess_fn=lambda x, **kwargs:x,
+                                                                preprocess_fn=preprocess_for_bptt,
                                                                 postprocess_fn=postprocess_elbo_score_gradients_3,
                                                                 num_samples=num_samples, 
                                                                 **options)

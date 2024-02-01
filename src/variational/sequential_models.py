@@ -335,7 +335,8 @@ class NonAmortizedBackwardSmoother(BackwardSmoother):
 
             log_eta_2_param = hk.get_parameter('backwd_sigma_diag', 
                                                shape=(state_dim,), 
-                                               init=jnp.zeros)
+                                               init=jnp.zeros,
+                                               dtype=jnp.float64)
             
             eta2_potential = -jnp.diag(jnp.exp(log_eta_2_param)**2)
             eta1_backwd, eta2_backwd = eta1_filt + eta1_potential, eta2_filt + eta2_potential
@@ -415,10 +416,10 @@ class NonAmortizedBackwardSmoother(BackwardSmoother):
     
     def empty_state(self):
         mu = jnp.empty((self.state_dim,))
-        Sigma = jnp.ones((self.state_dim,))
+        Sigma = jnp.zeros((self.state_dim,))
                     
         return Gaussian.Params(mean=mu, 
-                               scale=Scale(cov_chol=Sigma))
+                               scale=Scale(log_std=Sigma))
     
     def smoothing_means_tm1_t(self, filt_params, backwd_params, num_samples, key):
         key_t, key_tm1 = jax.random.split(key, 2)
@@ -434,13 +435,16 @@ class NonAmortizedBackwardSmoother(BackwardSmoother):
     def get_random_params(self, key, params_to_set=None):
         key_filt, key_backwd = jax.random.split(key, 2)
         backwd_params = self.backwd_kernel.get_random_params(key_backwd)
-        filt_params = self.filt_dist.get_random_params(key_filt, self.state_dim)
+        filt_mean = jax.random.normal(key_filt, shape=(self.state_dim,))
+        filt_log_std = jnp.zeros((self.state_dim,))
+        filt_params = Gaussian.Params(mean=filt_mean, 
+                                      scale=Scale(log_std=filt_log_std))
+        
         return NonAmortizedBackwardSmoother.Params(backwd=backwd_params, 
                                                    filt=filt_params)
     
     def format_params(self, params):
-        return NonAmortizedBackwardSmoother.Params(backwd=params.backwd, 
-                                                   filt=self.filt_dist.format_params(params.filt))
+        return params
 
     def smooth_seq(self, *args):
         pass 

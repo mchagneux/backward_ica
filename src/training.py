@@ -106,7 +106,8 @@ class SVITrainer:
                                                                                             phi)
         
         else: 
-            self.monitor_elbo = GeneralBackwardELBO(p, q, num_samples)
+            self.monitor_elbo = None
+            print('Not monitoring the ELBO.')
 
         if 'streaming' in training_mode:
             self.online_difference = 'difference' in training_mode
@@ -412,18 +413,22 @@ class SVITrainer:
             params, opt_state, elbo_carry = step_carry                
             key, timesteps = x 
             strided_ys_on_timesteps = strided_ys[:,timesteps]
-            
-            # if 'truncated' in self.elbo_mode:
-            #     key, key_params = jax.random.split(key,2)
-            #     params.backwd = self.q.get_random_params(key_params).backwd
+            key, key_params = jax.random.split(key, 2)
 
             def inner_step(carry, x):
                 inner_carry, params, opt_state = carry
                 key = x
-                
+
+
+                                # if 'truncated' in self.elbo_mode:
+                #     new_filt_mean = self.p.transition_kernel.map(params.filt.mean,  
+                #                                                 self.formatted_theta_star.transition).mean
+                #     params = NonAmortizedBackwardSmoother.Params(backwd=params.backwd,
+                #                                                 filt=Gaussian.Params(mean=new_filt_mean,
+                #                                                                     scale=params.filt.scale))
                 elbo, neg_grad, new_carry, aux = jax.vmap(self.update, in_axes=(0, 0, 0, None, None))(
                                                             jax.random.split(key, len(strided_ys_on_timesteps)), 
-                                                            lax.cond(timesteps[-1] > 0, 
+                                                            lax.cond(timesteps[-1] == 0, 
                                                                      lambda x:x, 
                                                                      lambda x:elbo_carry,
                                                                      inner_carry),
@@ -445,35 +450,38 @@ class SVITrainer:
                         opt_state), \
                         (jnp.mean(elbo, axis=0), aux)
             
-            
+
+
+
             (elbo_carry, params, opt_state), (elbos, aux) = jax.lax.scan(inner_step, 
                                                         init=(elbo_carry, params, opt_state), 
                                                         xs=jax.random.split(key, 
                                                                             self.num_grad_steps))
-            
-            if self.num_grad_steps > 1:
-                pass
-                # aux = None
-                # params_q_t, params_q_tm1_t = tree_get_idx(-1, tree_get_idx(-1, aux))
-                # aux = self.q.smoothing_means_tm1_t(params_q_t, params_q_tm1_t, 10000, key)
-            else: 
-                aux = None
 
+            if 'truncated' in self.elbo_mode:
+                new_filt_mean = self.p.transition_kernel.map(params.filt.mean, 
+                                                             self.formatted_theta_star.transition).mean
+                init_params_next_step = NonAmortizedBackwardSmoother.Params(backwd=params.backwd,
+                                                                            filt=Gaussian.Params(mean=new_filt_mean, 
+                                                                                                 scale=params.filt.scale))
+                opt_state = self.optimizer.init(init_params_next_step)
+
+                
             # if not isinstance(self.q, NonAmortizedBackwardSmoother):
-            return (params, opt_state, elbo_carry), (elbos, aux, params)
+            return (init_params_next_step, opt_state, elbo_carry), (elbos, aux, params)
         
         # absolute_step_nb = 0
 
 
-        # if self.monitor: 
-        #     monitor_elbo = jax.jit(lambda key, ys, T, formatted_theta_star, phi:self.monitor_elbo(
-        #                                                                             key, 
-        #                                                                             ys, 
-        #                                                                             T, 
-        #                                                                             formatted_theta_star, 
-        #                                                                             self.q.format_params(phi))[0] / len(ys))
-        # else: 
-        #     monitor_elbo = lambda *args: 0.0
+        if self.monitor: 
+            monitor_elbo = lambda key, ys, phi:self.monitor_elbo(
+                                                                key, 
+                                                                ys, 
+                                                                len(ys)-1, 
+                                                                self.formatted_theta_star, 
+                                                                self.q.format_params(phi))[0] / len(ys)
+        else: 
+            monitor_elbo = lambda *args: 0.0
             
         elbo_carry = self.init_carry
 
@@ -502,6 +510,7 @@ class SVITrainer:
                 
 
         if self.streaming and self.num_epochs == 1: 
+            print('Streaming on a single epoch.')
             def _epoch_step(carry, x):
                 params, opt_state, elbo_carry = carry
                 _, keys_epoch = x
@@ -510,9 +519,9 @@ class SVITrainer:
                                                                 xs=(jnp.arange(0, len(all_timesteps)),
                                                                     keys_epoch, 
                                                                     all_timesteps))
-                if self.streaming and self.num_epochs > 1:
-                    opt_state = self.optimizer.init(params)
-                    elbo_carry = self.init_carry
+                # if self.streaming and self.num_epochs > 1:
+                # elbo_carry = self.init_carry
+                
                 return (params, opt_state, elbo_carry), (elbos_steps, aux_results, params_steps)
             
         else: 
@@ -528,6 +537,9 @@ class SVITrainer:
                 if self.streaming and self.num_epochs > 1:
                     opt_state = self.optimizer.init(params)
                     elbo_carry = self.init_carry
+
+                monitored_value = jax.vmap(monitor_elbo, in_axes=(0,0,None))(keys_epoch, ys, params)
+                aux_results = (monitored_value, aux_results)
                 return (params, opt_state, elbo_carry), (elbos_steps, aux_results, params_steps)
             
         (params, _ , elbo_carry), (elbos_epochs, aux_results, params_epochs) = jax.lax.scan(_epoch_step, 
